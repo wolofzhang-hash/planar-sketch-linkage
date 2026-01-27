@@ -332,7 +332,6 @@ class SimulationPanel(QWidget):
             "time": self._frame,
             "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
             "ok": ok,
-            "msg": (msg if (not ok) else ""),
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
         }

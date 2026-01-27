@@ -90,14 +90,31 @@ class PlotWindow(QMainWindow):
         for r in self._records:
             keys.update(r.keys())
 
+        def is_numeric_key(key: str) -> bool:
+            saw_value = False
+            for r in self._records:
+                v = r.get(key)
+                if v is None:
+                    continue
+                if isinstance(v, bool):
+                    return False
+                try:
+                    float(v)
+                except (TypeError, ValueError):
+                    return False
+                saw_value = True
+            return saw_value
+
         # Preferred ordering
         x_candidates = []
-        for k in ["time", "input_deg", "output_deg"]:
+        for k in ["input_deg", "time", "output_deg"]:
             if k in keys:
                 x_candidates.append(k)
 
         # Measurements: anything else numeric-like
-        meas = sorted([k for k in keys if k not in {"time", "input_deg", "output_deg"}])
+        meas = sorted(
+            [k for k in keys if k not in {"time", "input_deg", "output_deg"} and is_numeric_key(k)]
+        )
         x_candidates.extend(meas)
 
         def label_for(k: str) -> str:
@@ -112,18 +129,24 @@ class PlotWindow(QMainWindow):
         for k in x_candidates:
             self.cb_x.addItem(label_for(k), k)
 
-        # Y list: output + measurements (allow multi)
+        # Y list: measurements (allow multi), optionally include output
         y_candidates = []
+        y_candidates.extend(meas)
         if "output_deg" in keys:
             y_candidates.append("output_deg")
-        y_candidates.extend(meas)
+        default_y = meas[0] if meas else ("output_deg" if "output_deg" in keys else None)
 
         for k in y_candidates:
             it = QListWidgetItem(label_for(k))
             it.setData(Qt.ItemDataRole.UserRole, k)
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            it.setCheckState(Qt.CheckState.Checked if k == "output_deg" else Qt.CheckState.Unchecked)
+            it.setCheckState(Qt.CheckState.Checked if default_y and k == default_y else Qt.CheckState.Unchecked)
             self.lst_y.addItem(it)
+
+        if "input_deg" in keys:
+            idx = self.cb_x.findData("input_deg")
+            if idx >= 0:
+                self.cb_x.setCurrentIndex(idx)
 
     def _selected_y_keys(self) -> List[str]:
         ys: List[str] = []
@@ -139,7 +162,13 @@ class PlotWindow(QMainWindow):
         out: List[float] = []
         for r in self._records:
             v = r.get(key)
-            out.append(float("nan") if v is None else float(v))
+            if v is None or isinstance(v, bool):
+                out.append(float("nan"))
+                continue
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                out.append(float("nan"))
         return out
 
     def plot(self):
