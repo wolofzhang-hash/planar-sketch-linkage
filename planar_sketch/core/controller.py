@@ -810,6 +810,12 @@ class SketchController:
         mk = TextMarker(f"P{pid}")
         self.points[pid]["marker"] = mk
         self.scene.addItem(mk)
+        cmark = TextMarker("▽")
+        self.points[pid]["constraint_marker"] = cmark
+        self.scene.addItem(cmark)
+        dmark = TextMarker("↻")
+        self.points[pid]["driver_marker"] = dmark
+        self.scene.addItem(dmark)
 
     def _remove_point(self, pid: int):
         if pid not in self.points: return
@@ -828,6 +834,10 @@ class SketchController:
                 b["rigid_edges"] = self.compute_body_rigid_edges(b["points"])
         p = self.points[pid]
         self.scene.removeItem(p["item"]); self.scene.removeItem(p["marker"])
+        if "constraint_marker" in p:
+            self.scene.removeItem(p["constraint_marker"])
+        if "driver_marker" in p:
+            self.scene.removeItem(p["driver_marker"])
         del self.points[pid]
         self.selected_point_ids.discard(pid)
         if self.selected_point_id == pid:
@@ -1871,6 +1881,17 @@ class SketchController:
             pass
 
     def update_graphics(self):
+        driver_marker_pid = None
+        if self.driver.get("enabled"):
+            driver_type = str(self.driver.get("type", "vector"))
+            if driver_type == "joint":
+                pid = self.driver.get("j")
+                if pid is not None:
+                    driver_marker_pid = int(pid)
+            else:
+                pid = self.driver.get("pivot")
+                if pid is not None:
+                    driver_marker_pid = int(pid)
         for pid, p in self.points.items():
             it: PointItem = p["item"]
             it._internal = True
@@ -1881,6 +1902,24 @@ class SketchController:
             mk.setText(f"P{pid}")
             mk.setPos(p["x"] + 6, p["y"] + 6)
             mk.setVisible(self.show_point_markers and (not self.is_point_effectively_hidden(pid)) and self.show_points_geometry)
+            cmark: TextMarker = p["constraint_marker"]
+            cmark.setPos(p["x"] - 6, p["y"] + 10)
+            show_constraint = (
+                self.show_dim_markers
+                and bool(p.get("fixed", False))
+                and (not self.is_point_effectively_hidden(pid))
+                and self.show_points_geometry
+            )
+            cmark.setVisible(show_constraint)
+            dmark: TextMarker = p["driver_marker"]
+            dmark.setPos(p["x"] + 10, p["y"] - 10)
+            show_driver = (
+                self.show_dim_markers
+                and driver_marker_pid == pid
+                and (not self.is_point_effectively_hidden(pid))
+                and self.show_points_geometry
+            )
+            dmark.setVisible(show_driver)
 
         for lid, l in self.links.items():
             it: LinkItem = l["item"]
