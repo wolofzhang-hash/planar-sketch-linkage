@@ -810,7 +810,7 @@ class SketchController:
         mk = TextMarker(f"P{pid}")
         self.points[pid]["marker"] = mk
         self.scene.addItem(mk)
-        cmark = TextMarker("▽")
+        cmark = TextMarker("△")
         self.points[pid]["constraint_marker"] = cmark
         self.scene.addItem(cmark)
         dmark = TextMarker("↻")
@@ -1903,7 +1903,8 @@ class SketchController:
             mk.setPos(p["x"] + 6, p["y"] + 6)
             mk.setVisible(self.show_point_markers and (not self.is_point_effectively_hidden(pid)) and self.show_points_geometry)
             cmark: TextMarker = p["constraint_marker"]
-            cmark.setPos(p["x"] - 6, p["y"] + 10)
+            cmark_bounds = cmark.boundingRect()
+            cmark.setPos(p["x"] - cmark_bounds.width() / 2.0, p["y"] + 4)
             show_constraint = (
                 self.show_dim_markers
                 and bool(p.get("fixed", False))
@@ -1912,7 +1913,8 @@ class SketchController:
             )
             cmark.setVisible(show_constraint)
             dmark: TextMarker = p["driver_marker"]
-            dmark.setPos(p["x"] + 10, p["y"] - 10)
+            dmark_bounds = dmark.boundingRect()
+            dmark.setPos(p["x"] + 8, p["y"] - dmark_bounds.height() - 4)
             show_driver = (
                 self.show_dim_markers
                 and driver_marker_pid == pid
