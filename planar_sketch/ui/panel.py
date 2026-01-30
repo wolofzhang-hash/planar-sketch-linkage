@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional, List
 from PyQt6.QtCore import QTimer, QSignalBlocker, QItemSelectionModel
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QLabel
 
-from .tabs import ParametersTab, PointsTab, LinksTab, AnglesTab, BodiesTab, ConstraintsTab
+from .tabs import ParametersTab, PointsTab, LinksTab, AnglesTab, SplinesTab, BodiesTab, ConstraintsTab
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -30,12 +30,14 @@ class SketchPanel(QWidget):
         self.params_tab = ParametersTab(self)
         self.links_tab = LinksTab(self)
         self.angles_tab = AnglesTab(self)
+        self.splines_tab = SplinesTab(self)
         self.bodies_tab = BodiesTab(self)
         self.constraints_tab = ConstraintsTab(self)
         self.tabs.addTab(self.params_tab, "Parameters")
         self.tabs.addTab(self.points_tab, "Points")
         self.tabs.addTab(self.links_tab, "Lengths")
         self.tabs.addTab(self.angles_tab, "Angles")
+        self.tabs.addTab(self.splines_tab, "Splines")
         self.tabs.addTab(self.constraints_tab, "Constraints")
         self.tabs.addTab(self.bodies_tab, "Rigid Bodies")
 
@@ -47,6 +49,7 @@ class SketchPanel(QWidget):
         self.points_tab.refresh(keep_selection=keep_selection)
         self.links_tab.refresh(keep_selection=keep_selection)
         self.angles_tab.refresh(keep_selection=keep_selection)
+        self.splines_tab.refresh(keep_selection=keep_selection)
         self.constraints_tab.refresh(keep_selection=keep_selection)
         self.bodies_tab.refresh(keep_selection=keep_selection)
 
@@ -55,6 +58,7 @@ class SketchPanel(QWidget):
         self.points_tab.refresh_fast()
         self.links_tab.refresh_fast()
         self.angles_tab.refresh_fast()
+        self.splines_tab.refresh_fast()
         self.constraints_tab.refresh_fast()
 
     def clear_points_selection_only(self):
@@ -65,12 +69,33 @@ class SketchPanel(QWidget):
         self.angles_tab.table.clearSelection()
     def clear_constraints_selection_only(self):
         self.constraints_tab.table.clearSelection()
+    def clear_splines_selection_only(self):
+        self.splines_tab.table.clearSelection()
 
     def select_constraints_row(self, key: str):
         self.constraints_tab.select_key(key)
 
     def clear_bodies_selection_only(self):
         self.bodies_tab.table.clearSelection()
+
+    def select_spline(self, sid: int):
+        t = self.splines_tab.table
+        with QSignalBlocker(t):
+            t.clearSelection()
+            for r in range(t.rowCount()):
+                it = t.item(r, 0)
+                if it and int(it.text()) == sid:
+                    t.selectRow(r); return
+
+    def selected_spline_from_table(self) -> Optional[int]:
+        t = self.splines_tab.table
+        sel = t.selectedItems()
+        if not sel:
+            return None
+        try:
+            return int(t.item(sel[0].row(), 0).text())
+        except Exception:
+            return None
 
     def selected_points_from_table(self, include_hidden: bool) -> List[int]:
         t = self.points_tab.table

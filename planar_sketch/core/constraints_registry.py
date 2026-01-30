@@ -17,7 +17,7 @@ class ConstraintRow:
 
 
 class ConstraintRegistry:
-    """Unified view + IO for constraints (Length/Angle/Coincide/PointOnLine).
+    """Unified view + IO for constraints (Length/Angle/Coincide/PointOnLine/PointOnSpline).
 
     This is intentionally thin in Stage-1: it wraps the controller's existing
     dict storage (links / angles / coincides) and provides a single API surface
@@ -65,6 +65,15 @@ class ConstraintRegistry:
             state = "OVER" if pl.get("over", False) else "OK"
             yield ConstraintRow(key, typ, ent, enabled, state)
 
+        # Point-on-spline constraints
+        for psid, ps in sorted(getattr(self.ctrl, "point_splines", {}).items(), key=lambda kv: kv[0]):
+            key = f"S{psid}"
+            typ = "PointOnSpline"
+            ent = f"P{ps['p']} on S{ps['s']}"
+            enabled = bool(ps.get("enabled", True))
+            state = "OVER" if ps.get("over", False) else "OK"
+            yield ConstraintRow(key, typ, ent, enabled, state)
+
 
     # ---------- unified actions ----------
     @staticmethod
@@ -91,6 +100,8 @@ class ConstraintRegistry:
             self.ctrl.cmd_delete_coincide(cid)
         elif kind == "P" and cid in getattr(self.ctrl, "point_lines", {}):
             self.ctrl.cmd_delete_point_line(cid)
+        elif kind == "S" and cid in getattr(self.ctrl, "point_splines", {}):
+            self.ctrl.cmd_delete_point_spline(cid)
 
     def toggle_by_key(self, key: str) -> None:
         kind, cid = self.parse_key(key)
@@ -102,6 +113,8 @@ class ConstraintRegistry:
             self.ctrl.cmd_set_coincide_enabled(cid, not self.ctrl.coincides[cid].get("enabled", True))
         elif kind == "P" and cid in getattr(self.ctrl, "point_lines", {}):
             self.ctrl.cmd_set_point_line_enabled(cid, not self.ctrl.point_lines[cid].get("enabled", True))
+        elif kind == "S" and cid in getattr(self.ctrl, "point_splines", {}):
+            self.ctrl.cmd_set_point_spline_enabled(cid, not self.ctrl.point_splines[cid].get("enabled", True))
 
     # ---------- serialization ----------
     def to_list(self) -> List[Dict[str, Any]]:
@@ -146,14 +159,25 @@ class ConstraintRegistry:
                 "hidden": bool(pl.get("hidden", False)),
                 "enabled": bool(pl.get("enabled", True)),
             })
+        for psid, ps in sorted(getattr(self.ctrl, "point_splines", {}).items(), key=lambda kv: kv[0]):
+            out.append({
+                "type": "point_spline",
+                "id": int(psid),
+                "p": int(ps.get("p", -1)),
+                "s": int(ps.get("s", -1)),
+                "hidden": bool(ps.get("hidden", False)),
+                "enabled": bool(ps.get("enabled", True)),
+            })
         return out
 
     @staticmethod
-    def split_constraints(constraints: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def split_constraints(constraints: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         links: List[Dict[str, Any]] = []
         angles: List[Dict[str, Any]] = []
+        splines: List[Dict[str, Any]] = []
         coincides: List[Dict[str, Any]] = []
         point_lines: List[Dict[str, Any]] = []
+        point_splines: List[Dict[str, Any]] = []
         for c in constraints or []:
             t = str(c.get("type", "")).lower()
             if t == "length":
@@ -192,4 +216,12 @@ class ConstraintRegistry:
                     "hidden": bool(c.get("hidden", False)),
                     "enabled": bool(c.get("enabled", True)),
                 })
-        return links, angles, coincides, point_lines
+            elif t in ("point_spline", "pointonspline", "point_spline_constraint"):
+                point_splines.append({
+                    "id": int(c.get("id", -1)),
+                    "p": int(c.get("p", -1)),
+                    "s": int(c.get("s", -1)),
+                    "hidden": bool(c.get("hidden", False)),
+                    "enabled": bool(c.get("enabled", True)),
+                })
+        return links, angles, splines, coincides, point_lines, point_splines

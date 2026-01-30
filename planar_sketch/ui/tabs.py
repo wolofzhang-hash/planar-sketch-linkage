@@ -462,6 +462,96 @@ class AnglesTab(QWidget):
         QTimer.singleShot(0, apply)
 
 
+class SplinesTab(QWidget):
+    def __init__(self, panel: "SketchPanel"):
+        super().__init__()
+        self.panel = panel; self.ctrl = panel.ctrl
+        layout = QVBoxLayout(self)
+        btn_row = QHBoxLayout()
+        self.btn_add = QPushButton("Add Spline (from selected points)")
+        self.btn_del = QPushButton("Delete")
+        btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["ID", "Points", "Hidden"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
+        layout.addWidget(self.table)
+
+        self.btn_add.clicked.connect(self._add_spline_from_points)
+        self.btn_del.clicked.connect(self._delete_selected)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+        self.table.itemChanged.connect(self._on_item_changed)
+
+    def _add_spline_from_points(self):
+        ids = self.panel.selected_points_from_table(include_hidden=False)
+        if len(ids) < 2:
+            QMessageBox.information(self, "Need >=2 points", "Select at least 2 points then click Add Spline.")
+            return
+        self.ctrl.cmd_add_spline(ids)
+
+    def _delete_selected(self):
+        sid = self.panel.selected_spline_from_table()
+        if sid is None:
+            return
+        self.ctrl.cmd_delete_spline(sid)
+
+    def refresh(self, keep_selection=False):
+        with QSignalBlocker(self.table):
+            spls = sorted(self.ctrl.splines.items(), key=lambda kv: kv[0])
+            self.table.setRowCount(len(spls))
+            for r, (sid, s) in enumerate(spls):
+                id_item = QTableWidgetItem(str(sid)); id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, 0, id_item)
+                pts = ",".join(str(pid) for pid in s.get("points", []))
+                self.table.setItem(r, 1, QTableWidgetItem(pts))
+                self.table.setItem(r, 2, QTableWidgetItem("1" if s.get("hidden", False) else "0"))
+        if keep_selection and self.ctrl.selected_spline_id is not None:
+            self.panel.select_spline(self.ctrl.selected_spline_id)
+
+    def refresh_fast(self):
+        self.refresh(keep_selection=True)
+
+    def _on_selection_changed(self):
+        if self.panel.sync_guard:
+            return
+        sid = self.panel.selected_spline_from_table()
+        self.ctrl.commit_drag_if_any()
+        if sid is None:
+            return
+        self.panel.sync_guard = True
+        try:
+            self.ctrl.select_spline_single(sid)
+        finally:
+            self.panel.sync_guard = False
+
+    def _on_item_changed(self, item: QTableWidgetItem):
+        row = item.row()
+        sid_item = self.table.item(row, 0)
+        if not sid_item:
+            return
+        sid = int(sid_item.text())
+        if sid not in self.ctrl.splines:
+            return
+        try:
+            pts_text = (self.table.item(row, 1).text() if self.table.item(row, 1) else "").strip()
+            hidden = (self.table.item(row, 2).text().strip() not in ("0", "", "false", "False", "no", "No"))
+        except Exception as e:
+            QMessageBox.warning(self, "Invalid input", str(e))
+            self.panel.defer_refresh_all(keep_selection=True); return
+        def apply():
+            self.ctrl.commit_drag_if_any()
+            pts = parse_id_list(pts_text)
+            if pts:
+                self.ctrl.cmd_set_spline_points(sid, pts)
+            self.ctrl.cmd_set_spline_hidden(sid, hidden)
+            self.panel.defer_refresh_all(keep_selection=True)
+        QTimer.singleShot(0, apply)
+
+
 
 class ConstraintsTab(QWidget):
     """Unified constraint manager (Length/Angle/Coincide)."""
@@ -563,6 +653,9 @@ class ConstraintsTab(QWidget):
         elif kind == "P":
             if cid in getattr(self.ctrl, "point_lines", {}):
                 self.ctrl.select_point_line_single(cid)
+        elif kind == "S":
+            if cid in getattr(self.ctrl, "point_splines", {}):
+                self.ctrl.select_point_spline_single(cid)
 
     def _delete_selected(self):
         key = self._selected_key()

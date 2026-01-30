@@ -15,15 +15,16 @@ import math
 from typing import Dict, Any, Optional, List, Tuple
 
 from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtGui import QPainterPath
 from PyQt6.QtWidgets import QGraphicsScene, QMenu
 
 from .commands import Command, CommandStack
-from .geometry import clamp_angle_rad, angle_between
+from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples
 from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
 from .scipy_kinematics import SciPyKinematicSolver
-from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, TrajectoryItem
+from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem, TrajectoryItem
 from ..utils.constants import BODY_COLORS
 
 
@@ -36,22 +37,27 @@ class SketchController:
         self.points: Dict[int, Dict[str, Any]] = {}
         self.links: Dict[int, Dict[str, Any]] = {}
         self.angles: Dict[int, Dict[str, Any]] = {}
+        self.splines: Dict[int, Dict[str, Any]] = {}
         self.bodies: Dict[int, Dict[str, Any]] = {}
         self.coincides: Dict[int, Dict[str, Any]] = {}
         # Point-on-line constraints: {id: {p,i,j,hidden,enabled,over}}
         self.point_lines: Dict[int, Dict[str, Any]] = {}
+        # Point-on-spline constraints: {id: {p,s,hidden,enabled,over}}
+        self.point_splines: Dict[int, Dict[str, Any]] = {}
 
         # Parameters + expressions
         self.parameters = ParameterRegistry()
         self.constraint_registry = ConstraintRegistry(self)
-        self._next_pid = 0; self._next_lid = 0; self._next_aid = 0; self._next_bid = 0; self._next_cid = 0; self._next_plid = 0
+        self._next_pid = 0; self._next_lid = 0; self._next_aid = 0; self._next_sid = 0; self._next_bid = 0; self._next_cid = 0; self._next_plid = 0; self._next_psid = 0
         self.selected_point_ids: set = set()
         self.selected_point_id: Optional[int] = None
         self.selected_link_id: Optional[int] = None
         self.selected_angle_id: Optional[int] = None
+        self.selected_spline_id: Optional[int] = None
         self.selected_body_id: Optional[int] = None
         self.selected_coincide_id: Optional[int] = None
         self.selected_point_line_id: Optional[int] = None
+        self.selected_point_spline_id: Optional[int] = None
 
         self.show_point_markers = True
         self.show_dim_markers = True
@@ -59,6 +65,7 @@ class SketchController:
         self.show_points_geometry = True
         self.show_links_geometry = True
         self.show_angles_geometry = True
+        self.show_splines_geometry = True
         self.show_body_coloring = True
         self.show_trajectories = False
 
@@ -67,6 +74,7 @@ class SketchController:
         self._co_master: Optional[int] = None
         self._pol_master: Optional[int] = None
         self._pol_line_sel: List[int] = []
+        self._pos_master: Optional[int] = None
         self.panel: Optional["SketchPanel"] = None
         self.stack = CommandStack(on_change=self.win.update_undo_redo_actions)
         self._drag_active = False
@@ -109,6 +117,10 @@ class SketchController:
             if len(self._pol_line_sel) == 1:
                 return f"Point On Line: select line point #2 (for P{int(self._pol_master)})."
             return "Point On Line: selecting..."
+        if self.mode == "PointOnSpline":
+            if self._pos_master is None:
+                return "Point On Spline: select the point (RMB on point -> Point On Spline...)."
+            return f"Point On Spline: select a spline for P{int(self._pos_master)}."
         return "Idle | BoxSelect: drag LMB on empty. Ctrl+Box toggles. Ctrl+Click toggles points."
 
     def update_status(self):
@@ -179,6 +191,8 @@ class SketchController:
 
         for pl in self.point_lines.values():
             pl["over"] = False
+        for ps in self.point_splines.values():
+            ps["over"] = False
 
         body_edges: List[Tuple[int, int, float]] = []
         for b in self.bodies.values():
@@ -287,6 +301,27 @@ class SketchController:
                 if not ok:
                     pl["over"] = True
 
+            # (3b) Point-on-spline constraints
+            for ps in self.point_splines.values():
+                if not bool(ps.get("enabled", True)):
+                    continue
+                p_id = int(ps.get("p", -1)); s_id = int(ps.get("s", -1))
+                if p_id not in self.points or s_id not in self.splines:
+                    continue
+                spline = self.splines[s_id]
+                cp_ids = [pid for pid in spline.get("points", []) if pid in self.points]
+                if len(cp_ids) < 2:
+                    continue
+                pp = self.points[p_id]
+                cps = [self.points[cid] for cid in cp_ids]
+                lock_p = bool(pp.get("fixed", False)) or (drag_pid == p_id) or (p_id in driven_pids)
+                lock_controls = []
+                for cid in cp_ids:
+                    lock_controls.append(bool(self.points[cid].get("fixed", False)) or (drag_pid == cid) or (cid in driven_pids))
+                ok = ConstraintSolver.solve_point_on_spline(pp, cps, lock_p, lock_controls, tol=1e-6)
+                if not ok:
+                    ps["over"] = True
+
             # (3) Rigid-body edges
             for (i, j, L) in body_edges:
                 if i not in self.points or j not in self.points:
@@ -376,6 +411,25 @@ class SketchController:
                     if dist > 1e-6:
                         pl["over"] = True
 
+        for ps in self.point_splines.values():
+            if not bool(ps.get("enabled", True)):
+                continue
+            p_id = int(ps.get("p", -1)); s_id = int(ps.get("s", -1))
+            if p_id not in self.points or s_id not in self.splines:
+                continue
+            spline = self.splines[s_id]
+            cp_ids = [pid for pid in spline.get("points", []) if pid in self.points]
+            if len(cp_ids) < 2:
+                continue
+            if bool(self.points[p_id].get("fixed", False)) and all(bool(self.points[cid].get("fixed", False)) for cid in cp_ids):
+                pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
+                samples = build_spline_samples(pts, samples_per_segment=16)
+                if len(samples) >= 2:
+                    px, py = float(self.points[p_id]["x"]), float(self.points[p_id]["y"])
+                    _cx, _cy, _seg_idx, _t_seg, dist2 = closest_point_on_samples(px, py, samples)
+                    if dist2 > 1e-6:
+                        ps["over"] = True
+
 
     def max_constraint_error(self) -> tuple[float, dict[str, float]]:
         """Return max constraint residual (used to detect infeasible sweep steps)."""
@@ -387,6 +441,8 @@ class SketchController:
         max_coin = 0.0
         # Point-on-line errors
         max_pl = 0.0
+        # Point-on-spline errors
+        max_ps = 0.0
 
         # Rigid-body edges
         body_edges = []
@@ -447,8 +503,26 @@ class SketchController:
                     dist = abs((px - ax) * (-aby) + (py - ay) * (abx)) / denom
                     max_pl = max(max_pl, dist)
 
-        max_err = max(max_len, max_ang, max_coin, max_pl)
-        return max_err, {'length': max_len, 'angle': max_ang, 'coincide': max_coin, 'point_line': max_pl}
+        # Point-on-spline constraints
+        for ps in self.point_splines.values():
+            if not bool(ps.get('enabled', True)):
+                continue
+            p_id = int(ps.get('p', -1)); s_id = int(ps.get('s', -1))
+            if p_id not in self.points or s_id not in self.splines:
+                continue
+            cp_ids = [pid for pid in self.splines[s_id].get("points", []) if pid in self.points]
+            if len(cp_ids) < 2:
+                continue
+            pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
+            samples = build_spline_samples(pts, samples_per_segment=16)
+            if len(samples) < 2:
+                continue
+            px, py = float(self.points[p_id]["x"]), float(self.points[p_id]["y"])
+            _cx, _cy, _seg_idx, _t_seg, dist2 = closest_point_on_samples(px, py, samples)
+            max_ps = max(max_ps, math.sqrt(dist2))
+
+        max_err = max(max_len, max_ang, max_coin, max_pl, max_ps)
+        return max_err, {'length': max_len, 'angle': max_ang, 'coincide': max_coin, 'point_line': max_pl, 'point_spline': max_ps}
     def recompute_from_parameters(self):
         """Recompute all numeric fields that are backed by expressions.
 
@@ -704,6 +778,8 @@ class SketchController:
             c["over"] = False
         for pl in self.point_lines.values():
             pl["over"] = False
+        for ps in self.point_splines.values():
+            ps["over"] = False
 
         # Coincide fixed-fixed
         for c in self.coincides.values():
@@ -767,6 +843,26 @@ class SketchController:
                     err = abs((px - ax) * vy - (py - ay) * vx) / denom
                     if err > 1e-5:
                         pl["over"] = True
+
+        # Point-on-spline fixed-fixed
+        for ps in self.point_splines.values():
+            if not bool(ps.get("enabled", True)):
+                continue
+            pid = int(ps.get("p", -1)); sid = int(ps.get("s", -1))
+            if pid not in self.points or sid not in self.splines:
+                continue
+            cp_ids = [pid for pid in self.splines[sid].get("points", []) if pid in self.points]
+            if len(cp_ids) < 2:
+                continue
+            if bool(self.points[pid].get("fixed", False)) and all(bool(self.points[cid].get("fixed", False)) for cid in cp_ids):
+                pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
+                samples = build_spline_samples(pts, samples_per_segment=16)
+                if len(samples) < 2:
+                    continue
+                px, py = float(self.points[pid]["x"]), float(self.points[pid]["y"])
+                _cx, _cy, _seg_idx, _t_seg, dist2 = closest_point_on_samples(px, py, samples)
+                if dist2 > 1e-5:
+                    ps["over"] = True
 
     def solve_constraints_scipy(self, max_nfev: int = 250) -> tuple[bool, str]:
         """Solve using SciPy backend (accurate, warm-started)."""
@@ -832,6 +928,12 @@ class SketchController:
         to_del_pl = [plid for plid, pl in self.point_lines.items() if int(pl.get("p")) == pid or int(pl.get("i")) == pid or int(pl.get("j")) == pid]
         for plid in to_del_pl:
             self._remove_point_line(plid)
+        to_del_ps = [psid for psid, ps in self.point_splines.items() if int(ps.get("p")) == pid]
+        for psid in to_del_ps:
+            self._remove_point_spline(psid)
+        to_del_spl = [sid for sid, s in self.splines.items() if pid in s.get("points", [])]
+        for sid in to_del_spl:
+            self._remove_spline(sid)
         for b in self.bodies.values():
             if pid in b.get("points", []):
                 b["points"] = [x for x in b["points"] if x != pid]
@@ -894,6 +996,52 @@ class SketchController:
         if self.selected_point_line_id == plid:
             self.selected_point_line_id = None
 
+    def _create_spline(self, sid: int, point_ids: List[int], hidden: bool):
+        pts = [pid for pid in point_ids if pid in self.points]
+        self.splines[sid] = {"points": pts, "hidden": bool(hidden), "over": False}
+        it = SplineItem(sid, self)
+        self.splines[sid]["item"] = it
+        self.scene.addItem(it)
+
+    def _remove_spline(self, sid: int):
+        if sid not in self.splines:
+            return
+        s = self.splines[sid]
+        try:
+            self.scene.removeItem(s["item"])
+        except Exception:
+            pass
+        to_del_ps = [psid for psid, ps in self.point_splines.items() if int(ps.get("s", -1)) == sid]
+        for psid in to_del_ps:
+            self._remove_point_spline(psid)
+        del self.splines[sid]
+        if self.selected_spline_id == sid:
+            self.selected_spline_id = None
+
+    def _create_point_spline(self, psid: int, p: int, s: int, hidden: bool, enabled: bool = True):
+        self.point_splines[psid] = {
+            "p": int(p),
+            "s": int(s),
+            "hidden": bool(hidden),
+            "enabled": bool(enabled),
+            "over": False,
+        }
+        it = PointSplineItem(psid, self)
+        self.point_splines[psid]["item"] = it
+        self.scene.addItem(it)
+
+    def _remove_point_spline(self, psid: int):
+        if psid not in self.point_splines:
+            return
+        ps = self.point_splines[psid]
+        try:
+            self.scene.removeItem(ps["item"])
+        except Exception:
+            pass
+        del self.point_splines[psid]
+        if self.selected_point_spline_id == psid:
+            self.selected_point_spline_id = None
+
     def _create_link(self, lid: int, i: int, j: int, L: float, hidden: bool):
         self.links[lid] = {"i": int(i), "j": int(j), "L": float(L), "hidden": bool(hidden), "over": False, "ref": False}
         it = LinkItem(lid, self)
@@ -945,6 +1093,13 @@ class SketchController:
         for l in self.links.values(): l["item"].setSelected(False)
     def _clear_scene_angle_selection(self):
         for a in self.angles.values(): a["marker"].setSelected(False)
+    def _clear_scene_spline_selection(self):
+        for s in self.splines.values():
+            try:
+                s["item"].setSelected(False)
+            except Exception:
+                pass
+        self.selected_spline_id = None
     def _clear_scene_point_selection(self):
         for pid in list(self.selected_point_ids):
             if pid in self.points:
@@ -967,14 +1122,23 @@ class SketchController:
             except Exception:
                 pass
         self.selected_point_line_id = None
+    def _clear_scene_point_spline_selection(self):
+        for ps in self.point_splines.values():
+            try:
+                ps["item"].setSelected(False)
+            except Exception:
+                pass
+        self.selected_point_spline_id = None
 
     def select_link_single(self, lid: int):
         if lid not in self.links: return
         self.commit_drag_if_any()
         self._clear_scene_point_selection()
         self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
         self._clear_scene_link_selection()
         self.links[lid]["item"].setSelected(True)
         self.selected_link_id = lid
@@ -985,6 +1149,7 @@ class SketchController:
             self.panel.select_link(lid)
             self.panel.clear_points_selection_only()
             self.panel.clear_angles_selection_only()
+            self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
         self.update_status()
 
@@ -994,8 +1159,10 @@ class SketchController:
         self._clear_scene_point_selection()
         self._clear_scene_link_selection()
         self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
         self.angles[aid]["marker"].setSelected(True)
         self.selected_angle_id = aid
         self.selected_link_id = None
@@ -1005,6 +1172,7 @@ class SketchController:
             self.panel.select_angle(aid)
             self.panel.clear_points_selection_only()
             self.panel.clear_links_selection_only()
+            self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
         self.update_status()
 
@@ -1016,8 +1184,10 @@ class SketchController:
         self._clear_scene_point_selection()
         self._clear_scene_link_selection()
         self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
         self.coincides[cid]["item"].setSelected(True)
         self.selected_coincide_id = cid
         self.selected_link_id = None
@@ -1038,8 +1208,10 @@ class SketchController:
         self._clear_scene_point_selection()
         self._clear_scene_link_selection()
         self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
         self.point_lines[plid]["item"].setSelected(True)
         self.selected_point_line_id = plid
         self.selected_link_id = None
@@ -1052,14 +1224,41 @@ class SketchController:
             except Exception:
                 pass
         self.update_status()
+
+    def select_point_spline_single(self, psid: int):
+        if psid not in self.point_splines:
+            return
+        self.commit_drag_if_any()
+        self._clear_scene_point_selection()
+        self._clear_scene_link_selection()
+        self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
+        self._clear_scene_coincide_selection()
+        self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
+        self.point_splines[psid]["item"].setSelected(True)
+        self.selected_point_spline_id = psid
+        self.selected_link_id = None
+        self.selected_angle_id = None
+        self.selected_body_id = None
+        self.update_graphics()
+        if self.panel:
+            try:
+                self.panel.select_constraints_row(f"S{psid}")
+            except Exception:
+                pass
+        self.update_status()
+
     def select_body_single(self, bid: int):
         if bid not in self.bodies: return
         self.commit_drag_if_any()
         self._clear_scene_point_selection()
         self._clear_scene_link_selection()
         self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
         self.selected_body_id = bid
         self.selected_link_id = None
         self.selected_angle_id = None
@@ -1069,13 +1268,43 @@ class SketchController:
             self.panel.clear_points_selection_only()
             self.panel.clear_links_selection_only()
             self.panel.clear_angles_selection_only()
+            self.panel.clear_splines_selection_only()
+        self.update_status()
+
+    def select_spline_single(self, sid: int):
+        if sid not in self.splines:
+            return
+        self.commit_drag_if_any()
+        self._clear_scene_point_selection()
+        self._clear_scene_link_selection()
+        self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
+        self._clear_scene_coincide_selection()
+        self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
+        self.splines[sid]["item"].setSelected(True)
+        self.selected_spline_id = sid
+        self.selected_link_id = None
+        self.selected_angle_id = None
+        self.selected_body_id = None
+        self.update_graphics()
+        if self.panel:
+            try:
+                self.panel.select_spline(sid)
+                self.panel.clear_points_selection_only()
+                self.panel.clear_links_selection_only()
+                self.panel.clear_angles_selection_only()
+                self.panel.clear_bodies_selection_only()
+            except Exception:
+                pass
         self.update_status()
 
     def apply_box_selection(self, pids: List[int], toggle: bool):
         pids = [pid for pid in pids if pid in self.points and (not self.is_point_effectively_hidden(pid)) and self.show_points_geometry]
         if not toggle:
             self._clear_scene_link_selection(); self._clear_scene_angle_selection()
-            self._clear_scene_coincide_selection(); self._clear_scene_point_line_selection()
+            self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
+            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
             self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
             for pid in list(self.selected_point_ids):
                 if pid in self.points:
@@ -1095,13 +1324,15 @@ class SketchController:
                     self.points[pid]["item"].setSelected(True)
                     self.selected_point_id = pid
             self._clear_scene_link_selection(); self._clear_scene_angle_selection()
-            self._clear_scene_coincide_selection(); self._clear_scene_point_line_selection()
+            self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
+            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
             self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
             self.panel.select_points_multi(sorted(self.selected_point_ids))
             self.panel.clear_links_selection_only()
             self.panel.clear_angles_selection_only()
+            self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
         self.update_status()
 
@@ -1116,13 +1347,15 @@ class SketchController:
         self.points[pid]["item"].setSelected(True)
         self.selected_point_id = pid
         self._clear_scene_link_selection(); self._clear_scene_angle_selection()
-        self._clear_scene_coincide_selection(); self._clear_scene_point_line_selection()
+        self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
+        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
         self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
             self.panel.select_points_multi(sorted(self.selected_point_ids))
             self.panel.clear_links_selection_only()
             self.panel.clear_angles_selection_only()
+            self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
 
     def toggle_point(self, pid: int):
@@ -1137,7 +1370,8 @@ class SketchController:
             self.points[pid]["item"].setSelected(True)
             self.selected_point_id = pid
         self._clear_scene_link_selection(); self._clear_scene_angle_selection()
-        self._clear_scene_coincide_selection(); self._clear_scene_point_line_selection()
+        self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
+        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
         self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
@@ -1207,6 +1441,71 @@ class SketchController:
         self.stack.push(AddAngle())
 
     
+    def cmd_add_spline(self, point_ids: List[int]):
+        pts = [pid for pid in point_ids if pid in self.points]
+        if len(pts) < 2:
+            return
+        sid = self._next_sid; self._next_sid += 1
+        ctrl = self
+        model_before = self.snapshot_model()
+        class AddSpline(Command):
+            name = "Add Spline"
+            def do(self_):
+                ctrl._create_spline(sid, pts, hidden=False)
+                ctrl.select_spline_single(sid)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+                ctrl.update_status()
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(AddSpline())
+
+    def cmd_set_spline_points(self, sid: int, point_ids: List[int]):
+        if sid not in self.splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class SetSplinePoints(Command):
+            name = "Set Spline Points"
+            def do(self_):
+                pts = [pid for pid in point_ids if pid in ctrl.points]
+                ctrl.splines[sid]["points"] = pts
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(SetSplinePoints())
+
+    def cmd_set_spline_hidden(self, sid: int, hidden: bool):
+        if sid not in self.splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class SetSplineHidden(Command):
+            name = "Set Spline Hidden"
+            def do(self_):
+                ctrl.splines[sid]["hidden"] = bool(hidden)
+                ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(SetSplineHidden())
+
+    def cmd_delete_spline(self, sid: int):
+        if sid not in self.splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class DelSpline(Command):
+            name = "Delete Spline"
+            def do(self_):
+                ctrl._remove_spline(sid)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all()
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(DelSpline())
+
 
     def cmd_set_angle_enabled(self, aid: int, enabled: bool):
         if aid not in self.angles: return
@@ -1439,6 +1738,36 @@ class SketchController:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(AddPointLine())
 
+    def cmd_add_point_spline(self, p: int, s: int):
+        """Add a point-on-spline constraint: point p lies on spline s."""
+        if p not in self.points or s not in self.splines:
+            return
+        if p in self.splines[s].get("points", []):
+            return
+        for ps in self.point_splines.values():
+            if int(ps.get("p", -1)) == int(p) and int(ps.get("s", -1)) == int(s):
+                return
+        ctrl = self
+        model_before = self.snapshot_model()
+        psid = self._next_psid
+        class AddPointSpline(Command):
+            name = "Add Point On Spline"
+            def do(self_):
+                ctrl._next_psid = max(ctrl._next_psid, psid + 1)
+                ctrl._create_point_spline(psid, p, s, hidden=False, enabled=True)
+                pp = ctrl.points[p]
+                cp_ids = [pid for pid in ctrl.splines[s].get("points", []) if pid in ctrl.points]
+                cps = [ctrl.points[cid] for cid in cp_ids]
+                lock_p = bool(pp.get("fixed", False))
+                lock_controls = [bool(ctrl.points[cid].get("fixed", False)) for cid in cp_ids]
+                ConstraintSolver.solve_point_on_spline(pp, cps, lock_p, lock_controls, tol=1e-6)
+                ctrl.solve_constraints(drag_pid=p)
+                ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(AddPointSpline())
+
     def cmd_delete_point_line(self, plid: int):
         if plid not in self.point_lines:
             return
@@ -1453,6 +1782,21 @@ class SketchController:
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(DelPL())
+
+    def cmd_delete_point_spline(self, psid: int):
+        if psid not in self.point_splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class DelPS(Command):
+            name = "Delete Point On Spline"
+            def do(self_):
+                ctrl._remove_point_spline(psid)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(DelPS())
 
     def cmd_set_point_line_hidden(self, plid: int, hidden: bool):
         if plid not in self.point_lines:
@@ -1469,6 +1813,21 @@ class SketchController:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetPLH())
 
+    def cmd_set_point_spline_hidden(self, psid: int, hidden: bool):
+        if psid not in self.point_splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class SetPSH(Command):
+            name = "Set Point On Spline Hidden"
+            def do(self_):
+                ctrl.point_splines[psid]["hidden"] = bool(hidden)
+                ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(SetPSH())
+
     def cmd_set_point_line_enabled(self, plid: int, enabled: bool):
         if plid not in self.point_lines:
             return
@@ -1483,6 +1842,21 @@ class SketchController:
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetPLE())
+
+    def cmd_set_point_spline_enabled(self, psid: int, enabled: bool):
+        if psid not in self.point_splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class SetPSE(Command):
+            name = "Set Point On Spline Enabled"
+            def do(self_):
+                ctrl.point_splines[psid]["enabled"] = bool(enabled)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(SetPSE())
 
     def cmd_set_point_fixed(self, pid: int, fixed: bool):
         if pid not in self.points: return
@@ -1689,6 +2063,13 @@ class SketchController:
         self._pol_line_sel = []
         self.update_status()
 
+    def begin_point_on_spline(self, master: int):
+        """Start point-on-spline creation: choose a spline to constrain."""
+        self.commit_drag_if_any()
+        self.mode = "PointOnSpline"
+        self._pos_master = int(master)
+        self.update_status()
+
     def on_point_clicked_create_line(self, pid: int):
         if pid not in self.points or self.is_point_effectively_hidden(pid) or (not self.show_points_geometry): return
         if pid in self._line_sel: return
@@ -1733,6 +2114,20 @@ class SketchController:
             self.cmd_add_point_line(p, i, j)
         self.update_status()
 
+    def on_spline_clicked_point_on_spline(self, sid: int):
+        if self._pos_master is None or self._pos_master not in self.points:
+            self.mode = "Idle"
+            self._pos_master = None
+            self.update_status()
+            return
+        if sid not in self.splines:
+            return
+        p = int(self._pos_master)
+        self.mode = "Idle"
+        self._pos_master = None
+        self.cmd_add_point_spline(p, sid)
+        self.update_status()
+
     def on_point_clicked_idle(self, pid: int, modifiers):
         if modifiers & Qt.KeyboardModifier.ControlModifier:
             self.toggle_point(pid)
@@ -1744,10 +2139,12 @@ class SketchController:
         m = QMenu(self.win)
         m.addAction("Create Point", lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
         m.addAction("Create Line", self.begin_create_line)
+        m.addAction("Create Spline (from selected points)", self._add_spline_from_selection)
         m.addSeparator()
         m.addAction("Delete Selected Point(s)", self._delete_selected_points_multi)
         m.addAction("Delete Selected Link", lambda: self.cmd_delete_link(self.selected_link_id) if self.selected_link_id is not None else None)
         m.addAction("Delete Selected Angle", lambda: self.cmd_delete_angle(self.selected_angle_id) if self.selected_angle_id is not None else None)
+        m.addAction("Delete Selected Spline", lambda: self.cmd_delete_spline(self.selected_spline_id) if self.selected_spline_id is not None else None)
         m.addAction("Delete Selected Body", lambda: self.cmd_delete_body(self.selected_body_id) if self.selected_body_id is not None else None)
         m.exec(global_pos)
 
@@ -1755,6 +2152,12 @@ class SketchController:
         ids = sorted(list(self.selected_point_ids))
         for pid in reversed(ids):
             self.cmd_delete_point(pid)
+
+    def _add_spline_from_selection(self):
+        ids = sorted(list(self.selected_point_ids))
+        if len(ids) < 2:
+            return
+        self.cmd_add_spline(ids)
 
     def show_point_context_menu(self, pid: int, global_pos):
         self.commit_drag_if_any()
@@ -1768,6 +2171,8 @@ class SketchController:
         m.addSeparator()
         m.addAction("Coincide With...", lambda: self.begin_coincide(pid))
         m.addAction("Point On Line...", lambda: self.begin_point_on_line(pid))
+        if self.splines:
+            m.addAction("Point On Spline...", lambda: self.begin_point_on_spline(pid))
 
         # --- Simulation helpers (driver / measurement) ---
         nbrs = []
@@ -1886,6 +2291,44 @@ class SketchController:
         except Exception:
             pass
 
+    def show_point_spline_context_menu(self, psid: int, global_pos):
+        self.commit_drag_if_any()
+        if psid not in self.point_splines:
+            return
+        self.select_point_spline_single(psid)
+        ps = self.point_splines[psid]
+        m = QMenu(self.win)
+        m.addAction("Hide" if not ps.get("hidden", False) else "Show",
+                    lambda: self.cmd_set_point_spline_hidden(psid, not ps.get("hidden", False)))
+        m.addAction("Disable" if ps.get("enabled", True) else "Enable",
+                    lambda: self.cmd_set_point_spline_enabled(psid, not ps.get("enabled", True)))
+        m.addSeparator()
+        m.addAction("Delete", lambda: self.cmd_delete_point_spline(psid))
+        m.exec(global_pos)
+        self.update_status()
+        try:
+            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
+        except Exception:
+            pass
+
+    def show_spline_context_menu(self, sid: int, global_pos):
+        self.commit_drag_if_any()
+        if sid not in self.splines:
+            return
+        self.select_spline_single(sid)
+        s = self.splines[sid]
+        m = QMenu(self.win)
+        m.addAction("Hide" if not s.get("hidden", False) else "Show",
+                    lambda: self.cmd_set_spline_hidden(sid, not s.get("hidden", False)))
+        m.addSeparator()
+        m.addAction("Delete", lambda: self.cmd_delete_spline(sid))
+        m.exec(global_pos)
+        self.update_status()
+        try:
+            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
+        except Exception:
+            pass
+
     def update_graphics(self):
         driver_marker_pid = None
         if self.driver.get("enabled"):
@@ -1949,6 +2392,20 @@ class SketchController:
             mk.setPos(mx, my)
             mk.setVisible(self.show_dim_markers and self.show_links_geometry and not l.get("hidden", False))
 
+        for sid, s in self.splines.items():
+            it: SplineItem = s["item"]
+            cp_ids = [pid for pid in s.get("points", []) if pid in self.points]
+            pts = [(self.points[pid]["x"], self.points[pid]["y"]) for pid in cp_ids]
+            samples = build_spline_samples(pts, samples_per_segment=16)
+            path = QPainterPath()
+            if samples:
+                x0, y0 = samples[0][0], samples[0][1]
+                path.moveTo(x0, y0)
+                for x, y, _seg, _t in samples[1:]:
+                    path.lineTo(x, y)
+            it.setPath(path)
+            it.sync_style()
+
         for cid, c in self.coincides.items():
             it: CoincideItem = c["item"]
             it.sync()
@@ -1957,12 +2414,16 @@ class SketchController:
             it: PointLineItem = pl["item"]
             it.sync()
 
+        for psid, ps in self.point_splines.items():
+            it: PointSplineItem = ps["item"]
+            it.sync()
+
         for aid, a in self.angles.items():
             a["marker"].sync()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "version": "2.5.0",
+            "version": "2.7.0",
             "parameters": self.parameters.to_list(),
             "points": [
                 {
@@ -1996,6 +2457,14 @@ class SketchController:
                 }
                 for aid, a in sorted(self.angles.items(), key=lambda kv: kv[0])
             ],
+            "splines": [
+                {
+                    "id": sid,
+                    "points": list(s.get("points", [])),
+                    "hidden": bool(s.get("hidden", False)),
+                }
+                for sid, s in sorted(self.splines.items(), key=lambda kv: kv[0])
+            ],
             "coincides": [
                 {"id": cid, "a": c["a"], "b": c["b"], "hidden": bool(c.get("hidden", False)), "enabled": bool(c.get("enabled", True))}
                 for cid, c in sorted(self.coincides.items(), key=lambda kv: kv[0])
@@ -2004,6 +2473,11 @@ class SketchController:
                 {"id": plid, "p": pl.get("p"), "i": pl.get("i"), "j": pl.get("j"),
                  "hidden": bool(pl.get("hidden", False)), "enabled": bool(pl.get("enabled", True))}
                 for plid, pl in sorted(self.point_lines.items(), key=lambda kv: kv[0])
+            ],
+            "point_splines": [
+                {"id": psid, "p": ps.get("p"), "s": ps.get("s"),
+                 "hidden": bool(ps.get("hidden", False)), "enabled": bool(ps.get("enabled", True))}
+                for psid, ps in sorted(self.point_splines.items(), key=lambda kv: kv[0])
             ],
             "bodies": [
                 {"id": bid, "name": b.get("name", f"B{bid}"), "points": list(b.get("points", [])),
@@ -2015,22 +2489,24 @@ class SketchController:
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
         self.scene.clear()
-        self.points.clear(); self.links.clear(); self.angles.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear()
+        self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
         # Load parameters early so expression fields can be evaluated during/after construction.
         self.parameters.load_list(list(data.get("parameters", []) or []))
         self.selected_point_ids.clear()
-        self.selected_point_id = None; self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None; self.selected_coincide_id = None; self.selected_point_line_id = None
+        self.selected_point_id = None; self.selected_link_id = None; self.selected_angle_id = None; self.selected_spline_id = None; self.selected_body_id = None; self.selected_coincide_id = None; self.selected_point_line_id = None; self.selected_point_spline_id = None
         pts = data.get("points", [])
         # Unified constraints list (Stage-1). If present, it overrides legacy links/angles/coincides.
         constraints_list = data.get("constraints", None)
         if constraints_list:
             from .constraints_registry import ConstraintRegistry as _CR
-            lks, angs, coincs, pls = _CR.split_constraints(constraints_list)
+            lks, angs, spls, coincs, pls, pss = _CR.split_constraints(constraints_list)
         else:
             lks = data.get("links", [])
             angs = data.get("angles", [])
+            spls = data.get("splines", [])
             coincs = data.get("coincides", [])
             pls = data.get("point_lines", [])
+            pss = data.get("point_splines", [])
         bods = data.get("bodies", [])
         max_pid = -1
         for p in pts:
@@ -2054,6 +2530,11 @@ class SketchController:
                                float(a.get("deg", 0.0)), bool(a.get("hidden", False)))
             if aid in self.angles:
                 self.angles[aid]["deg_expr"] = str(a.get("deg_expr", "") or "")
+        max_sid = -1
+        for s in spls:
+            sid = int(s.get("id", -1)); max_sid = max(max_sid, sid)
+            pts = list(s.get("points", []))
+            self._create_spline(sid, pts, bool(s.get("hidden", False)))
         max_bid = -1
         for b in bods:
             bid = int(b["id"]); max_bid = max(max_bid, bid)
@@ -2098,11 +2579,30 @@ class SketchController:
                 )
         self._next_plid = max(max_plid + 1, 0)
 
+        # --- Point-on-spline constraints ---
+        pss = pss or []
+        max_psid = -1
+        for ps in pss:
+            try:
+                psid = int(ps.get("id"))
+                p = int(ps.get("p")); s = int(ps.get("s"))
+            except Exception:
+                continue
+            max_psid = max(max_psid, psid)
+            if p in self.points and s in self.splines:
+                self._create_point_spline(
+                    psid, p, s,
+                    hidden=bool(ps.get("hidden", False)),
+                    enabled=bool(ps.get("enabled", True)),
+                )
+        self._next_psid = max(max_psid + 1, 0)
+
         self._next_pid = max(max_pid + 1, 0)
         self._next_lid = max(max_lid + 1, 0)
         self._next_aid = max(max_aid + 1, 0)
+        self._next_sid = max(max_sid + 1, 0)
         self._next_bid = max(max_bid + 1, 0)
-        self.mode = "Idle"; self._line_sel = []; self._co_master = None; self._pol_master = None; self._pol_line_sel = []
+        self.mode = "Idle"; self._line_sel = []; self._co_master = None; self._pol_master = None; self._pol_line_sel = []; self._pos_master = None
         self.solve_constraints(); self.update_graphics()
         if self.panel: self.panel.defer_refresh_all()
         if clear_undo: self.stack.clear()

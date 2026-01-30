@@ -16,14 +16,14 @@ from PyQt6.QtWidgets import (
 from ..core.controller import SketchController
 from .view import SketchView
 from .panel import SketchPanel
-from .items import PointItem, LinkItem, AngleItem
+from .items import PointItem, LinkItem, AngleItem, SplineItem, PointSplineItem
 from .sim_panel import SimulationPanel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Planar Sketch v2.6.6")
+        self.setWindowTitle("Planar Sketch v2.7.0")
         self.resize(1400, 900)
         self.scene = QGraphicsScene(-2000, -2000, 4000, 4000)
         self.ctrl = SketchController(self.scene, self)
@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         self.panel.sync_guard = True
         try:
             items = self.scene.selectedItems()
-            pids, lids, aids = [], [], []
+            pids, lids, aids, sids, psids = [], [], [], [], []
             for it in items:
                 if isinstance(it, PointItem) and (not self.ctrl.is_point_effectively_hidden(it.pid)) and self.ctrl.show_points_geometry:
                     pids.append(it.pid)
@@ -62,21 +62,30 @@ class MainWindow(QMainWindow):
                     lids.append(it.lid)
                 elif isinstance(it, AngleItem):
                     aids.append(it.aid)
+                elif isinstance(it, SplineItem):
+                    sids.append(it.sid)
+                elif isinstance(it, PointSplineItem):
+                    psids.append(it.psid)
             self.ctrl.selected_point_ids = set(pids)
             self.ctrl.selected_point_id = pids[-1] if pids else None
             self.ctrl.selected_link_id = lids[-1] if lids else None
             self.ctrl.selected_angle_id = aids[-1] if aids else None
-            if (self.ctrl.selected_link_id is not None) or (self.ctrl.selected_angle_id is not None):
+            self.ctrl.selected_spline_id = sids[-1] if sids else None
+            self.ctrl.selected_point_spline_id = psids[-1] if psids else None
+            if (self.ctrl.selected_link_id is not None) or (self.ctrl.selected_angle_id is not None) or (self.ctrl.selected_spline_id is not None):
                 self.ctrl.selected_body_id = None
             self.panel.select_points_multi(sorted(self.ctrl.selected_point_ids))
             if self.ctrl.selected_link_id is not None:
                 self.panel.select_link(self.ctrl.selected_link_id)
-                self.panel.clear_angles_selection_only(); self.panel.clear_bodies_selection_only()
+                self.panel.clear_angles_selection_only(); self.panel.clear_splines_selection_only(); self.panel.clear_bodies_selection_only()
             elif self.ctrl.selected_angle_id is not None:
                 self.panel.select_angle(self.ctrl.selected_angle_id)
-                self.panel.clear_links_selection_only(); self.panel.clear_bodies_selection_only()
+                self.panel.clear_links_selection_only(); self.panel.clear_splines_selection_only(); self.panel.clear_bodies_selection_only()
+            elif self.ctrl.selected_spline_id is not None:
+                self.panel.select_spline(self.ctrl.selected_spline_id)
+                self.panel.clear_links_selection_only(); self.panel.clear_angles_selection_only(); self.panel.clear_bodies_selection_only()
             else:
-                self.panel.clear_links_selection_only(); self.panel.clear_angles_selection_only()
+                self.panel.clear_links_selection_only(); self.panel.clear_angles_selection_only(); self.panel.clear_splines_selection_only()
             self.ctrl.update_graphics()
             self.ctrl.update_status()
             self.sim_panel.refresh_labels()
@@ -106,6 +115,7 @@ class MainWindow(QMainWindow):
 
         m_sketch = mb.addMenu("Sketch")
         m_sketch.addAction("Create Line", self.ctrl.begin_create_line)
+        m_sketch.addAction("Create Spline (from selected points)", self.ctrl._add_spline_from_selection)
         m_sketch.addAction("Solve Accurate (SciPy)", self.solve_accurate_scipy)
 
         m_view = mb.addMenu("View")
@@ -115,6 +125,8 @@ class MainWindow(QMainWindow):
         self.act_dm.triggered.connect(lambda c: self._toggle_dm(c)); m_view.addAction(self.act_dm)
         self.act_body_color = QAction("Show Rigid Body Coloring", self, checkable=True); self.act_body_color.setChecked(True)
         self.act_body_color.triggered.connect(lambda c: self._toggle_body_coloring(c)); m_view.addAction(self.act_body_color)
+        self.act_splines = QAction("Show Splines", self, checkable=True); self.act_splines.setChecked(True)
+        self.act_splines.triggered.connect(lambda c: self._toggle_splines(c)); m_view.addAction(self.act_splines)
         m_view.addSeparator()
         m_presets = m_view.addMenu("Presets")
         m_presets.addAction("Show All", self.preset_show_all)
@@ -137,6 +149,7 @@ class MainWindow(QMainWindow):
         self.ctrl.show_points_geometry = True
         self.ctrl.show_links_geometry = True
         self.ctrl.show_angles_geometry = True
+        self.ctrl.show_splines_geometry = True
         self.ctrl.update_graphics()
         self.panel.defer_refresh_all(keep_selection=True)
 
@@ -144,6 +157,7 @@ class MainWindow(QMainWindow):
         self.ctrl.show_points_geometry = True
         self.ctrl.show_links_geometry = False
         self.ctrl.show_angles_geometry = False
+        self.ctrl.show_splines_geometry = False
         self.ctrl.update_graphics()
         self.panel.defer_refresh_all(keep_selection=True)
 
@@ -151,6 +165,7 @@ class MainWindow(QMainWindow):
         self.ctrl.show_points_geometry = True
         self.ctrl.show_links_geometry = True
         self.ctrl.show_angles_geometry = False
+        self.ctrl.show_splines_geometry = False
         self.ctrl.update_graphics()
         self.panel.defer_refresh_all(keep_selection=True)
 
@@ -167,6 +182,9 @@ class MainWindow(QMainWindow):
     def _toggle_body_coloring(self, checked: bool):
         self.ctrl.show_body_coloring = bool(checked)
         self.ctrl.update_graphics()
+    def _toggle_splines(self, checked: bool):
+        self.ctrl.show_splines_geometry = bool(checked)
+        self.ctrl.update_graphics()
 
     def delete_selected(self):
         self.ctrl.commit_drag_if_any()
@@ -178,12 +196,14 @@ class MainWindow(QMainWindow):
             self.ctrl.cmd_delete_link(self.ctrl.selected_link_id); return
         if self.ctrl.selected_angle_id is not None:
             self.ctrl.cmd_delete_angle(self.ctrl.selected_angle_id); return
+        if self.ctrl.selected_spline_id is not None:
+            self.ctrl.cmd_delete_spline(self.ctrl.selected_spline_id); return
         if self.ctrl.selected_body_id is not None:
             self.ctrl.cmd_delete_body(self.ctrl.selected_body_id); return
 
     def file_new(self):
         self.ctrl.commit_drag_if_any()
-        self.ctrl.load_dict({"points": [], "links": [], "angles": [], "bodies": [], "parameters": [], "version": "2.6.0"})
+        self.ctrl.load_dict({"points": [], "links": [], "angles": [], "splines": [], "point_splines": [], "bodies": [], "parameters": [], "version": "2.7.0"})
         self.ctrl.stack.clear()
         self.current_file = None
 
