@@ -108,7 +108,9 @@ class SketchController:
         if self.mode == "CreateLine":
             return "Create Line: select 2 points (LMB)."
         if self.mode == "Coincide":
-            return "Coincide: select the other point."
+            if self._co_master is None:
+                return "Coincide: select the point to constrain."
+            return f"Coincide: select a point/line/spline for P{int(self._co_master)}."
         if self.mode == "PointOnLine":
             if self._pol_master is None:
                 return "Point On Line: select the point (RMB on point -> Point On Line...)."
@@ -155,19 +157,15 @@ class SketchController:
 
     def compute_body_rigid_edges(self, point_ids: List[int]) -> List[Tuple[int, int, float]]:
         pts = [pid for pid in point_ids if pid in self.points]
-        if len(pts) < 2: return []
-        anchor = pts[0]
+        if len(pts) < 2:
+            return []
         edges: List[Tuple[int, int, float]] = []
-        p0 = self.points[anchor]
-        for pid in pts[1:]:
-            pi = self.points[pid]
-            L = math.hypot(pi["x"] - p0["x"], pi["y"] - p0["y"])
-            edges.append((anchor, pid, L))
-        if len(pts) >= 3:
-            p1 = self.points[pts[1]]
-            p2 = self.points[pts[2]]
-            L12 = math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
-            edges.append((pts[1], pts[2], L12))
+        for idx, i in enumerate(pts):
+            pi = self.points[i]
+            for j in pts[idx + 1:]:
+                pj = self.points[j]
+                L = math.hypot(pj["x"] - pi["x"], pj["y"] - pi["y"])
+                edges.append((i, j, L))
         return edges
 
     def solve_constraints(self, iters: int = 60, drag_pid: Optional[int] = None):
@@ -1447,7 +1445,6 @@ class SketchController:
             return
         sid = self._next_sid; self._next_sid += 1
         ctrl = self
-        model_before = self.snapshot_model()
         class AddSpline(Command):
             name = "Add Spline"
             def do(self_):
@@ -1457,7 +1454,10 @@ class SketchController:
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 ctrl.update_status()
             def undo(self_):
-                ctrl.apply_model_snapshot(model_before)
+                ctrl._remove_spline(sid)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all()
+                ctrl.update_status()
         self.stack.push(AddSpline())
 
     def cmd_set_spline_points(self, sid: int, point_ids: List[int]):
@@ -2093,6 +2093,27 @@ class SketchController:
         self.cmd_add_coincide(master, int(pid))
         self.update_status()
 
+    def on_link_clicked_coincide(self, lid: int):
+        if self._co_master is None or self._co_master not in self.points:
+            self.mode = "Idle"; self._co_master = None; self.update_status(); return
+        if lid not in self.links:
+            return
+        p = int(self._co_master)
+        self.mode = "Idle"; self._co_master = None
+        l = self.links[lid]
+        self.cmd_add_point_line(p, int(l.get("i")), int(l.get("j")))
+        self.update_status()
+
+    def on_spline_clicked_coincide(self, sid: int):
+        if self._co_master is None or self._co_master not in self.points:
+            self.mode = "Idle"; self._co_master = None; self.update_status(); return
+        if sid not in self.splines:
+            return
+        p = int(self._co_master)
+        self.mode = "Idle"; self._co_master = None
+        self.cmd_add_point_spline(p, sid)
+        self.update_status()
+
     def on_point_clicked_point_on_line(self, pid: int):
         if self._pol_master is None or self._pol_master not in self.points:
             self.mode = "Idle"
@@ -2140,12 +2161,6 @@ class SketchController:
         m.addAction("Create Point", lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
         m.addAction("Create Line", self.begin_create_line)
         m.addAction("Create Spline (from selected points)", self._add_spline_from_selection)
-        m.addSeparator()
-        m.addAction("Delete Selected Point(s)", self._delete_selected_points_multi)
-        m.addAction("Delete Selected Link", lambda: self.cmd_delete_link(self.selected_link_id) if self.selected_link_id is not None else None)
-        m.addAction("Delete Selected Angle", lambda: self.cmd_delete_angle(self.selected_angle_id) if self.selected_angle_id is not None else None)
-        m.addAction("Delete Selected Spline", lambda: self.cmd_delete_spline(self.selected_spline_id) if self.selected_spline_id is not None else None)
-        m.addAction("Delete Selected Body", lambda: self.cmd_delete_body(self.selected_body_id) if self.selected_body_id is not None else None)
         m.exec(global_pos)
 
     def _delete_selected_points_multi(self):
@@ -2169,10 +2184,7 @@ class SketchController:
         m.addAction("Hide" if not p.get("hidden", False) else "Show",
                     lambda: self.cmd_set_point_hidden(pid, not p.get("hidden", False)))
         m.addSeparator()
-        m.addAction("Coincide With...", lambda: self.begin_coincide(pid))
-        m.addAction("Point On Line...", lambda: self.begin_point_on_line(pid))
-        if self.splines:
-            m.addAction("Point On Spline...", lambda: self.begin_point_on_spline(pid))
+        m.addAction("Coincide With (point/line/spline)...", lambda: self.begin_coincide(pid))
 
         # --- Simulation helpers (driver / measurement) ---
         nbrs = []

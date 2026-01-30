@@ -123,6 +123,9 @@ class LinkItem(QGraphicsLineItem):
     @safe_event
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            if self.ctrl.mode == "Coincide":
+                self.ctrl.on_link_clicked_coincide(self.lid)
+                e.accept(); return
             self.ctrl.select_link_single(self.lid)
             e.accept(); return
         super().mousePressEvent(e)
@@ -164,6 +167,9 @@ class SplineItem(QGraphicsPathItem):
     @safe_event
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
+            if self.ctrl.mode == "Coincide":
+                self.ctrl.on_spline_clicked_coincide(self.sid)
+                e.accept(); return
             if self.ctrl.mode == "PointOnSpline":
                 self.ctrl.on_spline_clicked_point_on_spline(self.sid)
                 e.accept(); return
