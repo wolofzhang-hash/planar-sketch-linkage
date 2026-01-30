@@ -178,7 +178,7 @@ class PointsTab(QWidget):
                 self.table.setItem(r, 2, y_item)
                 self.table.setItem(r, 3, QTableWidgetItem("1" if p.get("fixed", False) else "0"))
                 self.table.setItem(r, 4, QTableWidgetItem("1" if p.get("hidden", False) else "0"))
-                self.table.setItem(r, 5, QTableWidgetItem("1" if p.get("traj", True) else "0"))
+                self.table.setItem(r, 5, QTableWidgetItem("1" if p.get("traj", False) else "0"))
                 bid = self.ctrl.point_body(pid)
                 self.table.setItem(r, 6, QTableWidgetItem("" if bid is None else str(bid)))
                 self.table.item(r, 6).setFlags(self.table.item(r, 6).flags() & ~Qt.ItemFlag.ItemIsEditable)
