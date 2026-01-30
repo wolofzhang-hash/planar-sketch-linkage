@@ -340,17 +340,21 @@ class TrajectoryItem(QGraphicsPathItem):
         self.pid = pid
         self.ctrl = ctrl
         self._path = QPainterPath()
-        self.setZValue(-5)
+        self.setZValue(0.5)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-        pen = QPen(QColor(0, 120, 215, 140), 1.6)
+        pen = QPen(QColor(0, 120, 215, 180), 1.6)
         pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
         self.setPen(pen)
         self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.setAcceptHoverEvents(False)
         self.setVisible(False)
 
     def reset_path(self, x: float, y: float):
-        self._path = QPainterPath(QPointF(float(x), float(y)))
+        point = QPointF(float(x), float(y))
+        self._path = QPainterPath()
+        self._path.addEllipse(point, 0.9, 0.9)
+        self._path.moveTo(point)
         self.setPath(self._path)
 
     def add_point(self, x: float, y: float):
