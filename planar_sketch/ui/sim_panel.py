@@ -91,9 +91,6 @@ class SimulationPanel(QWidget):
         solver_row.addWidget(self.chk_scipy)
         solver_row.addWidget(QLabel("MaxNfev"))
         solver_row.addWidget(self.ed_nfev)
-        self.chk_traj = QCheckBox("Show Trajectory")
-        self.chk_traj.setChecked(True)
-        solver_row.addWidget(self.chk_traj)
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
 
@@ -253,7 +250,7 @@ class SimulationPanel(QWidget):
         self.stop()
         self.ctrl.mark_sim_start_pose()
         self._pending_sim_start_capture = True
-        self.ctrl.set_show_trajectories(self.chk_traj.isChecked(), reset=True)
+        self.ctrl.reset_trajectories()
 
         self._records = []
         self._frame = 0
