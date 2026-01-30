@@ -2556,6 +2556,7 @@ class SketchController:
             pss = data.get("point_splines", [])
         bods = data.get("bodies", [])
         max_pid = -1
+        any_traj_enabled = False
         for p in pts:
             pid = int(p["id"]); max_pid = max(max_pid, pid)
             self._create_point(
@@ -2566,9 +2567,12 @@ class SketchController:
                 bool(p.get("hidden", False)),
                 traj_enabled=bool(p.get("traj", False)),
             )
+            any_traj_enabled = any_traj_enabled or bool(p.get("traj", False))
             if pid in self.points:
                 self.points[pid]["x_expr"] = str(p.get("x_expr", "") or "")
                 self.points[pid]["y_expr"] = str(p.get("y_expr", "") or "")
+        if any_traj_enabled:
+            self.show_trajectories = True
         max_lid = -1
         for l in lks:
             lid = int(l["id"]); max_lid = max(max_lid, lid)
