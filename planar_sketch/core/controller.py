@@ -24,7 +24,7 @@ from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
 from .scipy_kinematics import SciPyKinematicSolver
-from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem
+from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem, TrajectoryItem
 from ..utils.constants import BODY_COLORS
 
 
@@ -67,6 +67,7 @@ class SketchController:
         self.show_angles_geometry = True
         self.show_splines_geometry = True
         self.show_body_coloring = True
+        self.show_trajectories = False
 
         self.mode = "Idle"
         self._line_sel: List[int] = []
@@ -897,6 +898,9 @@ class SketchController:
 
     def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool):
         self.points[pid] = {"x": float(x), "y": float(y), "fixed": bool(fixed), "hidden": bool(hidden)}
+        traj = TrajectoryItem(pid, self)
+        self.points[pid]["traj_item"] = traj
+        self.scene.addItem(traj)
         it = PointItem(pid, self)
         it._internal = True
         it.setPos(float(x), float(y))
@@ -935,6 +939,8 @@ class SketchController:
                 b["points"] = [x for x in b["points"] if x != pid]
                 b["rigid_edges"] = self.compute_body_rigid_edges(b["points"])
         p = self.points[pid]
+        if "traj_item" in p:
+            self.scene.removeItem(p["traj_item"])
         self.scene.removeItem(p["item"]); self.scene.removeItem(p["marker"])
         if "constraint_marker" in p:
             self.scene.removeItem(p["constraint_marker"])
@@ -2365,6 +2371,10 @@ class SketchController:
                 and self.show_points_geometry
             )
             dmark.setVisible(show_driver)
+            titem = p.get("traj_item")
+            if titem is not None:
+                show_traj = self.show_trajectories and (not self.is_point_effectively_hidden(pid))
+                titem.setVisible(show_traj)
 
         for lid, l in self.links.items():
             it: LinkItem = l["item"]
@@ -2643,6 +2653,27 @@ class SketchController:
     def clear_output(self):
         self.output = {"enabled": False, "pivot": None, "tip": None}
 
+    # ---- Trajectories ----
+    def set_show_trajectories(self, enabled: bool, reset: bool = False):
+        self.show_trajectories = bool(enabled)
+        if reset:
+            self.reset_trajectories()
+        self.update_graphics()
+
+    def reset_trajectories(self):
+        for pid, p in self.points.items():
+            titem = p.get("traj_item")
+            if titem is not None:
+                titem.reset_path(p["x"], p["y"])
+
+    def append_trajectories(self):
+        if not self.show_trajectories:
+            return
+        for pid, p in self.points.items():
+            titem = p.get("traj_item")
+            if titem is not None:
+                titem.add_point(p["x"], p["y"])
+
     # ---- Measurements ----
     def add_measure_vector(self, pivot_pid: int, tip_pid: int):
         name = f"vec P{int(pivot_pid)}->P{int(tip_pid)}"
@@ -2800,6 +2831,11 @@ class SketchController:
             # At this moment get_measure_values_deg returns ABS (since _sim_zero_meas_deg is cleared)
             if val is not None:
                 self._sim_zero_meas_deg[str(nm)] = float(val)
+
+    def update_sim_start_pose_snapshot(self):
+        """Update the stored sweep start pose without touching the relative-zero angles."""
+        self._pose_last_sim_start = self.snapshot_points()
+        self.capture_initial_pose_if_needed()
 
     def reset_pose_to_sim_start(self) -> bool:
         if not self._pose_last_sim_start:

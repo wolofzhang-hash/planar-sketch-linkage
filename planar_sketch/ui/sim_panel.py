@@ -44,6 +44,7 @@ class SimulationPanel(QWidget):
 
         self._records: List[Dict[str, Any]] = []
         self._plot_window: Optional[PlotWindow] = None
+        self._pending_sim_start_capture = False
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -90,6 +91,9 @@ class SimulationPanel(QWidget):
         solver_row.addWidget(self.chk_scipy)
         solver_row.addWidget(QLabel("MaxNfev"))
         solver_row.addWidget(self.ed_nfev)
+        self.chk_traj = QCheckBox("Show Trajectory")
+        self.chk_traj.setChecked(True)
+        solver_row.addWidget(self.chk_traj)
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
 
@@ -248,6 +252,8 @@ class SimulationPanel(QWidget):
 
         self.stop()
         self.ctrl.mark_sim_start_pose()
+        self._pending_sim_start_capture = True
+        self.ctrl.set_show_trajectories(self.chk_traj.isChecked(), reset=True)
 
         self._records = []
         self._frame = 0
@@ -282,6 +288,7 @@ class SimulationPanel(QWidget):
             return
 
         ok = True
+        step_applied = True
         msg = ""
         if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked():
             try:
@@ -309,8 +316,15 @@ class SimulationPanel(QWidget):
                     self.ctrl.panel.defer_refresh_all()
                 ok = False
                 msg = f"infeasible step (max_err={max_err:.3g})"
+                step_applied = False
                 self.stop()
 
+        if self._pending_sim_start_capture:
+            self.ctrl.update_sim_start_pose_snapshot()
+            self._pending_sim_start_capture = False
+
+        if step_applied:
+            self.ctrl.append_trajectories()
         self.refresh_labels()
 
         rec: Dict[str, Any] = {
