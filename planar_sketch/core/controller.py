@@ -2417,6 +2417,7 @@ class SketchController:
             if titem is not None:
                 show_traj = (
                     self.show_trajectories
+                    and (not self._drag_active)
                     and bool(p.get("traj", False))
                     and (not self.is_point_effectively_hidden(pid))
                 )
@@ -2724,7 +2725,7 @@ class SketchController:
                 titem.reset_path(p["x"], p["y"])
 
     def append_trajectories(self):
-        if not self.show_trajectories:
+        if not self.show_trajectories or self._drag_active:
             return
         for pid, p in self.points.items():
             if not bool(p.get("traj", False)):
