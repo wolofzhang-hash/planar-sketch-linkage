@@ -10,7 +10,7 @@ from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QRubberBand
 
 from ..utils.qt_safe import safe_event
-from .items import PointItem, LinkItem, CoincideItem, PointLineItem
+from .items import PointItem, LinkItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -125,6 +125,10 @@ class SketchView(QGraphicsView):
                     self.ctrl.show_coincide_context_menu(item.cid, e.globalPosition().toPoint())
                 elif isinstance(item, PointLineItem):
                     self.ctrl.show_point_line_context_menu(item.plid, e.globalPosition().toPoint())
+                elif isinstance(item, SplineItem):
+                    self.ctrl.show_spline_context_menu(item.sid, e.globalPosition().toPoint())
+                elif isinstance(item, PointSplineItem):
+                    self.ctrl.show_point_spline_context_menu(item.psid, e.globalPosition().toPoint())
             e.accept(); return
 
         if e.button() == Qt.MouseButton.LeftButton and self._rb_active:

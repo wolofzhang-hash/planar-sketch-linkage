@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 from typing import Dict, Any
 
-from .geometry import angle_between, clamp_angle_rad, rot2
+from .geometry import angle_between, clamp_angle_rad, rot2, build_spline_samples, closest_point_on_samples
 
 
 class ConstraintSolver:
@@ -205,4 +205,54 @@ class ConstraintSolver:
             b["x"] = bx - (w_b / w) * dx
             b["y"] = by - (w_b / w) * dy
 
+        return True
+
+    @staticmethod
+    def solve_point_on_spline(
+        p: Dict[str, Any],
+        control_points: list[Dict[str, Any]],
+        lock_p: bool,
+        lock_controls: list[bool],
+        tol: float = 1e-8,
+        samples_per_segment: int = 16,
+    ) -> bool:
+        """Enforce point P to lie on a spline defined by control points."""
+        if len(control_points) < 2:
+            return True
+        pts = [(float(cp["x"]), float(cp["y"])) for cp in control_points]
+        samples = build_spline_samples(pts, samples_per_segment=samples_per_segment)
+        if len(samples) < 2:
+            return True
+
+        px, py = float(p["x"]), float(p["y"])
+        cx, cy, seg_idx, t_seg, dist2 = closest_point_on_samples(px, py, samples)
+        if dist2 <= tol * tol:
+            return True
+
+        if lock_p and all(lock_controls):
+            return False
+
+        w_p = 0.0 if lock_p else 1.0
+        weights = [0.0 for _ in control_points]
+        if 0 <= seg_idx < len(control_points) - 1:
+            weights[seg_idx] = max(0.0, min(1.0, 1.0 - t_seg))
+            weights[seg_idx + 1] = max(0.0, min(1.0, t_seg))
+
+        w = w_p
+        for idx, w_i in enumerate(weights):
+            if not lock_controls[idx]:
+                w += w_i
+        if w <= 0.0:
+            return False
+
+        dx = cx - px
+        dy = cy - py
+        if w_p > 0.0:
+            p["x"] = px + (w_p / w) * dx
+            p["y"] = py + (w_p / w) * dy
+        for idx, w_i in enumerate(weights):
+            if w_i <= 0.0 or lock_controls[idx]:
+                continue
+            control_points[idx]["x"] = control_points[idx]["x"] - (w_i / w) * dx
+            control_points[idx]["y"] = control_points[idx]["y"] - (w_i / w) * dy
         return True

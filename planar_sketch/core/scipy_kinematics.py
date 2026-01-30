@@ -13,6 +13,7 @@ from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
 
+from .geometry import build_spline_samples, closest_point_on_samples
 
 def _least_squares():
     """Import least_squares lazily to keep the app usable without SciPy."""
@@ -146,6 +147,24 @@ class SciPyKinematicSolver:
                 # cross((P-I),(J-I)) / |J-I|
                 dist = ((px - ix) * vy - (py - iy) * vx) / denom
                 r.append(dist)
+
+            # Point-on-spline constraints: closest point residual
+            for ps in ctrl.point_splines.values():
+                if not bool(ps.get("enabled", True)):
+                    continue
+                p = int(ps.get("p", -1)); s = int(ps.get("s", -1))
+                if p not in ctrl.points or s not in ctrl.splines:
+                    continue
+                cp_ids = [pid for pid in ctrl.splines[s].get("points", []) if pid in ctrl.points]
+                if len(cp_ids) < 2:
+                    continue
+                pts = [get_xy(pid, x) for pid in cp_ids]
+                samples = build_spline_samples([(float(px), float(py)) for px, py in pts], samples_per_segment=12)
+                if len(samples) < 2:
+                    continue
+                px, py = get_xy(p, x)
+                cx, cy, _seg_idx, _t_seg, _dist2 = closest_point_on_samples(px, py, samples)
+                r.extend([px - cx, py - cy])
 
             # Rigid body edges
             for b in ctrl.bodies.values():

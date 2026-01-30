@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsEllipseItem,
     QGraphicsLineItem,
+    QGraphicsPathItem,
     QGraphicsSimpleTextItem,
 )
 
@@ -148,6 +149,72 @@ class LinkItem(QGraphicsLineItem):
         p1 = self.ctrl.points[l["i"]]
         p2 = self.ctrl.points[l["j"]]
         self.setLine(p1["x"], p1["y"], p2["x"], p2["y"])
+
+
+class SplineItem(QGraphicsPathItem):
+    def __init__(self, sid: int, ctrl: "SketchController"):
+        super().__init__()
+        self.sid = sid
+        self.ctrl = ctrl
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setZValue(-1)
+        self.sync_style()
+
+    @safe_event
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            if self.ctrl.mode == "PointOnSpline":
+                self.ctrl.on_spline_clicked_point_on_spline(self.sid)
+                e.accept(); return
+            self.ctrl.select_spline_single(self.sid)
+            e.accept(); return
+        super().mousePressEvent(e)
+
+    def sync_style(self):
+        s = self.ctrl.splines[self.sid]
+        hidden = bool(s.get("hidden", False)) or (not self.ctrl.show_splines_geometry)
+        self.setVisible(not hidden)
+        sel = (getattr(self.ctrl, "selected_spline_id", None) == self.sid) or self.isSelected()
+        base = PURPLE if s.get("over", False) else QColor(30, 30, 180)
+        pen = QPen(HILITE if sel else base, 2 if sel else 1.6)
+        self.setPen(pen)
+
+
+class PointSplineItem(QGraphicsSimpleTextItem):
+    """Marker for point-on-spline constraint."""
+    def __init__(self, psid: int, ctrl: "SketchController"):
+        super().__init__("∈")
+        self.psid = psid
+        self.ctrl = ctrl
+        self.setZValue(10)
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setBrush(GRAY)
+        self.sync()
+
+    @safe_event
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.ctrl.select_point_spline_single(self.psid)
+            e.accept(); return
+        super().mousePressEvent(e)
+
+    def sync(self):
+        ps = self.ctrl.point_splines[self.psid]
+        p = int(ps.get("p", -1))
+        if p not in self.ctrl.points:
+            self.setVisible(False)
+            return
+        pp = self.ctrl.points[p]
+        self.setPos(pp["x"] + 8, pp["y"] + 8)
+        hidden = bool(ps.get("hidden", False)) or (not self.ctrl.show_dim_markers)
+        self.setVisible(not hidden)
+        sel = (getattr(self.ctrl, "selected_point_spline_id", None) == self.psid) or self.isSelected()
+        if not bool(ps.get("enabled", True)):
+            col = GRAY
+        else:
+            col = PURPLE if ps.get("over", False) else GRAY
+        self.setBrush(HILITE if sel else col)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 
 
 class CoincideItem(QGraphicsSimpleTextItem):
