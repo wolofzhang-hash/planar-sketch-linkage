@@ -143,8 +143,8 @@ class PointsTab(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
         self.table = QTableWidget()
-        self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["ID", "X", "Y", "Fixed", "Hidden", "Body"])
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["ID", "X", "Y", "Fixed", "Hidden", "Trajectory", "Body"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -178,9 +178,10 @@ class PointsTab(QWidget):
                 self.table.setItem(r, 2, y_item)
                 self.table.setItem(r, 3, QTableWidgetItem("1" if p.get("fixed", False) else "0"))
                 self.table.setItem(r, 4, QTableWidgetItem("1" if p.get("hidden", False) else "0"))
+                self.table.setItem(r, 5, QTableWidgetItem("1" if p.get("traj", True) else "0"))
                 bid = self.ctrl.point_body(pid)
-                self.table.setItem(r, 5, QTableWidgetItem("" if bid is None else str(bid)))
-                self.table.item(r, 5).setFlags(self.table.item(r, 5).flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, 6, QTableWidgetItem("" if bid is None else str(bid)))
+                self.table.item(r, 6).setFlags(self.table.item(r, 6).flags() & ~Qt.ItemFlag.ItemIsEditable)
         if keep_selection:
             self.panel.select_points_multi(sorted(self.ctrl.selected_point_ids))
 
@@ -231,6 +232,7 @@ class PointsTab(QWidget):
             y_text = (self.table.item(row, 2).text() if self.table.item(row, 2) else "").strip()
             fixed = (self.table.item(row, 3).text().strip() not in ("0", "", "false", "False", "no", "No"))
             hidden = (self.table.item(row, 4).text().strip() not in ("0", "", "false", "False", "no", "No"))
+            traj = (self.table.item(row, 5).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
             QMessageBox.warning(self, "Invalid input", str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
@@ -239,6 +241,7 @@ class PointsTab(QWidget):
             self.ctrl.cmd_set_point_expr(pid, x_text, y_text)
             self.ctrl.cmd_set_point_fixed(pid, fixed)
             self.ctrl.cmd_set_point_hidden(pid, hidden)
+            self.ctrl.cmd_set_point_trajectory(pid, traj)
             self.panel.defer_refresh_all(keep_selection=True)
         QTimer.singleShot(0, apply)
 
