@@ -44,6 +44,7 @@ class SimulationPanel(QWidget):
 
         self._records: List[Dict[str, Any]] = []
         self._plot_window: Optional[PlotWindow] = None
+        self._pending_sim_start_capture = False
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -248,6 +249,7 @@ class SimulationPanel(QWidget):
 
         self.stop()
         self.ctrl.mark_sim_start_pose()
+        self._pending_sim_start_capture = True
 
         self._records = []
         self._frame = 0
@@ -310,6 +312,10 @@ class SimulationPanel(QWidget):
                 ok = False
                 msg = f"infeasible step (max_err={max_err:.3g})"
                 self.stop()
+
+        if self._pending_sim_start_capture:
+            self.ctrl.update_sim_start_pose_snapshot()
+            self._pending_sim_start_capture = False
 
         self.refresh_labels()
 

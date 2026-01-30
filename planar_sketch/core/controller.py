@@ -2301,6 +2301,11 @@ class SketchController:
             if val is not None:
                 self._sim_zero_meas_deg[str(nm)] = float(val)
 
+    def update_sim_start_pose_snapshot(self):
+        """Update the stored sweep start pose without touching the relative-zero angles."""
+        self._pose_last_sim_start = self.snapshot_points()
+        self.capture_initial_pose_if_needed()
+
     def reset_pose_to_sim_start(self) -> bool:
         if not self._pose_last_sim_start:
             return False
