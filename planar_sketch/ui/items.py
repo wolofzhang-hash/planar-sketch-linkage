@@ -6,12 +6,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QPointF
-from PyQt6.QtGui import QPen, QColor
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsEllipseItem,
     QGraphicsLineItem,
     QGraphicsSimpleTextItem,
+    QGraphicsPathItem,
 )
 
 from ..utils.constants import PURPLE, DARK, YELLOW, GRAY, HILITE, BODY_COLORS
@@ -258,3 +259,30 @@ class AngleItem(QGraphicsSimpleTextItem):
         self.setVisible(self.ctrl.show_dim_markers and not hidden)
         sel = (self.ctrl.selected_angle_id == self.aid) or self.isSelected()
         self.setBrush(HILITE if sel else DARK)
+
+
+class TrajectoryItem(QGraphicsPathItem):
+    def __init__(self, pid: int, ctrl: "SketchController"):
+        super().__init__()
+        self.pid = pid
+        self.ctrl = ctrl
+        self._path = QPainterPath()
+        self.setZValue(-5)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        pen = QPen(QColor(0, 120, 215, 140), 1.6)
+        pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.setAcceptHoverEvents(False)
+        self.setVisible(False)
+
+    def reset_path(self, x: float, y: float):
+        self._path = QPainterPath(QPointF(float(x), float(y)))
+        self.setPath(self._path)
+
+    def add_point(self, x: float, y: float):
+        if self._path.isEmpty():
+            self._path.moveTo(float(x), float(y))
+        else:
+            self._path.lineTo(float(x), float(y))
+        self.setPath(self._path)
