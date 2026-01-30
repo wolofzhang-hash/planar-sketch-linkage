@@ -870,6 +870,7 @@ class SketchController:
         except Exception as e:
             return False, str(e)
         self.update_graphics()
+        self.append_trajectories()
         if self.panel:
             self.panel.defer_refresh_all()
         return bool(ok), str(msg)
@@ -2062,6 +2063,7 @@ class SketchController:
         self.points[pid]["x"] = float(nx); self.points[pid]["y"] = float(ny)
         self.solve_constraints(drag_pid=pid)
         self.update_graphics()
+        self.append_trajectories()
         if self.panel: self.panel.refresh_fast()
 
     def commit_drag_if_any(self):
@@ -2869,6 +2871,7 @@ class SketchController:
         self.driver["rad"] = float(target)
         self.solve_constraints(iters=iters)
         self.update_graphics()
+        self.append_trajectories()
         if self.panel:
             self.panel.defer_refresh_all()
 
