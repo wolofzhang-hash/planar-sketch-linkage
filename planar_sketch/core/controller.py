@@ -67,7 +67,7 @@ class SketchController:
         self.show_angles_geometry = True
         self.show_splines_geometry = True
         self.show_body_coloring = True
-        self.show_trajectories = True
+        self.show_trajectories = False
 
         self.mode = "Idle"
         self._line_sel: List[int] = []
@@ -894,7 +894,7 @@ class SketchController:
         self.driver["rad"] = float(target)
         return self.solve_constraints_scipy(max_nfev=max_nfev)
 
-    def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = True):
+    def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = False):
         self.points[pid] = {
             "x": float(x),
             "y": float(y),
@@ -1391,7 +1391,7 @@ class SketchController:
         class AddPoint(Command):
             name = "Add Point"
             def do(self_):
-                ctrl._create_point(pid, x, y, fixed=False, hidden=False, traj_enabled=True)
+                ctrl._create_point(pid, x, y, fixed=False, hidden=False, traj_enabled=False)
                 ctrl.select_point_single(pid, keep_others=False)
                 ctrl.solve_constraints(); ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
@@ -1904,7 +1904,7 @@ class SketchController:
     def cmd_set_point_trajectory(self, pid: int, enabled: bool):
         if pid not in self.points:
             return
-        prev = bool(self.points[pid].get("traj", True))
+        prev = bool(self.points[pid].get("traj", False))
         enabled = bool(enabled)
         if prev == enabled:
             return
@@ -1916,6 +1916,9 @@ class SketchController:
                 ctrl.points[pid]["traj"] = enabled
                 if enabled:
                     ctrl.show_trajectories = True
+                    titem = ctrl.points[pid].get("traj_item")
+                    if titem is not None:
+                        titem.reset_path(ctrl.points[pid]["x"], ctrl.points[pid]["y"])
                 ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
@@ -2414,7 +2417,7 @@ class SketchController:
             if titem is not None:
                 show_traj = (
                     self.show_trajectories
-                    and bool(p.get("traj", True))
+                    and bool(p.get("traj", False))
                     and (not self.is_point_effectively_hidden(pid))
                 )
                 titem.setVisible(show_traj)
@@ -2476,7 +2479,7 @@ class SketchController:
                     "y_expr": (p.get("y_expr") or ""),
                     "fixed": bool(p.get("fixed", False)),
                     "hidden": bool(p.get("hidden", False)),
-                    "traj": bool(p.get("traj", True)),
+                    "traj": bool(p.get("traj", False)),
                 }
                 for pid, p in sorted(self.points.items(), key=lambda kv: kv[0])
             ],
@@ -2561,7 +2564,7 @@ class SketchController:
                 float(p.get("y", 0.0)),
                 bool(p.get("fixed", False)),
                 bool(p.get("hidden", False)),
-                traj_enabled=bool(p.get("traj", True)),
+                traj_enabled=bool(p.get("traj", False)),
             )
             if pid in self.points:
                 self.points[pid]["x_expr"] = str(p.get("x_expr", "") or "")
@@ -2720,7 +2723,7 @@ class SketchController:
         if not self.show_trajectories:
             return
         for pid, p in self.points.items():
-            if not bool(p.get("traj", True)):
+            if not bool(p.get("traj", False)):
                 continue
             titem = p.get("traj_item")
             if titem is not None:
