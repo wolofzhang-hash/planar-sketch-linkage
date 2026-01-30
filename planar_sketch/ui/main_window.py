@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         self.panel = SketchPanel(self.ctrl)
         self.dock.setWidget(self.panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
-        # Simulation dock (driver/output, I/O curve export)
+        # Simulation dock (driver/measurements, I/O curve export)
         self.sim_dock = QDockWidget("Simulation", self)
         self.sim_panel = SimulationPanel(self.ctrl)
         self.sim_dock.setWidget(self.sim_panel)
@@ -230,4 +230,3 @@ class MainWindow(QMainWindow):
         self.ctrl.cmd_set_body_color(0, "Green")
         self.ctrl.solve_constraints(); self.ctrl.update_graphics()
         self.panel.defer_refresh_all(keep_selection=True)
-

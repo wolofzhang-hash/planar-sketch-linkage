@@ -2,8 +2,8 @@
 """Plot window for sweep/measurement data.
 
 Features:
-- Choose X axis: Time / Input / Output / any measurement
-- Choose one or multiple Y series (Output + measurements)
+- Choose X axis: Time / Input / any measurement
+- Choose one or multiple Y series (measurements)
 - Render in a separate window
 - Export SVG and CSV
 
@@ -107,13 +107,13 @@ class PlotWindow(QMainWindow):
 
         # Preferred ordering
         x_candidates = []
-        for k in ["input_deg", "time", "output_deg"]:
+        for k in ["input_deg", "time"]:
             if k in keys:
                 x_candidates.append(k)
 
         # Measurements: anything else numeric-like
         meas = sorted(
-            [k for k in keys if k not in {"time", "input_deg", "output_deg"} and is_numeric_key(k)]
+            [k for k in keys if k not in {"time", "input_deg"} and is_numeric_key(k)]
         )
         x_candidates.extend(meas)
 
@@ -122,19 +122,15 @@ class PlotWindow(QMainWindow):
                 return "Time"
             if k == "input_deg":
                 return "Input (deg)"
-            if k == "output_deg":
-                return "Output (deg)"
             return str(k)
 
         for k in x_candidates:
             self.cb_x.addItem(label_for(k), k)
 
-        # Y list: measurements (allow multi), optionally include output
+        # Y list: measurements (allow multi)
         y_candidates = []
         y_candidates.extend(meas)
-        if "output_deg" in keys:
-            y_candidates.append("output_deg")
-        default_y = meas[0] if meas else ("output_deg" if "output_deg" in keys else None)
+        default_y = meas[0] if meas else None
 
         for k in y_candidates:
             it = QListWidgetItem(label_for(k))

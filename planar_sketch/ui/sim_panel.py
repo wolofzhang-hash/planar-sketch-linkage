@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Simulation dock: driver/output/measurements, sweep, plot and export.
+"""Simulation dock: driver/measurements, sweep, plot and export.
 
 New in v2.6.6:
 - Global Parameters tab + expression fields for Point X/Y, Length L, and Angle deg.
@@ -8,7 +8,7 @@ Previously (v2.4.19):
 - Restored point right-click menus for Driver / Measurement (also available in v2.4.19).
 - Reset pose to the sweep start pose
 - Plot window with custom X/Y (X can be time or any measurement; Y supports multiple series)
-- Export SVG/CSV from the plot window; export full sweep CSV (time/input/output + all measurements)
+- Export SVG/CSV from the plot window; export full sweep CSV (time/input + all measurements)
 """
 
 from __future__ import annotations
@@ -16,10 +16,11 @@ from __future__ import annotations
 import csv
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox
+    QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView
 )
 
 from .plot_window import PlotWindow
@@ -45,6 +46,11 @@ class SimulationPanel(QWidget):
         self._plot_window: Optional[PlotWindow] = None
 
         layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+
+        main_tab = QWidget()
+        main_layout = QVBoxLayout(main_tab)
 
         # Driver
         row = QHBoxLayout()
@@ -56,33 +62,11 @@ class SimulationPanel(QWidget):
         row.addWidget(self.btn_set_driver_vec)
         row.addWidget(self.btn_set_driver_joint)
         row.addWidget(self.btn_clear_driver)
-        layout.addLayout(row)
-
-        # Output
-        row = QHBoxLayout()
-        self.lbl_output = QLabel("Output: (not set)")
-        self.btn_set_output = QPushButton("Set Output (2 pts)")
-        self.btn_clear_output = QPushButton("Clear")
-        row.addWidget(self.lbl_output, 1)
-        row.addWidget(self.btn_set_output)
-        row.addWidget(self.btn_clear_output)
-        layout.addLayout(row)
-
-        # Measurements
-        row = QHBoxLayout()
-        self.lbl_meas = QLabel("Measurements: (none)")
-        self.btn_add_meas_vec = QPushButton("Add Vector Measure (2 pts)")
-        self.btn_add_meas_joint = QPushButton("Add Joint Measure (3 pts)")
-        self.btn_clear_meas = QPushButton("Clear")
-        row.addWidget(self.lbl_meas, 1)
-        row.addWidget(self.btn_add_meas_vec)
-        row.addWidget(self.btn_add_meas_joint)
-        row.addWidget(self.btn_clear_meas)
-        layout.addLayout(row)
+        main_layout.addLayout(row)
 
         # Current
-        self.lbl_angles = QLabel("Input: --    Output: --")
-        layout.addWidget(self.lbl_angles)
+        self.lbl_angles = QLabel("Input: --")
+        main_layout.addWidget(self.lbl_angles)
 
         # Sweep controls
         sweep = QHBoxLayout()
@@ -95,7 +79,7 @@ class SimulationPanel(QWidget):
         sweep.addWidget(self.ed_end)
         sweep.addWidget(QLabel("Step°"))
         sweep.addWidget(self.ed_step)
-        layout.addLayout(sweep)
+        main_layout.addLayout(sweep)
 
         # Solver backend
         solver_row = QHBoxLayout()
@@ -107,7 +91,7 @@ class SimulationPanel(QWidget):
         solver_row.addWidget(QLabel("MaxNfev"))
         solver_row.addWidget(self.ed_nfev)
         solver_row.addStretch(1)
-        layout.addLayout(solver_row)
+        main_layout.addLayout(solver_row)
 
         # Buttons
         btns = QHBoxLayout()
@@ -121,16 +105,36 @@ class SimulationPanel(QWidget):
         btns.addWidget(self.btn_reset_pose)
         btns.addWidget(self.btn_plot)
         btns.addWidget(self.btn_export)
-        layout.addLayout(btns)
+        main_layout.addLayout(btns)
 
-        layout.addStretch(1)
+        main_layout.addStretch(1)
+        tabs.addTab(main_tab, "Simulation")
+
+        measurements_tab = QWidget()
+        measurements_layout = QVBoxLayout(measurements_tab)
+        self.table_meas = QTableWidget(0, 2)
+        self.table_meas.setHorizontalHeaderLabels(["Measurement", "Value (deg)"])
+        self.table_meas.verticalHeader().setVisible(False)
+        self.table_meas.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_meas.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_meas.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        measurements_layout.addWidget(self.table_meas)
+
+        meas_buttons = QHBoxLayout()
+        self.btn_add_meas_vec = QPushButton("Add Vector Measure (2 pts)")
+        self.btn_add_meas_joint = QPushButton("Add Joint Measure (3 pts)")
+        self.btn_clear_meas = QPushButton("Clear")
+        meas_buttons.addWidget(self.btn_add_meas_vec)
+        meas_buttons.addWidget(self.btn_add_meas_joint)
+        meas_buttons.addWidget(self.btn_clear_meas)
+        measurements_layout.addLayout(meas_buttons)
+        measurements_layout.addStretch(1)
+        tabs.addTab(measurements_tab, "Measurements")
 
         # Signals
         self.btn_set_driver_vec.clicked.connect(self._set_driver_from_selection)
         self.btn_set_driver_joint.clicked.connect(self._set_driver_joint_from_selection)
         self.btn_clear_driver.clicked.connect(self._clear_driver)
-        self.btn_set_output.clicked.connect(self._set_output_from_selection)
-        self.btn_clear_output.clicked.connect(self._clear_output)
         self.btn_add_meas_vec.clicked.connect(self._add_measure_vector_from_selection)
         self.btn_add_meas_joint.clicked.connect(self._add_measure_joint_from_selection)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
@@ -170,28 +174,10 @@ class SimulationPanel(QWidget):
         else:
             self.lbl_driver.setText("Driver: (not set)")
 
-        o = self.ctrl.output
-        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
-            self.lbl_output.setText(f"Output: P{o['pivot']} -> P{o['tip']}")
-        else:
-            self.lbl_output.setText("Output: (not set)")
-
         a_in = self.ctrl.get_input_angle_deg()
-        a_out = self.ctrl.get_output_angle_deg()
         s_in = "--" if a_in is None else f"{a_in:.3f}°"
-        s_out = "--" if a_out is None else f"{a_out:.3f}°"
-        self.lbl_angles.setText(f"Input: {s_in}    Output: {s_out}")
-
-        mv = self.ctrl.get_measure_values_deg()
-        if not mv:
-            self.lbl_meas.setText("Measurements: (none)")
-        else:
-            parts = []
-            for (nm, val) in mv[:3]:
-                parts.append(f"{nm}={('--' if val is None else f'{val:.3f}°')}")
-            if len(mv) > 3:
-                parts.append(f"(+{len(mv) - 3} more)")
-            self.lbl_meas.setText("Measurements: " + "  ".join(parts))
+        self.lbl_angles.setText(f"Input: {s_in}")
+        self._refresh_measure_table()
 
     def _set_driver_from_selection(self):
         pair = self._selected_two_points()
@@ -209,20 +195,8 @@ class SimulationPanel(QWidget):
         self.ctrl.set_driver_joint(i, j, k)
         self.refresh_labels()
 
-    def _set_output_from_selection(self):
-        pair = self._selected_two_points()
-        if not pair:
-            return
-        pivot, tip = pair
-        self.ctrl.set_output(pivot, tip)
-        self.refresh_labels()
-
     def _clear_driver(self):
         self.ctrl.clear_driver()
-        self.refresh_labels()
-
-    def _clear_output(self):
-        self.ctrl.clear_output()
         self.refresh_labels()
 
     def _add_measure_vector_from_selection(self):
@@ -244,6 +218,17 @@ class SimulationPanel(QWidget):
     def _clear_measures(self):
         self.ctrl.clear_measures()
         self.refresh_labels()
+
+    def _refresh_measure_table(self):
+        mv = self.ctrl.get_measure_values_deg()
+        self.table_meas.setRowCount(len(mv))
+        for row, (nm, val) in enumerate(mv):
+            name_item = QTableWidgetItem(str(nm))
+            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}°")
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_meas.setItem(row, 0, name_item)
+            self.table_meas.setItem(row, 1, value_item)
 
     # ---- sweep ----
     def play(self):
@@ -333,7 +318,6 @@ class SimulationPanel(QWidget):
             "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
             "ok": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
-            "output_deg": self.ctrl.get_output_angle_deg(),
         }
         for nm, val in self.ctrl.get_measure_values_deg():
             rec[nm] = val
@@ -368,7 +352,7 @@ class SimulationPanel(QWidget):
             path += ".csv"
 
         # gather all columns that appeared
-        cols = ["time", "input_deg", "output_deg"]
+        cols = ["time", "input_deg"]
         extra = []
         for r in self._records:
             for k in r.keys():
