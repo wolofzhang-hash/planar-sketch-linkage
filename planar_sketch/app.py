@@ -12,7 +12,7 @@ from .ui.main_window import MainWindow
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec())
 
 
