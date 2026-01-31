@@ -2836,6 +2836,14 @@ class SketchController:
         return {
             "version": "2.7.0",
             "parameters": self.parameters.to_list(),
+            "background_image": {
+                "path": self.background_image.get("path"),
+                "visible": bool(self.background_image.get("visible", True)),
+                "opacity": float(self.background_image.get("opacity", 0.6)),
+                "grayscale": bool(self.background_image.get("grayscale", False)),
+                "scale": float(self.background_image.get("scale", 1.0)),
+                "pos": list(self.background_image.get("pos", (0.0, 0.0))),
+            },
             "points": [
                 {
                     "id": pid,
@@ -2897,12 +2905,34 @@ class SketchController:
                  "rigid_edges": list(b.get("rigid_edges", []))}
                 for bid, b in sorted(self.bodies.items(), key=lambda kv: kv[0])
             ],
+            "driver": {
+                "enabled": bool(self.driver.get("enabled", False)),
+                "type": str(self.driver.get("type", "vector")),
+                "pivot": self.driver.get("pivot"),
+                "tip": self.driver.get("tip"),
+                "i": self.driver.get("i"),
+                "j": self.driver.get("j"),
+                "k": self.driver.get("k"),
+                "rad": float(self.driver.get("rad", 0.0)),
+            },
             "output": {
                 "enabled": bool(self.output.get("enabled", False)),
                 "pivot": self.output.get("pivot"),
                 "tip": self.output.get("tip"),
                 "rad": float(self.output.get("rad", 0.0)),
             },
+            "measures": [
+                {
+                    "type": str(m.get("type", "")),
+                    "name": str(m.get("name", "")),
+                    "pivot": m.get("pivot"),
+                    "tip": m.get("tip"),
+                    "i": m.get("i"),
+                    "j": m.get("j"),
+                    "k": m.get("k"),
+                }
+                for m in self.measures
+            ],
             "loads": [
                 {
                     "type": str(ld.get("type", "force")),
@@ -2928,19 +2958,32 @@ class SketchController:
         self._drag_active = False
         self._drag_pid = None
         self._drag_before = None
+        background_info = data.get("background_image") or data.get("background") or {}
+        self.background_image = {
+            "path": None,
+            "visible": True,
+            "opacity": 0.6,
+            "grayscale": False,
+            "scale": 1.0,
+            "pos": (0.0, 0.0),
+        }
+        if isinstance(background_info, dict):
+            self.background_image["path"] = background_info.get("path")
+            self.background_image["visible"] = bool(background_info.get("visible", True))
+            self.background_image["opacity"] = float(background_info.get("opacity", 0.6))
+            self.background_image["grayscale"] = bool(background_info.get("grayscale", False))
+            self.background_image["scale"] = float(background_info.get("scale", 1.0))
+            pos = background_info.get("pos", (0.0, 0.0))
+            try:
+                self.background_image["pos"] = (float(pos[0]), float(pos[1]))
+            except Exception:
+                self.background_image["pos"] = (0.0, 0.0)
         self.scene.blockSignals(True)
         try:
             self.scene.clear()
             self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
             self._background_item = None
-            if self._background_image_original is not None:
-                self._ensure_background_item()
-                self._apply_background_pixmap()
-                scale = float(self.background_image.get("scale", 1.0))
-                pos = self.background_image.get("pos", (0.0, 0.0))
-                if self._background_item is not None:
-                    self._background_item.setScale(scale)
-                    self._background_item.setPos(float(pos[0]), float(pos[1]))
+            self._background_image_original = None
         finally:
             self.scene.blockSignals(False)
         self._load_arrow_items = []
@@ -2962,10 +3005,54 @@ class SketchController:
             coincs = data.get("coincides", [])
             pls = data.get("point_lines", [])
             pss = data.get("point_splines", [])
+        if constraints_list:
+            spls = data.get("splines", [])
+            legacy_point_lines = data.get("point_lines", []) or []
+            legacy_point_splines = data.get("point_splines", []) or []
+            existing_plids = {int(pl.get("id", -1)) for pl in (pls or [])}
+            existing_psids = {int(ps.get("id", -1)) for ps in (pss or [])}
+            for pl in legacy_point_lines:
+                try:
+                    plid = int(pl.get("id", -1))
+                except Exception:
+                    continue
+                if plid in existing_plids:
+                    continue
+                pls = list(pls or []) + [pl]
+                existing_plids.add(plid)
+            for ps in legacy_point_splines:
+                try:
+                    psid = int(ps.get("id", -1))
+                except Exception:
+                    continue
+                if psid in existing_psids:
+                    continue
+                pss = list(pss or []) + [ps]
+                existing_psids.add(psid)
         bods = data.get("bodies", [])
+        driver = data.get("driver", {}) or {}
         output = data.get("output", {}) or {}
+        measures = data.get("measures", []) or []
         loads = data.get("loads", []) or []
         load_measures = data.get("load_measures", []) or []
+        bg_path = self.background_image.get("path")
+        if bg_path:
+            image = QImage(bg_path)
+            if not image.isNull():
+                self._background_image_original = image
+                self._ensure_background_item()
+                self._apply_background_pixmap()
+                scale = float(self.background_image.get("scale", 1.0))
+                pos = self.background_image.get("pos", (0.0, 0.0))
+                if self._background_item is not None:
+                    self._background_item.setScale(scale)
+                    self._background_item.setPos(float(pos[0]), float(pos[1]))
+                self.set_background_visible(bool(self.background_image.get("visible", True)))
+                self.set_background_opacity(float(self.background_image.get("opacity", 0.6)))
+                self.set_background_grayscale(bool(self.background_image.get("grayscale", False)))
+            else:
+                self.background_image["path"] = None
+                self._background_image_original = None
         max_pid = -1
         any_traj_enabled = False
         for p in pts:
@@ -3011,6 +3098,33 @@ class SketchController:
             if "rigid_edges" in b and b["rigid_edges"]:
                 self.bodies[bid]["rigid_edges"] = [tuple(x) for x in b["rigid_edges"]]
 
+        self.driver = {
+            "enabled": bool(driver.get("enabled", False)),
+            "type": str(driver.get("type", "vector")),
+            "pivot": driver.get("pivot"),
+            "tip": driver.get("tip"),
+            "i": driver.get("i"),
+            "j": driver.get("j"),
+            "k": driver.get("k"),
+            "rad": float(driver.get("rad", 0.0) or 0.0),
+        }
+        if self.driver.get("enabled") and "rad" not in driver:
+            dtype = str(self.driver.get("type", "vector"))
+            if dtype == "joint":
+                i = self.driver.get("i")
+                j = self.driver.get("j")
+                k = self.driver.get("k")
+                if i is not None and j is not None and k is not None:
+                    ang = self.get_joint_angle_rad(int(i), int(j), int(k))
+                    if ang is not None:
+                        self.driver["rad"] = float(ang)
+            else:
+                piv = self.driver.get("pivot")
+                tip = self.driver.get("tip")
+                if piv is not None and tip is not None:
+                    ang = self.get_vector_angle_rad(int(piv), int(tip))
+                    if ang is not None:
+                        self.driver["rad"] = float(ang)
         self.output = {
             "enabled": bool(output.get("enabled", False)),
             "pivot": output.get("pivot"),
@@ -3024,6 +3138,36 @@ class SketchController:
                 ang = self.get_vector_angle_rad(int(piv), int(tip))
                 if ang is not None:
                     self.output["rad"] = float(ang)
+        self.measures = []
+        for m in measures:
+            mtype = str(m.get("type", "")).lower()
+            name = str(m.get("name", ""))
+            if mtype == "vector":
+                pivot = m.get("pivot")
+                tip = m.get("tip")
+                if pivot is None or tip is None:
+                    continue
+                if int(pivot) in self.points and int(tip) in self.points:
+                    self.measures.append({
+                        "type": "vector",
+                        "pivot": int(pivot),
+                        "tip": int(tip),
+                        "name": name or f"vec P{int(pivot)}->P{int(tip)}",
+                    })
+            elif mtype == "joint":
+                i = m.get("i")
+                j = m.get("j")
+                k = m.get("k")
+                if i is None or j is None or k is None:
+                    continue
+                if int(i) in self.points and int(j) in self.points and int(k) in self.points:
+                    self.measures.append({
+                        "type": "joint",
+                        "i": int(i),
+                        "j": int(j),
+                        "k": int(k),
+                        "name": name or f"ang P{int(i)}-P{int(j)}-P{int(k)}",
+                    })
         self.loads = []
         for ld in loads:
             pid = int(ld.get("pid", -1))
