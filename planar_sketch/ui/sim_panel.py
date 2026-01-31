@@ -163,8 +163,19 @@ class SimulationPanel(QWidget):
         load_buttons.addWidget(self.btn_clear_loads)
         loads_layout.addLayout(load_buttons)
 
-        self.table_joint_loads = QTableWidget(0, 5)
-        self.table_joint_loads.setHorizontalHeaderLabels(["Point", "Fx", "Fy", "Fz", "Mag"])
+        # Quasi-static summary (torques)
+        qs_info = QHBoxLayout()
+        self.lbl_qs_mode = QLabel("Quasi-static: --")
+        self.lbl_tau_in = QLabel("Input τ: --")
+        self.lbl_tau_out = QLabel("Output τ: --")
+        qs_info.addWidget(self.lbl_qs_mode)
+        qs_info.addWidget(self.lbl_tau_in)
+        qs_info.addWidget(self.lbl_tau_out)
+        loads_layout.addLayout(qs_info)
+
+        # Quasi-static joint loads (passive constraints only; actuator/closure torque reported separately)
+        self.table_joint_loads = QTableWidget(0, 4)
+        self.table_joint_loads.setHorizontalHeaderLabels(["Point", "Fx", "Fy", "Mag"])
         self.table_joint_loads.verticalHeader().setVisible(False)
         self.table_joint_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_joint_loads.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
@@ -363,19 +374,28 @@ class SimulationPanel(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table_loads.setItem(row, col, item)
 
-        joint_loads = self.ctrl.compute_quasistatic_joint_loads()
+        joint_loads, qs = self.ctrl.compute_quasistatic_report()
+
+        mode = qs.get("mode", "--")
+        self.lbl_qs_mode.setText(f"Quasi-static: {mode}")
+
+        tau_in = qs.get("tau_input", None)
+        tau_out = qs.get("tau_output", None)
+        self.lbl_tau_in.setText("Input τ: --" if tau_in is None else f"Input τ: {tau_in:.3f}")
+        self.lbl_tau_out.setText("Output τ: --" if tau_out is None else f"Output τ: {tau_out:.3f}")
+
         self.table_joint_loads.setRowCount(len(joint_loads))
         for row, jl in enumerate(joint_loads):
             items = [
                 QTableWidgetItem(f"P{jl.get('pid')}"),
                 QTableWidgetItem(f"{jl.get('fx', 0.0):.3f}"),
                 QTableWidgetItem(f"{jl.get('fy', 0.0):.3f}"),
-                QTableWidgetItem(f"{jl.get('fz', 0.0):.3f}"),
                 QTableWidgetItem(f"{jl.get('mag', 0.0):.3f}"),
             ]
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table_joint_loads.setItem(row, col, item)
+
 
     # ---- sweep ----
     def play(self):

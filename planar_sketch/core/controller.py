@@ -3070,14 +3070,32 @@ class SketchController:
 
     def clear_loads(self):
         self.loads = []
+    def _build_quasistatic_constraints(
+        self,
+        point_ids: List[int],
+        *,
+        include_driver: bool,
+        include_output: bool,
+    ) -> Tuple[List[Callable[[np.ndarray], float]], List[str], List[Dict[str, Any]]]:
+        """Build constraint functions for quasi-static evaluation.
 
-    def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Callable[[np.ndarray], float]]:
+        Returns (funcs, roles, meta) where:
+          - roles[i] in {"passive","actuator","output"} for funcs[i]
+          - meta[i] provides small bits of info (e.g., type, pivot) for reporting torques.
+        """
         idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
         funcs: List[Callable[[np.ndarray], float]] = []
+        roles: List[str] = []
+        meta: List[Dict[str, Any]] = []
 
         def _xy(q: np.ndarray, pid: int) -> tuple[float, float]:
             idx = idx_map[pid]
             return float(q[2 * idx]), float(q[2 * idx + 1])
+
+        def _add(fn: Callable[[np.ndarray], float], role: str, info: Optional[Dict[str, Any]] = None):
+            funcs.append(fn)
+            roles.append(role)
+            meta.append(info or {})
 
         # Fixed points (x, y lock)
         for pid in point_ids:
@@ -3085,8 +3103,8 @@ class SketchController:
             if not bool(p.get("fixed", False)):
                 continue
             x0, y0 = float(p["x"]), float(p["y"])
-            funcs.append(lambda q, pid=pid, x0=x0: _xy(q, pid)[0] - x0)
-            funcs.append(lambda q, pid=pid, y0=y0: _xy(q, pid)[1] - y0)
+            _add(lambda q, pid=pid, x0=x0: _xy(q, pid)[0] - x0, "passive", {"type": "fixed_x", "pid": pid})
+            _add(lambda q, pid=pid, y0=y0: _xy(q, pid)[1] - y0, "passive", {"type": "fixed_y", "pid": pid})
 
         # Coincide constraints (point-point)
         for c in self.coincides.values():
@@ -3096,8 +3114,8 @@ class SketchController:
             b = int(c.get("b", -1))
             if a not in idx_map or b not in idx_map:
                 continue
-            funcs.append(lambda q, a=a, b=b: _xy(q, a)[0] - _xy(q, b)[0])
-            funcs.append(lambda q, a=a, b=b: _xy(q, a)[1] - _xy(q, b)[1])
+            _add(lambda q, a=a, b=b: _xy(q, a)[0] - _xy(q, b)[0], "passive", {"type": "coincide_x", "a": a, "b": b})
+            _add(lambda q, a=a, b=b: _xy(q, a)[1] - _xy(q, b)[1], "passive", {"type": "coincide_y", "a": a, "b": b})
 
         # Point-on-line constraints
         for pl in self.point_lines.values():
@@ -3119,7 +3137,7 @@ class SketchController:
                     return 0.0
                 return ((px - ax) * (-aby) + (py - ay) * abx) / denom
 
-            funcs.append(_pol)
+            _add(_pol, "passive", {"type": "point_line", "p": p_id, "i": i_id, "j": j_id})
 
         # Point-on-spline constraints (distance to closest sampled point)
         for ps in self.point_splines.values():
@@ -3140,7 +3158,7 @@ class SketchController:
                 _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
                 return math.sqrt(dist2)
 
-            funcs.append(_pos)
+            _add(_pos, "passive", {"type": "point_spline", "p": p_id, "s": s_id})
 
         # Rigid body edges
         body_edges: List[Tuple[int, int, float]] = []
@@ -3155,7 +3173,7 @@ class SketchController:
                 xj, yj = _xy(q, j)
                 return math.hypot(xj - xi, yj - yi) - float(L)
 
-            funcs.append(_len)
+            _add(_len, "passive", {"type": "rigid_edge", "i": i, "j": j})
 
         # Length constraints (links)
         for l in self.links.values():
@@ -3170,7 +3188,7 @@ class SketchController:
                 xj, yj = _xy(q, j)
                 return math.hypot(xj - xi, yj - yi) - float(L)
 
-            funcs.append(_len)
+            _add(_len, "passive", {"type": "link_len", "i": i, "j": j})
 
         # Angle constraints
         for a in self.angles.values():
@@ -3192,10 +3210,29 @@ class SketchController:
                 cur = angle_between(v1x, v1y, v2x, v2y)
                 return clamp_angle_rad(cur - target)
 
-            funcs.append(_ang)
+            _add(_ang, "passive", {"type": "angle", "i": i, "j": j, "k": k})
 
-        # Driver constraint (if enabled)
-        if self.driver.get("enabled"):
+        # Closure / actuator constraints
+        # Policy:
+        #   - Kinematics uses self.driver (motion input).
+        #   - Quasi-static closure uses output constraint if enabled; otherwise uses driver.
+        #   - The closure constraint is NOT counted into "Joint Loads" (it is reported separately as a torque).
+        if include_output and self.output.get("enabled"):
+            piv = self.output.get("pivot")
+            tip = self.output.get("tip")
+            if piv in idx_map and tip in idx_map:
+                target = float(self.output.get("rad", 0.0))
+
+                def _out(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                    px, py = _xy(q, int(piv))
+                    tx, ty = _xy(q, int(tip))
+                    dx, dy = tx - px, ty - py
+                    if abs(dx) + abs(dy) < 1e-12:
+                        return 0.0
+                    return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                _add(_out, "output", {"type": "output_angle", "pivot": int(piv), "tip": int(tip)})
+        elif include_driver and self.driver.get("enabled"):
             if self.driver.get("type") == "joint":
                 i = self.driver.get("i")
                 j = self.driver.get("j")
@@ -3214,7 +3251,7 @@ class SketchController:
                         cur = angle_between(v1x, v1y, v2x, v2y)
                         return clamp_angle_rad(cur - target)
 
-                    funcs.append(_drv)
+                    _add(_drv, "actuator", {"type": "driver_joint", "i": int(i), "j": int(j), "k": int(k)})
             else:
                 piv = self.driver.get("pivot")
                 tip = self.driver.get("tip")
@@ -3229,47 +3266,116 @@ class SketchController:
                             return 0.0
                         return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                    funcs.append(_drv)
+                    _add(_drv, "actuator", {"type": "driver_angle", "pivot": int(piv), "tip": int(tip)})
 
-        return funcs
+        return funcs, roles, meta
 
-    def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
+    def compute_quasistatic_report(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Compute quasi-static joint loads and a small summary.
+
+        - Motion input (driver) is used for kinematics.
+        - If output is enabled, quasi-static closure uses output constraint (so driver will not
+          appear as a huge 'constraint load' at the input joint).
+        - The closure constraint torque is reported separately as input/output torque.
+        """
         point_ids = sorted(list(self.points.keys()))
         if not point_ids:
-            return []
+            return [], {"mode": "none"}
 
         idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
         q = np.array([coord for pid in point_ids for coord in (self.points[pid]["x"], self.points[pid]["y"])], dtype=float)
         ndof = len(q)
+
+        # External forces on translational DOFs
         f_ext = np.zeros(ndof, dtype=float)
-        torque_map: Dict[int, float] = {pid: 0.0 for pid in point_ids}
+
+        # Collect applied torques and convert them to equivalent force couples
+        applied_torque: Dict[int, float] = {pid: 0.0 for pid in point_ids}
+
+        def _pick_neighbor(pid: int) -> Optional[int]:
+            # Prefer link neighbors, then rigid edges.
+            neigh: List[int] = []
+            for l in self.links.values():
+                if l.get("ref", False):
+                    continue
+                i, j = int(l.get("i", -1)), int(l.get("j", -1))
+                if i == pid and j in idx_map:
+                    neigh.append(j)
+                elif j == pid and i in idx_map:
+                    neigh.append(i)
+            if neigh:
+                return neigh[0]
+            for b in self.bodies.values():
+                for (i, j, _L) in b.get("rigid_edges", []):
+                    if i == pid and j in idx_map:
+                        return int(j)
+                    if j == pid and i in idx_map:
+                        return int(i)
+            return None
+
+        # Apply loads
         for load in self.loads:
             pid = int(load.get("pid", -1))
-            if pid not in self.points:
+            if pid not in idx_map:
                 continue
             idx = idx_map[pid]
             fx = float(load.get("fx", 0.0))
             fy = float(load.get("fy", 0.0))
+            mz = float(load.get("mz", 0.0))
             f_ext[2 * idx] += fx
             f_ext[2 * idx + 1] += fy
-            torque_map[pid] = torque_map.get(pid, 0.0) + float(load.get("mz", 0.0))
+            if abs(mz) > 0.0:
+                applied_torque[pid] = applied_torque.get(pid, 0.0) + mz
 
-        funcs = self._build_quasistatic_constraints(point_ids)
+        # Convert each applied torque into a force couple (net force = 0, net moment = Mz)
+        for pid, mz in list(applied_torque.items()):
+            if abs(mz) < 1e-12:
+                continue
+            nb = _pick_neighbor(pid)
+            if nb is None:
+                # No neighbor => cannot form a couple; keep it only for display.
+                continue
+            i = idx_map[pid]
+            j = idx_map[nb]
+            xi, yi = float(q[2 * i]), float(q[2 * i + 1])
+            xj, yj = float(q[2 * j]), float(q[2 * j + 1])
+            rx, ry = (xj - xi), (yj - yi)
+            r2 = rx * rx + ry * ry
+            if r2 < 1e-12:
+                continue
+            # F such that r x F = mz  =>  F = (mz/r^2) * (-ry, rx)
+            scale = float(mz) / r2
+            Fx, Fy = (-ry * scale), (rx * scale)
+            # Apply +F at neighbor, -F at pid
+            f_ext[2 * j] += Fx
+            f_ext[2 * j + 1] += Fy
+            f_ext[2 * i] -= Fx
+            f_ext[2 * i + 1] -= Fy
+
+        # Build constraints for quasi-static
+        use_output = bool(self.output.get("enabled"))
+        funcs, roles, meta = self._build_quasistatic_constraints(
+            point_ids,
+            include_driver=bool(self.driver.get("enabled")) and (not use_output),
+            include_output=use_output,
+        )
+
         if not funcs:
-            out = []
+            # No constraints -> reactions are just the negative external forces.
+            joint_loads: List[Dict[str, Any]] = []
             for idx, pid in enumerate(point_ids):
                 fx = -float(f_ext[2 * idx])
                 fy = -float(f_ext[2 * idx + 1])
-                fz = float(torque_map.get(pid, 0.0))
-                mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-                out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
-            return out
+                mag = math.hypot(fx, fy)
+                joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
+            return joint_loads, {"mode": "none"}
 
         def eval_constraints(qvec: np.ndarray) -> np.ndarray:
             return np.array([fn(qvec) for fn in funcs], dtype=float)
 
         eps = 1e-6
-        m = len(eval_constraints(q))
+        c0 = eval_constraints(q)
+        m = int(c0.size)
         J = np.zeros((m, ndof), dtype=float)
         for i in range(ndof):
             dq = np.zeros_like(q)
@@ -3278,23 +3384,46 @@ class SketchController:
             fm = eval_constraints(q - dq)
             J[:, i] = (fp - fm) / (2.0 * eps)
 
+        summary: Dict[str, Any] = {"mode": "output" if use_output else ("driver" if self.driver.get("enabled") else "none")}
+        summary["tau_input"] = None
+        summary["tau_output"] = None
+
         if J.size == 0:
-            reaction = np.zeros_like(f_ext)
+            lam = np.zeros(m, dtype=float)
         else:
             try:
                 lam, *_ = np.linalg.lstsq(J.T, -f_ext, rcond=None)
-                reaction = J.T @ lam
             except np.linalg.LinAlgError:
-                reaction = np.zeros_like(f_ext)
+                lam = np.zeros(m, dtype=float)
 
-        out: List[Dict[str, Any]] = []
+        # Report closure torques (do NOT include in joint loads table)
+        lam = np.asarray(lam, dtype=float)
+        for k, role in enumerate(roles):
+            if role == "actuator":
+                # Driver torque (only used when output is disabled)
+                summary["tau_input"] = float(lam[k]) if summary.get("tau_input") is None else float(summary["tau_input"]) + float(lam[k])
+            elif role == "output":
+                summary["tau_output"] = float(lam[k]) if summary.get("tau_output") is None else float(summary["tau_output"]) + float(lam[k])
+
+        # Joint loads: only passive constraints (exclude actuator/output closure)
+        mask_passive = np.array([1.0 if r == "passive" else 0.0 for r in roles], dtype=float)
+        lam_passive = lam * mask_passive
+        reaction_passive = J.T @ lam_passive if J.size else np.zeros_like(f_ext)
+
+        joint_loads: List[Dict[str, Any]] = []
         for idx, pid in enumerate(point_ids):
-            fx = float(reaction[2 * idx])
-            fy = float(reaction[2 * idx + 1])
-            fz = float(torque_map.get(pid, 0.0))
-            mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-            out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
-        return out
+            fx = float(reaction_passive[2 * idx])
+            fy = float(reaction_passive[2 * idx + 1])
+            mag = math.hypot(fx, fy)
+            joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
+
+        return joint_loads, summary
+
+    def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
+        # Backwards-compatible wrapper for UI code that expects just the table rows.
+        joint_loads, _summary = self.compute_quasistatic_report()
+        return joint_loads
+
 
     # ---- Trajectories ----
     def set_show_trajectories(self, enabled: bool, reset: bool = False):
