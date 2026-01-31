@@ -356,12 +356,21 @@ class SketchController:
                 edges.append((i, j, L))
         return edges
 
-    def solve_constraints(self, iters: int = 60, drag_pid: Optional[int] = None):
+    def solve_constraints(
+        self,
+        iters: int = 60,
+        drag_pid: Optional[int] = None,
+        drag_target_pid: Optional[int] = None,
+        drag_target_xy: Optional[Tuple[float, float]] = None,
+        drag_alpha: float = 0.45,
+    ):
         """Solve geometric constraints (interactive PBD backend).
 
         Notes:
         - Called frequently (e.g. during point dragging).
         - Must keep the dragged point locked via drag_pid to avoid fighting user input.
+        - drag_target_pid + drag_target_xy allows soft dragging: we attract a point
+          toward the cursor while still enforcing constraints.
         - Expression-bound numeric fields are recomputed before solving.
         """
         # Update any expression-bound values before solving.
@@ -418,6 +427,18 @@ class SketchController:
 
         # PBD-style iterations
         for _ in range(max(1, int(iters))):
+            if (
+                drag_target_pid is not None
+                and drag_target_xy is not None
+                and drag_target_pid in self.points
+                and drag_target_pid not in driven_pids
+            ):
+                tp = self.points[drag_target_pid]
+                if not bool(tp.get("fixed", False)):
+                    tx, ty = float(drag_target_xy[0]), float(drag_target_xy[1])
+                    a = max(0.0, min(1.0, float(drag_alpha)))
+                    tp["x"] = float(tp["x"]) + a * (tx - float(tp["x"]))
+                    tp["y"] = float(tp["y"]) + a * (ty - float(tp["y"]))
             # (1) Hard driver first
             if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
                 if drag_pid in (driver_i, driver_j, driver_k):
@@ -2275,8 +2296,11 @@ class SketchController:
             self._drag_active = True
             self._drag_pid = pid
             self._drag_before = self.snapshot_points()
-        self.points[pid]["x"] = float(nx); self.points[pid]["y"] = float(ny)
-        self.solve_constraints(drag_pid=pid)
+        self.solve_constraints(
+            drag_target_pid=pid,
+            drag_target_xy=(float(nx), float(ny)),
+            drag_pid=None,
+        )
         self.update_graphics()
         self.append_trajectories()
         if self.panel: self.panel.refresh_fast()
