@@ -56,22 +56,16 @@ class SimulationPanel(QWidget):
         # Driver
         row = QHBoxLayout()
         self.lbl_driver = QLabel("Driver: (not set)")
-        self.btn_set_driver_vec = QPushButton("Set Vector Driver (2 pts)")
-        self.btn_set_driver_joint = QPushButton("Set Joint Driver (3 pts)")
         self.btn_clear_driver = QPushButton("Clear")
         row.addWidget(self.lbl_driver, 1)
-        row.addWidget(self.btn_set_driver_vec)
-        row.addWidget(self.btn_set_driver_joint)
         row.addWidget(self.btn_clear_driver)
         main_layout.addLayout(row)
 
         # Output
         out_row = QHBoxLayout()
         self.lbl_output = QLabel("Output: (not set)")
-        self.btn_set_output = QPushButton("Set Output (2 pts)")
         self.btn_clear_output = QPushButton("Clear")
         out_row.addWidget(self.lbl_output, 1)
-        out_row.addWidget(self.btn_set_output)
         out_row.addWidget(self.btn_clear_output)
         main_layout.addLayout(out_row)
 
@@ -119,7 +113,6 @@ class SimulationPanel(QWidget):
         main_layout.addLayout(btns)
 
         main_layout.addStretch(1)
-        tabs.addTab(main_tab, "Simulation")
 
         measurements_tab = QWidget()
         measurements_layout = QVBoxLayout(measurements_tab)
@@ -141,8 +134,6 @@ class SimulationPanel(QWidget):
         measurements_layout.addLayout(meas_buttons)
 
         measurements_layout.addStretch(1)
-        tabs.addTab(measurements_tab, "Measurements")
-
         loads_tab = QWidget()
         loads_layout = QVBoxLayout(loads_tab)
 
@@ -184,13 +175,13 @@ class SimulationPanel(QWidget):
         loads_layout.addWidget(self.table_joint_loads)
 
         loads_layout.addStretch(1)
+
         tabs.addTab(loads_tab, "Loads")
+        tabs.addTab(measurements_tab, "Measurements")
+        tabs.addTab(main_tab, "Simulation")
 
         # Signals
-        self.btn_set_driver_vec.clicked.connect(self._set_driver_from_selection)
-        self.btn_set_driver_joint.clicked.connect(self._set_driver_joint_from_selection)
         self.btn_clear_driver.clicked.connect(self._clear_driver)
-        self.btn_set_output.clicked.connect(self._set_output_from_selection)
         self.btn_clear_output.clicked.connect(self._clear_output)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
         self.btn_delete_meas.clicked.connect(self._delete_selected_measure)

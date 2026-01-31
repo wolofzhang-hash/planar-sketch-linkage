@@ -34,7 +34,7 @@ class MainWindow(QMainWindow):
         self.dock.setWidget(self.panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         # Simulation dock (driver/measurements, I/O curve export)
-        self.sim_dock = QDockWidget("Simulation", self)
+        self.sim_dock = QDockWidget("Analysis", self)
         self.sim_panel = SimulationPanel(self.ctrl)
         self.sim_dock.setWidget(self.sim_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sim_dock)
