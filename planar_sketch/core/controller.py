@@ -2301,12 +2301,13 @@ class SketchController:
                             continue
                         sub_mjoint.addAction(f"A(P{i}-P{pid}-P{k})", lambda i=i, k=k: self.add_measure_joint(i, pid, k))
 
-            sub_meas.addSeparator()
-            sub_meas.addAction("Clear Measurements", self.clear_measures)
-            sub_load_meas = sub_meas.addMenu("Add Load Measurement")
+            sub_load_meas = sub_meas.addMenu("Load")
             sub_load_meas.addAction("Joint Load Fx", lambda: self.add_load_measure_joint(pid, "fx"))
             sub_load_meas.addAction("Joint Load Fy", lambda: self.add_load_measure_joint(pid, "fy"))
             sub_load_meas.addAction("Joint Load Mag", lambda: self.add_load_measure_joint(pid, "mag"))
+
+            sub_meas.addSeparator()
+            sub_meas.addAction("Clear Measurements", self.clear_measures)
             sub_meas.addAction("Clear Load Measurements", self.clear_load_measures)
 
             sub_out = m.addMenu("Set Output")
