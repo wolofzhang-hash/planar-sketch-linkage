@@ -107,6 +107,7 @@ class SketchController:
         # Display items for load arrows.
         self._load_arrow_items: List[ForceArrowItem] = []
         self._last_joint_loads: List[Dict[str, Any]] = []
+        self._last_quasistatic_summary: Dict[str, Any] = {}
         # Pose snapshots for "reset to initial".
         self._pose_initial: Optional[Dict[int, Tuple[float, float]]] = None
         self._pose_last_sim_start: Optional[Dict[int, Tuple[float, float]]] = None
@@ -949,6 +950,9 @@ class SketchController:
         omark = TextMarker("OUT")
         self.points[pid]["output_marker"] = omark
         self.scene.addItem(omark)
+        tmark = TextMarker("τ")
+        self.points[pid]["output_torque_marker"] = tmark
+        self.scene.addItem(tmark)
 
     def _remove_point(self, pid: int):
         if pid not in self.points: return
@@ -981,6 +985,8 @@ class SketchController:
             self.scene.removeItem(p["driver_marker"])
         if "output_marker" in p:
             self.scene.removeItem(p["output_marker"])
+        if "output_torque_marker" in p:
+            self.scene.removeItem(p["output_torque_marker"])
         del self.points[pid]
         self.selected_point_ids.discard(pid)
         if self.selected_point_id == pid:
@@ -2438,6 +2444,7 @@ class SketchController:
             pid = self.output.get("pivot")
             if pid is not None:
                 output_marker_pid = int(pid)
+        tau_out = self._last_quasistatic_summary.get("tau_output")
         for pid, p in self.points.items():
             it: PointItem = p["item"]
             it._internal = True
@@ -2478,6 +2485,18 @@ class SketchController:
                 and self.show_points_geometry
             )
             omark.setVisible(show_output)
+            tmark: TextMarker = p["output_torque_marker"]
+            tmark_bounds = tmark.boundingRect()
+            tmark.setPos(p["x"] - tmark_bounds.width() - 8, p["y"] + 6)
+            show_output_torque = (
+                self.show_dim_markers
+                and output_marker_pid == pid
+                and tau_out is not None
+                and abs(float(tau_out)) > 1e-9
+                and (not self.is_point_effectively_hidden(pid))
+                and self.show_points_geometry
+            )
+            tmark.setVisible(show_output_torque)
             titem = p.get("traj_item")
             if titem is not None:
                 show_traj = (
@@ -2555,7 +2574,8 @@ class SketchController:
             if abs(fx) + abs(fy) < 1e-12:
                 continue
             p = self.points[pid]
-            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy})
+            mag = math.hypot(fx, fy)
+            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy, "label": f"{mag:.3f}"})
 
         for jl in self._last_joint_loads:
             pid = int(jl.get("pid", -1))
@@ -2568,7 +2588,8 @@ class SketchController:
             if abs(fx) + abs(fy) < 1e-12:
                 continue
             p = self.points[pid]
-            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy})
+            mag = math.hypot(fx, fy)
+            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy, "label": f"{mag:.3f}"})
 
         needed = len(load_vectors)
         while len(self._load_arrow_items) < needed:
@@ -2591,7 +2612,7 @@ class SketchController:
                 vec["fx"],
                 vec["fy"],
                 scale=scale,
-                label=str(idx + 1),
+                label=str(vec.get("label", "")),
             )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -3403,7 +3424,9 @@ class SketchController:
         """
         point_ids = sorted(list(self.points.keys()))
         if not point_ids:
-            return [], {"mode": "none"}
+            summary = {"mode": "none", "tau_input": None, "tau_output": None}
+            self._last_quasistatic_summary = dict(summary)
+            return [], summary
 
         idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
         q = np.array([coord for pid in point_ids for coord in (self.points[pid]["x"], self.points[pid]["y"])], dtype=float)
@@ -3492,7 +3515,9 @@ class SketchController:
                 mag = math.hypot(fx, fy)
                 joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
             self._last_joint_loads = list(joint_loads)
-            return joint_loads, {"mode": "none"}
+            summary = {"mode": "none", "tau_input": None, "tau_output": None}
+            self._last_quasistatic_summary = dict(summary)
+            return joint_loads, summary
 
         def eval_constraints(qvec: np.ndarray) -> np.ndarray:
             return np.array([fn(qvec) for fn in funcs], dtype=float)
@@ -3551,6 +3576,7 @@ class SketchController:
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
 
         self._last_joint_loads = list(joint_loads)
+        self._last_quasistatic_summary = dict(summary)
         return joint_loads, summary
 
     def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
