@@ -54,6 +54,8 @@ class SketchView(QGraphicsView):
 
         if e.button() == Qt.MouseButton.LeftButton:
             item = self.itemAt(e.position().toPoint())
+            if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
+                item = None
             if item is None:
                 self.ctrl.commit_drag_if_any()
                 self._rb_active = True
