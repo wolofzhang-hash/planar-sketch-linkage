@@ -20,6 +20,8 @@ from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog
 
 import numpy as np
 
+import numpy as np
+
 from .commands import Command, CommandStack
 from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples
 from .solver import ConstraintSolver
@@ -2993,6 +2995,241 @@ class SketchController:
                     return clamp_angle_rad(math.atan2(dy, dx) - target)
 
                 funcs.append(_odrv)
+
+        return funcs
+
+    def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
+        point_ids = sorted(list(self.points.keys()))
+        if not point_ids:
+            return []
+
+        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
+        q = np.array([coord for pid in point_ids for coord in (self.points[pid]["x"], self.points[pid]["y"])], dtype=float)
+        ndof = len(q)
+        f_ext = np.zeros(ndof, dtype=float)
+        torque_map: Dict[int, float] = {pid: 0.0 for pid in point_ids}
+        for load in self.loads:
+            pid = int(load.get("pid", -1))
+            if pid not in self.points:
+                continue
+            idx = idx_map[pid]
+            fx = float(load.get("fx", 0.0))
+            fy = float(load.get("fy", 0.0))
+            f_ext[2 * idx] += fx
+            f_ext[2 * idx + 1] += fy
+            torque_map[pid] = torque_map.get(pid, 0.0) + float(load.get("mz", 0.0))
+
+        funcs = self._build_quasistatic_constraints(point_ids)
+        if not funcs:
+            out = []
+            for idx, pid in enumerate(point_ids):
+                fx = -float(f_ext[2 * idx])
+                fy = -float(f_ext[2 * idx + 1])
+                fz = float(torque_map.get(pid, 0.0))
+                mag = math.sqrt(fx * fx + fy * fy + fz * fz)
+                out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
+            return out
+
+        def eval_constraints(qvec: np.ndarray) -> np.ndarray:
+            return np.array([fn(qvec) for fn in funcs], dtype=float)
+
+        eps = 1e-6
+        m = len(eval_constraints(q))
+        J = np.zeros((m, ndof), dtype=float)
+        for i in range(ndof):
+            dq = np.zeros_like(q)
+            dq[i] = eps
+            fp = eval_constraints(q + dq)
+            fm = eval_constraints(q - dq)
+            J[:, i] = (fp - fm) / (2.0 * eps)
+
+        if J.size == 0:
+            reaction = np.zeros_like(f_ext)
+        else:
+            try:
+                lam, *_ = np.linalg.lstsq(J.T, -f_ext, rcond=None)
+                reaction = J.T @ lam
+            except np.linalg.LinAlgError:
+                reaction = np.zeros_like(f_ext)
+
+        out: List[Dict[str, Any]] = []
+        for idx, pid in enumerate(point_ids):
+            fx = float(reaction[2 * idx])
+            fy = float(reaction[2 * idx + 1])
+            fz = float(torque_map.get(pid, 0.0))
+            mag = math.sqrt(fx * fx + fy * fy + fz * fz)
+            out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
+        return out
+
+    # ---- Quasi-static loads ----
+    def add_load_force(self, pid: int, fx: float, fy: float):
+        self.loads.append({"type": "force", "pid": int(pid), "fx": float(fx), "fy": float(fy), "mz": 0.0})
+
+    def add_load_torque(self, pid: int, mz: float):
+        self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
+
+    def clear_loads(self):
+        self.loads = []
+
+    def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Callable[[np.ndarray], float]]:
+        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
+        funcs: List[Callable[[np.ndarray], float]] = []
+
+        def _xy(q: np.ndarray, pid: int) -> tuple[float, float]:
+            idx = idx_map[pid]
+            return float(q[2 * idx]), float(q[2 * idx + 1])
+
+        # Fixed points (x, y lock)
+        for pid in point_ids:
+            p = self.points[pid]
+            if not bool(p.get("fixed", False)):
+                continue
+            x0, y0 = float(p["x"]), float(p["y"])
+            funcs.append(lambda q, pid=pid, x0=x0: _xy(q, pid)[0] - x0)
+            funcs.append(lambda q, pid=pid, y0=y0: _xy(q, pid)[1] - y0)
+
+        # Coincide constraints (point-point)
+        for c in self.coincides.values():
+            if not bool(c.get("enabled", True)):
+                continue
+            a = int(c.get("a", -1))
+            b = int(c.get("b", -1))
+            if a not in idx_map or b not in idx_map:
+                continue
+            funcs.append(lambda q, a=a, b=b: _xy(q, a)[0] - _xy(q, b)[0])
+            funcs.append(lambda q, a=a, b=b: _xy(q, a)[1] - _xy(q, b)[1])
+
+        # Point-on-line constraints
+        for pl in self.point_lines.values():
+            if not bool(pl.get("enabled", True)):
+                continue
+            p_id = int(pl.get("p", -1))
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+            if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
+                continue
+
+            def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
+                px, py = _xy(q, p_id)
+                ax, ay = _xy(q, i_id)
+                bx, by = _xy(q, j_id)
+                abx, aby = bx - ax, by - ay
+                denom = math.hypot(abx, aby)
+                if denom < 1e-9:
+                    return 0.0
+                return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+
+            funcs.append(_pol)
+
+        # Point-on-spline constraints (distance to closest sampled point)
+        for ps in self.point_splines.values():
+            if not bool(ps.get("enabled", True)):
+                continue
+            p_id = int(ps.get("p", -1))
+            s_id = int(ps.get("s", -1))
+            if p_id not in idx_map or s_id not in self.splines:
+                continue
+            spline = self.splines[s_id]
+            cp_ids = [pid for pid in spline.get("points", []) if pid in idx_map]
+            if len(cp_ids) < 2:
+                continue
+
+            def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
+                px, py = _xy(q, p_id)
+                samples = build_spline_samples([_xy(q, cid) for cid in cp_ids])
+                _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
+                return math.sqrt(dist2)
+
+            funcs.append(_pos)
+
+        # Rigid body edges
+        body_edges: List[Tuple[int, int, float]] = []
+        for b in self.bodies.values():
+            body_edges.extend(b.get("rigid_edges", []))
+        for (i, j, L) in body_edges:
+            if i not in idx_map or j not in idx_map:
+                continue
+
+            def _len(q: np.ndarray, i=i, j=j, L=L) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                return math.hypot(xj - xi, yj - yi) - float(L)
+
+            funcs.append(_len)
+
+        # Length constraints (links)
+        for l in self.links.values():
+            if l.get("ref", False):
+                continue
+            i, j = int(l.get("i", -1)), int(l.get("j", -1))
+            if i not in idx_map or j not in idx_map:
+                continue
+
+            def _len(q: np.ndarray, i=i, j=j, L=l["L"]) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                return math.hypot(xj - xi, yj - yi) - float(L)
+
+            funcs.append(_len)
+
+        # Angle constraints
+        for a in self.angles.values():
+            if not bool(a.get("enabled", True)):
+                continue
+            i, j, k = int(a.get("i", -1)), int(a.get("j", -1)), int(a.get("k", -1))
+            if i not in idx_map or j not in idx_map or k not in idx_map:
+                continue
+            target = float(a.get("rad", 0.0))
+
+            def _ang(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                xk, yk = _xy(q, k)
+                v1x, v1y = xi - xj, yi - yj
+                v2x, v2y = xk - xj, yk - yj
+                if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                    return 0.0
+                cur = angle_between(v1x, v1y, v2x, v2y)
+                return clamp_angle_rad(cur - target)
+
+            funcs.append(_ang)
+
+        # Driver constraint (if enabled)
+        if self.driver.get("enabled"):
+            if self.driver.get("type") == "joint":
+                i = self.driver.get("i")
+                j = self.driver.get("j")
+                k = self.driver.get("k")
+                if i in idx_map and j in idx_map and k in idx_map:
+                    target = float(self.driver.get("rad", 0.0))
+
+                    def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                        xi, yi = _xy(q, int(i))
+                        xj, yj = _xy(q, int(j))
+                        xk, yk = _xy(q, int(k))
+                        v1x, v1y = xi - xj, yi - yj
+                        v2x, v2y = xk - xj, yk - yj
+                        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                            return 0.0
+                        cur = angle_between(v1x, v1y, v2x, v2y)
+                        return clamp_angle_rad(cur - target)
+
+                    funcs.append(_drv)
+            else:
+                piv = self.driver.get("pivot")
+                tip = self.driver.get("tip")
+                if piv in idx_map and tip in idx_map:
+                    target = float(self.driver.get("rad", 0.0))
+
+                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                        px, py = _xy(q, int(piv))
+                        tx, ty = _xy(q, int(tip))
+                        dx, dy = tx - px, ty - py
+                        if abs(dx) + abs(dy) < 1e-12:
+                            return 0.0
+                        return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                    funcs.append(_drv)
 
         return funcs
 

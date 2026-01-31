@@ -239,6 +239,12 @@ class SimulationPanel(QWidget):
         else:
             self.lbl_output.setText("Output: (not set)")
 
+        o = self.ctrl.output
+        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
+            self.lbl_output.setText(f"Output: vector P{o['pivot']} -> P{o['tip']}")
+        else:
+            self.lbl_output.setText("Output: (not set)")
+
         a_in = self.ctrl.get_input_angle_deg()
         a_out = self.ctrl.get_output_angle_deg()
         s_in = "--" if a_in is None else f"{a_in:.3f}°"
