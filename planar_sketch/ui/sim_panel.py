@@ -228,7 +228,16 @@ class SimulationPanel(QWidget):
             else:
                 self.lbl_driver.setText("Driver: (invalid)")
         else:
-            self.lbl_driver.setText("Driver: (not set)")
+            if self.ctrl.output.get("enabled"):
+                self.lbl_driver.setText("Driver: (using Output)")
+            else:
+                self.lbl_driver.setText("Driver: (not set)")
+
+        o = self.ctrl.output
+        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
+            self.lbl_output.setText(f"Output: vector P{o['pivot']} -> P{o['tip']}")
+        else:
+            self.lbl_output.setText("Output: (not set)")
 
         o = self.ctrl.output
         if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
@@ -370,8 +379,8 @@ class SimulationPanel(QWidget):
 
     # ---- sweep ----
     def play(self):
-        if not self.ctrl.driver.get("enabled"):
-            QMessageBox.information(self, "Driver", "Set a driver first.")
+        if not self.ctrl.driver.get("enabled") and not self.ctrl.output.get("enabled"):
+            QMessageBox.information(self, "Driver", "Set a driver or output first.")
             return
         try:
             start = float(self.ed_start.text())
