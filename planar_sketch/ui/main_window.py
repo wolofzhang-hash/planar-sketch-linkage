@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox
+    QFileDialog, QMessageBox, QInputDialog
 )
 
 from ..core.controller import SketchController
@@ -130,6 +130,14 @@ class MainWindow(QMainWindow):
         self.act_load_arrows = QAction("Show Load Arrows", self, checkable=True); self.act_load_arrows.setChecked(True)
         self.act_load_arrows.triggered.connect(lambda c: self._toggle_load_arrows(c)); m_view.addAction(self.act_load_arrows)
         m_view.addSeparator()
+        m_bg = m_view.addMenu("Background Image")
+        m_bg.addAction("Load...", self.load_background_image)
+        self.act_bg_visible = QAction("Show Background", self, checkable=True); self.act_bg_visible.setChecked(True)
+        self.act_bg_visible.triggered.connect(lambda c: self._toggle_background_visible(c)); m_bg.addAction(self.act_bg_visible)
+        self.act_bg_gray = QAction("Grayscale", self, checkable=True)
+        self.act_bg_gray.triggered.connect(lambda c: self._toggle_background_grayscale(c)); m_bg.addAction(self.act_bg_gray)
+        m_bg.addAction("Set Opacity...", self.set_background_opacity)
+        m_bg.addAction("Clear", self.clear_background_image)
         m_presets = m_view.addMenu("Presets")
         m_presets.addAction("Show All", self.preset_show_all)
         m_presets.addAction("Points Only", self.preset_points_only)
@@ -190,6 +198,45 @@ class MainWindow(QMainWindow):
     def _toggle_load_arrows(self, checked: bool):
         self.ctrl.show_load_arrows = bool(checked)
         self.ctrl.update_graphics()
+    def _toggle_background_visible(self, checked: bool):
+        self.ctrl.set_background_visible(bool(checked))
+    def _toggle_background_grayscale(self, checked: bool):
+        self.ctrl.set_background_grayscale(bool(checked))
+
+    def load_background_image(self):
+        self.ctrl.commit_drag_if_any()
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Background Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif);;All Files (*)",
+        )
+        if not path:
+            return
+        if self.ctrl.load_background_image(path):
+            self.act_bg_visible.setChecked(True)
+            self.act_bg_gray.setChecked(bool(self.ctrl.background_image.get("grayscale", False)))
+            self.view.fit_all()
+
+    def clear_background_image(self):
+        self.ctrl.clear_background_image()
+        self.act_bg_visible.setChecked(True)
+        self.act_bg_gray.setChecked(False)
+
+    def set_background_opacity(self):
+        current = float(self.ctrl.background_image.get("opacity", 0.6)) * 100.0
+        val, ok = QInputDialog.getDouble(
+            self,
+            "Background Opacity",
+            "Opacity (0-100):",
+            current,
+            0.0,
+            100.0,
+            0,
+        )
+        if not ok:
+            return
+        self.ctrl.set_background_opacity(val / 100.0)
 
     def delete_selected(self):
         self.ctrl.commit_drag_if_any()

@@ -41,6 +41,10 @@ class SketchView(QGraphicsView):
 
     @safe_event
     def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self.ctrl.mode == "BackgroundImagePick":
+            sp = self.mapToScene(e.position().toPoint())
+            if self.ctrl.on_background_pick(sp):
+                e.accept(); return
         if e.button() == Qt.MouseButton.RightButton:
             self.ctrl.commit_drag_if_any()
             self._rmb_down = True
