@@ -2480,7 +2480,6 @@ class SketchController:
 
             sub_meas.addSeparator()
             sub_meas.addAction("Clear Measurements", self.clear_measures)
-            sub_meas.addAction("Clear Load Measurements", self.clear_load_measures)
 
             sub_out = m.addMenu("Set Output")
             for nb in nbrs:
@@ -3826,6 +3825,7 @@ class SketchController:
 
     def clear_measures(self):
         self.measures = []
+        self.load_measures = []
 
     def remove_measure_at(self, index: int):
         if index < 0 or index >= len(self.measures):
@@ -3840,6 +3840,11 @@ class SketchController:
 
     def clear_load_measures(self):
         self.load_measures = []
+
+    def remove_load_measure_at(self, index: int):
+        if index < 0 or index >= len(self.load_measures):
+            return
+        self.load_measures.pop(index)
 
     def get_measure_values_deg(self) -> List[tuple[str, Optional[float]]]:
         """Return measurement values in degrees.

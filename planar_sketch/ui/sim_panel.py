@@ -313,10 +313,10 @@ class SimulationPanel(QWidget):
             QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
             return
         row_info = self._measure_row_map[row]
-        if row_info["kind"] != "measure":
-            QMessageBox.information(self, "Measurements", "Load measurements cannot be deleted here.")
-            return
-        self.ctrl.remove_measure_at(row_info["index"])
+        if row_info["kind"] == "measure":
+            self.ctrl.remove_measure_at(row_info["index"])
+        elif row_info["kind"] == "load":
+            self.ctrl.remove_load_measure_at(row_info["index"])
         self.refresh_labels()
 
     def _refresh_measure_table(self):
