@@ -2303,6 +2303,11 @@ class SketchController:
 
             sub_meas.addSeparator()
             sub_meas.addAction("Clear Measurements", self.clear_measures)
+            sub_load_meas = sub_meas.addMenu("Add Load Measurement")
+            sub_load_meas.addAction("Joint Load Fx", lambda: self.add_load_measure_joint(pid, "fx"))
+            sub_load_meas.addAction("Joint Load Fy", lambda: self.add_load_measure_joint(pid, "fy"))
+            sub_load_meas.addAction("Joint Load Mag", lambda: self.add_load_measure_joint(pid, "mag"))
+            sub_meas.addAction("Clear Load Measurements", self.clear_load_measures)
 
             sub_out = m.addMenu("Set Output")
             for nb in nbrs:
@@ -2313,12 +2318,6 @@ class SketchController:
             sub_load = m.addMenu("Loads")
             sub_load.addAction("Add Force (Fx,Fy)", lambda: self._prompt_add_force(pid))
             sub_load.addAction("Add Torque (Mz)", lambda: self._prompt_add_torque(pid))
-            sub_load.addSeparator()
-            sub_load_meas = sub_load.addMenu("Add Load Measurement")
-            sub_load_meas.addAction("Joint Load Fx", lambda: self.add_load_measure_joint(pid, "fx"))
-            sub_load_meas.addAction("Joint Load Fy", lambda: self.add_load_measure_joint(pid, "fy"))
-            sub_load_meas.addAction("Joint Load Mag", lambda: self.add_load_measure_joint(pid, "mag"))
-            sub_load.addAction("Clear Load Measurements", self.clear_load_measures)
             sub_load.addSeparator()
             sub_load.addAction("Clear Loads", self.clear_loads)
 
@@ -3654,6 +3653,11 @@ class SketchController:
 
     def clear_measures(self):
         self.measures = []
+
+    def remove_measure_at(self, index: int):
+        if index < 0 or index >= len(self.measures):
+            return
+        self.measures.pop(index)
 
     def add_load_measure_joint(self, pid: int, component: str):
         component = component.lower()
