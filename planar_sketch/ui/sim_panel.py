@@ -20,7 +20,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
 )
 
 from .plot_window import PlotWindow
@@ -64,6 +64,16 @@ class SimulationPanel(QWidget):
         row.addWidget(self.btn_set_driver_joint)
         row.addWidget(self.btn_clear_driver)
         main_layout.addLayout(row)
+
+        # Output
+        out_row = QHBoxLayout()
+        self.lbl_output = QLabel("Output: (not set)")
+        self.btn_set_output = QPushButton("Set Output (2 pts)")
+        self.btn_clear_output = QPushButton("Clear")
+        out_row.addWidget(self.lbl_output, 1)
+        out_row.addWidget(self.btn_set_output)
+        out_row.addWidget(self.btn_clear_output)
+        main_layout.addLayout(out_row)
 
         # Current
         self.lbl_angles = QLabel("Input: --")
@@ -132,13 +142,51 @@ class SimulationPanel(QWidget):
         measurements_layout.addStretch(1)
         tabs.addTab(measurements_tab, "Measurements")
 
+        loads_tab = QWidget()
+        loads_layout = QVBoxLayout(loads_tab)
+
+        self.table_loads = QTableWidget(0, 5)
+        self.table_loads.setHorizontalHeaderLabels(["Point", "Type", "Fx", "Fy", "Mz"])
+        self.table_loads.verticalHeader().setVisible(False)
+        self.table_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_loads.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        loads_layout.addWidget(QLabel("Applied Loads"))
+        loads_layout.addWidget(self.table_loads)
+
+        load_buttons = QHBoxLayout()
+        self.btn_add_force = QPushButton("Add Force (1 pt)")
+        self.btn_add_torque = QPushButton("Add Torque (1 pt)")
+        self.btn_clear_loads = QPushButton("Clear")
+        load_buttons.addWidget(self.btn_add_force)
+        load_buttons.addWidget(self.btn_add_torque)
+        load_buttons.addWidget(self.btn_clear_loads)
+        loads_layout.addLayout(load_buttons)
+
+        self.table_joint_loads = QTableWidget(0, 5)
+        self.table_joint_loads.setHorizontalHeaderLabels(["Point", "Fx", "Fy", "Fz", "Mag"])
+        self.table_joint_loads.verticalHeader().setVisible(False)
+        self.table_joint_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_joint_loads.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_joint_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        loads_layout.addWidget(QLabel("Joint Loads (Quasi-static)"))
+        loads_layout.addWidget(self.table_joint_loads)
+
+        loads_layout.addStretch(1)
+        tabs.addTab(loads_tab, "Loads")
+
         # Signals
         self.btn_set_driver_vec.clicked.connect(self._set_driver_from_selection)
         self.btn_set_driver_joint.clicked.connect(self._set_driver_joint_from_selection)
         self.btn_clear_driver.clicked.connect(self._clear_driver)
+        self.btn_set_output.clicked.connect(self._set_output_from_selection)
+        self.btn_clear_output.clicked.connect(self._clear_output)
         self.btn_add_meas_vec.clicked.connect(self._add_measure_vector_from_selection)
         self.btn_add_meas_joint.clicked.connect(self._add_measure_joint_from_selection)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
+        self.btn_add_force.clicked.connect(self._add_force_from_selection)
+        self.btn_add_torque.clicked.connect(self._add_torque_from_selection)
+        self.btn_clear_loads.clicked.connect(self._clear_loads)
         self.btn_play.clicked.connect(self.play)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_reset_pose.clicked.connect(self.reset_pose)
@@ -162,6 +210,13 @@ class SimulationPanel(QWidget):
             return None
         return pids[0], pids[1], pids[2]
 
+    def _selected_one_point(self) -> Optional[int]:
+        pids = sorted(list(self.ctrl.selected_point_ids))
+        if len(pids) != 1:
+            QMessageBox.information(self, "Selection", "Please select exactly 1 point (Ctrl+Click).")
+            return None
+        return pids[0]
+
     # ---- UI actions ----
     def refresh_labels(self):
         d = self.ctrl.driver
@@ -173,12 +228,24 @@ class SimulationPanel(QWidget):
             else:
                 self.lbl_driver.setText("Driver: (invalid)")
         else:
-            self.lbl_driver.setText("Driver: (not set)")
+            if self.ctrl.output.get("enabled"):
+                self.lbl_driver.setText("Driver: (using Output)")
+            else:
+                self.lbl_driver.setText("Driver: (not set)")
+
+        o = self.ctrl.output
+        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
+            self.lbl_output.setText(f"Output: vector P{o['pivot']} -> P{o['tip']}")
+        else:
+            self.lbl_output.setText("Output: (not set)")
 
         a_in = self.ctrl.get_input_angle_deg()
+        a_out = self.ctrl.get_output_angle_deg()
         s_in = "--" if a_in is None else f"{a_in:.3f}°"
-        self.lbl_angles.setText(f"Input: {s_in}")
+        s_out = "--" if a_out is None else f"{a_out:.3f}°"
+        self.lbl_angles.setText(f"Input: {s_in} | Output: {s_out}")
         self._refresh_measure_table()
+        self._refresh_load_tables()
 
     def _set_driver_from_selection(self):
         pair = self._selected_two_points()
@@ -198,6 +265,18 @@ class SimulationPanel(QWidget):
 
     def _clear_driver(self):
         self.ctrl.clear_driver()
+        self.refresh_labels()
+
+    def _set_output_from_selection(self):
+        pair = self._selected_two_points()
+        if not pair:
+            return
+        pivot, tip = pair
+        self.ctrl.set_output(pivot, tip)
+        self.refresh_labels()
+
+    def _clear_output(self):
+        self.ctrl.clear_output()
         self.refresh_labels()
 
     def _add_measure_vector_from_selection(self):
@@ -231,10 +310,71 @@ class SimulationPanel(QWidget):
             self.table_meas.setItem(row, 0, name_item)
             self.table_meas.setItem(row, 1, value_item)
 
+    def _add_force_from_selection(self):
+        pid = self._selected_one_point()
+        if pid is None:
+            return
+        fx, ok = QInputDialog.getDouble(self, "Force X", "Fx", 0.0, decimals=4)
+        if not ok:
+            return
+        fy, ok = QInputDialog.getDouble(self, "Force Y", "Fy", 0.0, decimals=4)
+        if not ok:
+            return
+        self.ctrl.add_load_force(pid, fx, fy)
+        self.refresh_labels()
+
+    def _add_torque_from_selection(self):
+        pid = self._selected_one_point()
+        if pid is None:
+            return
+        mz, ok = QInputDialog.getDouble(self, "Torque", "Mz (out-of-plane)", 0.0, decimals=4)
+        if not ok:
+            return
+        self.ctrl.add_load_torque(pid, mz)
+        self.refresh_labels()
+
+    def _clear_loads(self):
+        self.ctrl.clear_loads()
+        self.refresh_labels()
+
+    def _refresh_load_tables(self):
+        loads = list(self.ctrl.loads)
+        self.table_loads.setRowCount(len(loads))
+        for row, ld in enumerate(loads):
+            pid = ld.get("pid", "--")
+            ltype = str(ld.get("type", "force"))
+            fx = ld.get("fx", 0.0)
+            fy = ld.get("fy", 0.0)
+            mz = ld.get("mz", 0.0)
+            items = [
+                QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
+                QTableWidgetItem(ltype),
+                QTableWidgetItem(f"{fx:.3f}"),
+                QTableWidgetItem(f"{fy:.3f}"),
+                QTableWidgetItem(f"{mz:.3f}"),
+            ]
+            for col, item in enumerate(items):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table_loads.setItem(row, col, item)
+
+        joint_loads = self.ctrl.compute_quasistatic_joint_loads()
+        self.table_joint_loads.setRowCount(len(joint_loads))
+        for row, jl in enumerate(joint_loads):
+            items = [
+                QTableWidgetItem(f"P{jl.get('pid')}"),
+                QTableWidgetItem(f"{jl.get('fx', 0.0):.3f}"),
+                QTableWidgetItem(f"{jl.get('fy', 0.0):.3f}"),
+                QTableWidgetItem(f"{jl.get('fz', 0.0):.3f}"),
+                QTableWidgetItem(f"{jl.get('mag', 0.0):.3f}"),
+            ]
+            for col, item in enumerate(items):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table_joint_loads.setItem(row, col, item)
+
     # ---- sweep ----
     def play(self):
-        if not self.ctrl.driver.get("enabled"):
-            QMessageBox.information(self, "Driver", "Set a driver first.")
+        if not self.ctrl.driver.get("enabled") and not self.ctrl.output.get("enabled"):
+            QMessageBox.information(self, "Driver", "Set a driver or output first.")
             return
         try:
             start = float(self.ed_start.text())
@@ -329,6 +469,7 @@ class SimulationPanel(QWidget):
             "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
             "ok": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
+            "output_deg": self.ctrl.get_output_angle_deg(),
         }
         for nm, val in self.ctrl.get_measure_values_deg():
             rec[nm] = val

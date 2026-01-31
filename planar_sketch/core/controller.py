@@ -12,11 +12,13 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Callable
 
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QPainterPath
-from PyQt6.QtWidgets import QGraphicsScene, QMenu
+from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog
+
+import numpy as np
 
 from .commands import Command, CommandStack
 from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples
@@ -92,9 +94,11 @@ class SketchController:
             "rad": 0.0,
         }
         # Output: measured angle of (pivot -> tip) relative to world +X.
-        self.output: Dict[str, Any] = {"enabled": False, "pivot": None, "tip": None}
+        self.output: Dict[str, Any] = {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
         # Extra measurements: a list of {type,name,...} items.
         self.measures: List[Dict[str, Any]] = []
+        # Quasi-static loads: list of {type,pid,fx,fy,mz}
+        self.loads: List[Dict[str, Any]] = []
         # Pose snapshots for "reset to initial".
         self._pose_initial: Optional[Dict[int, Tuple[float, float]]] = None
         self._pose_last_sim_start: Optional[Dict[int, Tuple[float, float]]] = None
@@ -214,13 +218,18 @@ class SketchController:
                 driver_pivot = int(self.driver["pivot"])
                 driver_tip = int(self.driver["tip"])
                 driven_pids = {driver_tip}
+        elif self.output.get("enabled") and self.output.get("pivot") is not None and self.output.get("tip") is not None:
+            driver_type = "output"
+            driver_pivot = int(self.output["pivot"])
+            driver_tip = int(self.output["tip"])
+            driven_pids = {driver_tip}
 
         # Allow editing lengths that belong to the active driver (avoid false OVER).
         driver_length_pairs: set[frozenset[int]] = set()
         if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
             driver_length_pairs.add(frozenset({driver_i, driver_j}))
             driver_length_pairs.add(frozenset({driver_j, driver_k}))
-        elif driver_type == "vector" and driver_pivot is not None and driver_tip is not None:
+        elif driver_type in ("vector", "output") and driver_pivot is not None and driver_tip is not None:
             driver_length_pairs.add(frozenset({driver_pivot, driver_tip}))
 
         # PBD-style iterations
@@ -249,9 +258,10 @@ class SketchController:
                     tip = self.points[driver_tip]
                     lock_piv = bool(piv.get("fixed", False)) or (drag_pid == driver_pivot)
                     lock_tip = bool(tip.get("fixed", False)) or (drag_pid == driver_tip)
+                    target = self.driver.get("rad", 0.0) if driver_type == "vector" else self.output.get("rad", 0.0)
                     ConstraintSolver.enforce_driver_angle(
                         piv, tip,
-                        float(self.driver.get("rad", 0.0)),
+                        float(target),
                         lock_piv,
                         lock_tip=lock_tip,
                     )
@@ -886,13 +896,20 @@ class SketchController:
 
         Returns (ok, message).
         """
-        if not self.driver.get("enabled"):
-            return False, "Driver not set"
-        if self._sim_zero_input_rad is not None:
-            target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+        if not self.driver.get("enabled") and not self.output.get("enabled"):
+            return False, "Driver or output not set"
+        if self.driver.get("enabled"):
+            if self._sim_zero_input_rad is not None:
+                target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            self.driver["rad"] = float(target)
         else:
-            target = math.radians(float(deg))
-        self.driver["rad"] = float(target)
+            if self._sim_zero_output_rad is not None:
+                target = float(self._sim_zero_output_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            self.output["rad"] = float(target)
         return self.solve_constraints_scipy(max_nfev=max_nfev)
 
     def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = False):
@@ -2268,6 +2285,18 @@ class SketchController:
             sub_meas.addSeparator()
             sub_meas.addAction("Clear Measurements", self.clear_measures)
 
+            sub_out = m.addMenu("Set Output")
+            for nb in nbrs:
+                sub_out.addAction(f"pivot P{pid} -> tip P{nb}", lambda nb=nb: self.set_output(pid, nb))
+            sub_out.addSeparator()
+            sub_out.addAction("Clear Output", self.clear_output)
+
+            sub_load = m.addMenu("Loads")
+            sub_load.addAction("Add Force (Fx,Fy)", lambda: self._prompt_add_force(pid))
+            sub_load.addAction("Add Torque (Mz)", lambda: self._prompt_add_torque(pid))
+            sub_load.addSeparator()
+            sub_load.addAction("Clear Loads", self.clear_loads)
+
         m.addSeparator()
         m.addAction("Delete", lambda: self.cmd_delete_point(pid))
         m.exec(global_pos)
@@ -2535,6 +2564,22 @@ class SketchController:
                  "rigid_edges": list(b.get("rigid_edges", []))}
                 for bid, b in sorted(self.bodies.items(), key=lambda kv: kv[0])
             ],
+            "output": {
+                "enabled": bool(self.output.get("enabled", False)),
+                "pivot": self.output.get("pivot"),
+                "tip": self.output.get("tip"),
+                "rad": float(self.output.get("rad", 0.0)),
+            },
+            "loads": [
+                {
+                    "type": str(ld.get("type", "force")),
+                    "pid": int(ld.get("pid", -1)),
+                    "fx": float(ld.get("fx", 0.0)),
+                    "fy": float(ld.get("fy", 0.0)),
+                    "mz": float(ld.get("mz", 0.0)),
+                }
+                for ld in self.loads
+            ],
         }
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
@@ -2558,6 +2603,8 @@ class SketchController:
             pls = data.get("point_lines", [])
             pss = data.get("point_splines", [])
         bods = data.get("bodies", [])
+        output = data.get("output", {}) or {}
+        loads = data.get("loads", []) or []
         max_pid = -1
         any_traj_enabled = False
         for p in pts:
@@ -2602,6 +2649,33 @@ class SketchController:
                               bool(b.get("hidden", False)), color_name=b.get("color_name", "Blue"))
             if "rigid_edges" in b and b["rigid_edges"]:
                 self.bodies[bid]["rigid_edges"] = [tuple(x) for x in b["rigid_edges"]]
+
+        self.output = {
+            "enabled": bool(output.get("enabled", False)),
+            "pivot": output.get("pivot"),
+            "tip": output.get("tip"),
+            "rad": float(output.get("rad", 0.0) or 0.0),
+        }
+        if self.output.get("enabled") and "rad" not in output:
+            piv = self.output.get("pivot")
+            tip = self.output.get("tip")
+            if piv is not None and tip is not None:
+                ang = self.get_vector_angle_rad(int(piv), int(tip))
+                if ang is not None:
+                    self.output["rad"] = float(ang)
+        self.loads = []
+        for ld in loads:
+            pid = int(ld.get("pid", -1))
+            if pid not in self.points:
+                continue
+            ltype = str(ld.get("type", "force")).lower()
+            fx = float(ld.get("fx", 0.0))
+            fy = float(ld.get("fy", 0.0))
+            mz = float(ld.get("mz", 0.0))
+            if ltype == "torque":
+                self.add_load_torque(pid, mz)
+            else:
+                self.add_load_force(pid, fx, fy)
         
         # --- Coincide constraints ---
         coincs = coincs or []
@@ -2709,9 +2783,281 @@ class SketchController:
         self.output["enabled"] = True
         self.output["pivot"] = int(pivot_pid)
         self.output["tip"] = int(tip_pid)
+        ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
+        if ang is not None:
+            self.output["rad"] = float(ang)
 
     def clear_output(self):
-        self.output = {"enabled": False, "pivot": None, "tip": None}
+        self.output = {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
+
+    # ---- Quasi-static loads ----
+    def add_load_force(self, pid: int, fx: float, fy: float):
+        self.loads.append({"type": "force", "pid": int(pid), "fx": float(fx), "fy": float(fy), "mz": 0.0})
+
+    def add_load_torque(self, pid: int, mz: float):
+        self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
+
+    def clear_loads(self):
+        self.loads = []
+
+    def _prompt_add_force(self, pid: int):
+        fx, ok = QInputDialog.getDouble(self.win, "Force X", f"P{pid} Fx", 0.0, decimals=4)
+        if not ok:
+            return
+        fy, ok = QInputDialog.getDouble(self.win, "Force Y", f"P{pid} Fy", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_force(pid, fx, fy)
+        if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel.refresh_labels()
+
+    def _prompt_add_torque(self, pid: int):
+        mz, ok = QInputDialog.getDouble(self.win, "Torque", f"P{pid} Mz", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_torque(pid, mz)
+        if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel.refresh_labels()
+
+    def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Callable[[np.ndarray], float]]:
+        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
+        funcs: List[Callable[[np.ndarray], float]] = []
+
+        def _xy(q: np.ndarray, pid: int) -> tuple[float, float]:
+            idx = idx_map[pid]
+            return float(q[2 * idx]), float(q[2 * idx + 1])
+
+        # Fixed points (x, y lock)
+        for pid in point_ids:
+            p = self.points[pid]
+            if not bool(p.get("fixed", False)):
+                continue
+            x0, y0 = float(p["x"]), float(p["y"])
+            funcs.append(lambda q, pid=pid, x0=x0: _xy(q, pid)[0] - x0)
+            funcs.append(lambda q, pid=pid, y0=y0: _xy(q, pid)[1] - y0)
+
+        # Coincide constraints (point-point)
+        for c in self.coincides.values():
+            if not bool(c.get("enabled", True)):
+                continue
+            a = int(c.get("a", -1))
+            b = int(c.get("b", -1))
+            if a not in idx_map or b not in idx_map:
+                continue
+            funcs.append(lambda q, a=a, b=b: _xy(q, a)[0] - _xy(q, b)[0])
+            funcs.append(lambda q, a=a, b=b: _xy(q, a)[1] - _xy(q, b)[1])
+
+        # Point-on-line constraints
+        for pl in self.point_lines.values():
+            if not bool(pl.get("enabled", True)):
+                continue
+            p_id = int(pl.get("p", -1))
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+            if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
+                continue
+
+            def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
+                px, py = _xy(q, p_id)
+                ax, ay = _xy(q, i_id)
+                bx, by = _xy(q, j_id)
+                abx, aby = bx - ax, by - ay
+                denom = math.hypot(abx, aby)
+                if denom < 1e-9:
+                    return 0.0
+                return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+
+            funcs.append(_pol)
+
+        # Point-on-spline constraints (distance to closest sampled point)
+        for ps in self.point_splines.values():
+            if not bool(ps.get("enabled", True)):
+                continue
+            p_id = int(ps.get("p", -1))
+            s_id = int(ps.get("s", -1))
+            if p_id not in idx_map or s_id not in self.splines:
+                continue
+            spline = self.splines[s_id]
+            cp_ids = [pid for pid in spline.get("points", []) if pid in idx_map]
+            if len(cp_ids) < 2:
+                continue
+
+            def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
+                px, py = _xy(q, p_id)
+                samples = build_spline_samples([_xy(q, cid) for cid in cp_ids])
+                _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
+                return math.sqrt(dist2)
+
+            funcs.append(_pos)
+
+        # Rigid body edges
+        body_edges: List[Tuple[int, int, float]] = []
+        for b in self.bodies.values():
+            body_edges.extend(b.get("rigid_edges", []))
+        for (i, j, L) in body_edges:
+            if i not in idx_map or j not in idx_map:
+                continue
+
+            def _len(q: np.ndarray, i=i, j=j, L=L) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                return math.hypot(xj - xi, yj - yi) - float(L)
+
+            funcs.append(_len)
+
+        # Length constraints (links)
+        for l in self.links.values():
+            if l.get("ref", False):
+                continue
+            i, j = int(l.get("i", -1)), int(l.get("j", -1))
+            if i not in idx_map or j not in idx_map:
+                continue
+
+            def _len(q: np.ndarray, i=i, j=j, L=l["L"]) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                return math.hypot(xj - xi, yj - yi) - float(L)
+
+            funcs.append(_len)
+
+        # Angle constraints
+        for a in self.angles.values():
+            if not bool(a.get("enabled", True)):
+                continue
+            i, j, k = int(a.get("i", -1)), int(a.get("j", -1)), int(a.get("k", -1))
+            if i not in idx_map or j not in idx_map or k not in idx_map:
+                continue
+            target = float(a.get("rad", 0.0))
+
+            def _ang(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                xi, yi = _xy(q, i)
+                xj, yj = _xy(q, j)
+                xk, yk = _xy(q, k)
+                v1x, v1y = xi - xj, yi - yj
+                v2x, v2y = xk - xj, yk - yj
+                if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                    return 0.0
+                cur = angle_between(v1x, v1y, v2x, v2y)
+                return clamp_angle_rad(cur - target)
+
+            funcs.append(_ang)
+
+        # Driver constraint (if enabled)
+        if self.driver.get("enabled"):
+            if self.driver.get("type") == "joint":
+                i = self.driver.get("i")
+                j = self.driver.get("j")
+                k = self.driver.get("k")
+                if i in idx_map and j in idx_map and k in idx_map:
+                    target = float(self.driver.get("rad", 0.0))
+
+                    def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                        xi, yi = _xy(q, int(i))
+                        xj, yj = _xy(q, int(j))
+                        xk, yk = _xy(q, int(k))
+                        v1x, v1y = xi - xj, yi - yj
+                        v2x, v2y = xk - xj, yk - yj
+                        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                            return 0.0
+                        cur = angle_between(v1x, v1y, v2x, v2y)
+                        return clamp_angle_rad(cur - target)
+
+                    funcs.append(_drv)
+            else:
+                piv = self.driver.get("pivot")
+                tip = self.driver.get("tip")
+                if piv in idx_map and tip in idx_map:
+                    target = float(self.driver.get("rad", 0.0))
+
+                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                        px, py = _xy(q, int(piv))
+                        tx, ty = _xy(q, int(tip))
+                        dx, dy = tx - px, ty - py
+                        if abs(dx) + abs(dy) < 1e-12:
+                            return 0.0
+                        return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                    funcs.append(_drv)
+        elif self.output.get("enabled"):
+            piv = self.output.get("pivot")
+            tip = self.output.get("tip")
+            if piv in idx_map and tip in idx_map:
+                target = float(self.output.get("rad", 0.0))
+
+                def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                    px, py = _xy(q, int(piv))
+                    tx, ty = _xy(q, int(tip))
+                    dx, dy = tx - px, ty - py
+                    if abs(dx) + abs(dy) < 1e-12:
+                        return 0.0
+                    return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                funcs.append(_odrv)
+
+        return funcs
+
+    def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
+        point_ids = sorted(list(self.points.keys()))
+        if not point_ids:
+            return []
+
+        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
+        q = np.array([coord for pid in point_ids for coord in (self.points[pid]["x"], self.points[pid]["y"])], dtype=float)
+        ndof = len(q)
+        f_ext = np.zeros(ndof, dtype=float)
+        torque_map: Dict[int, float] = {pid: 0.0 for pid in point_ids}
+        for load in self.loads:
+            pid = int(load.get("pid", -1))
+            if pid not in self.points:
+                continue
+            idx = idx_map[pid]
+            fx = float(load.get("fx", 0.0))
+            fy = float(load.get("fy", 0.0))
+            f_ext[2 * idx] += fx
+            f_ext[2 * idx + 1] += fy
+            torque_map[pid] = torque_map.get(pid, 0.0) + float(load.get("mz", 0.0))
+
+        funcs = self._build_quasistatic_constraints(point_ids)
+        if not funcs:
+            out = []
+            for idx, pid in enumerate(point_ids):
+                fx = -float(f_ext[2 * idx])
+                fy = -float(f_ext[2 * idx + 1])
+                fz = float(torque_map.get(pid, 0.0))
+                mag = math.sqrt(fx * fx + fy * fy + fz * fz)
+                out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
+            return out
+
+        def eval_constraints(qvec: np.ndarray) -> np.ndarray:
+            return np.array([fn(qvec) for fn in funcs], dtype=float)
+
+        eps = 1e-6
+        m = len(eval_constraints(q))
+        J = np.zeros((m, ndof), dtype=float)
+        for i in range(ndof):
+            dq = np.zeros_like(q)
+            dq[i] = eps
+            fp = eval_constraints(q + dq)
+            fm = eval_constraints(q - dq)
+            J[:, i] = (fp - fm) / (2.0 * eps)
+
+        if J.size == 0:
+            reaction = np.zeros_like(f_ext)
+        else:
+            try:
+                lam, *_ = np.linalg.lstsq(J.T, -f_ext, rcond=None)
+                reaction = J.T @ lam
+            except np.linalg.LinAlgError:
+                reaction = np.zeros_like(f_ext)
+
+        out: List[Dict[str, Any]] = []
+        for idx, pid in enumerate(point_ids):
+            fx = float(reaction[2 * idx])
+            fy = float(reaction[2 * idx + 1])
+            fz = float(torque_map.get(pid, 0.0))
+            mag = math.sqrt(fx * fx + fy * fy + fz * fz)
+            out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
+        return out
 
     # ---- Trajectories ----
     def set_show_trajectories(self, enabled: bool, reset: bool = False):
@@ -2859,16 +3205,22 @@ class SketchController:
 
         If Play has started, 0° corresponds to the Play-start pose.
         """
-        if not self.driver.get("enabled"):
+        if not self.driver.get("enabled") and not self.output.get("enabled"):
             return
 
         # Target = (Play-start absolute angle) + delta
-        if self._sim_zero_input_rad is not None:
-            target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+        if self.driver.get("enabled"):
+            if self._sim_zero_input_rad is not None:
+                target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            self.driver["rad"] = float(target)
         else:
-            target = math.radians(float(deg))
-
-        self.driver["rad"] = float(target)
+            if self._sim_zero_output_rad is not None:
+                target = float(self._sim_zero_output_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            self.output["rad"] = float(target)
         self.solve_constraints(iters=iters)
         self.update_graphics()
         self.append_trajectories()
@@ -2888,6 +3240,8 @@ class SketchController:
         # Set relative-zero angles based on the current pose.
         self._sim_zero_input_rad = self._get_input_angle_abs_rad()
         self._sim_zero_output_rad = self._get_output_angle_abs_rad()
+        if self._sim_zero_output_rad is not None:
+            self.output["rad"] = float(self._sim_zero_output_rad)
 
         self._sim_zero_meas_deg = {}
         for (nm, val) in self.get_measure_values_deg():
@@ -2906,6 +3260,8 @@ class SketchController:
         self.apply_points_snapshot(self._pose_last_sim_start)
         if self.driver.get("enabled") and self._sim_zero_input_rad is not None:
             self.driver["rad"] = float(self._sim_zero_input_rad)
+        if self.output.get("enabled") and self._sim_zero_output_rad is not None:
+            self.output["rad"] = float(self._sim_zero_output_rad)
         self.solve_constraints()
         self.update_graphics()
         if self.panel:

@@ -118,6 +118,17 @@ class SciPyKinematicSolver:
                         cur = math.atan2(by - ay, bx - ax)
                         c0, c1 = _angle_residual_rad(cur, target)
                         r.extend([c0, c1])
+            elif ctrl.output.get("enabled"):
+                piv = ctrl.output.get("pivot")
+                tip = ctrl.output.get("tip")
+                target = float(ctrl.output.get("rad", 0.0))
+                if piv is not None and tip is not None and int(piv) in ctrl.points and int(tip) in ctrl.points:
+                    piv = int(piv); tip = int(tip)
+                    ax, ay = get_xy(piv, x)
+                    bx, by = get_xy(tip, x)
+                    cur = math.atan2(by - ay, bx - ax)
+                    c0, c1 = _angle_residual_rad(cur, target)
+                    r.extend([c0, c1])
 
             # Coincide constraints
             for c in ctrl.coincides.values():
