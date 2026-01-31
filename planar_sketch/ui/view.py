@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import Qt, QPointF, QRect, QRectF
 from PyQt6.QtGui import QPainter
-from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QRubberBand
+from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QRubberBand, QGraphicsPixmapItem
 
 from ..utils.qt_safe import safe_event
 from .items import PointItem, LinkItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem
@@ -118,6 +118,8 @@ class SketchView(QGraphicsView):
                 e.accept(); return
             item = self.itemAt(e.position().toPoint())
             sp = self.mapToScene(e.position().toPoint())
+            if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
+                item = None
             if item is None:
                 self.ctrl.show_empty_context_menu(e.globalPosition().toPoint(), sp)
             else:
