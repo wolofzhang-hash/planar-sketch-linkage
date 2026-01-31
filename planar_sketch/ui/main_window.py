@@ -23,7 +23,7 @@ from .sim_panel import SimulationPanel
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Planar Sketch v2.7.3")
+        self.setWindowTitle("Planar Sketch v2.7.8")
         self.resize(1400, 900)
         self.scene = QGraphicsScene(-2000, -2000, 4000, 4000)
         self.ctrl = SketchController(self.scene, self)
