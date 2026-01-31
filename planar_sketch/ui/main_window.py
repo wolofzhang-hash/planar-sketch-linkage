@@ -112,6 +112,10 @@ class MainWindow(QMainWindow):
         m_edit.addSeparator()
         act_delete = QAction("Delete Selected", self); act_delete.setShortcut(QKeySequence.StandardKey.Delete)
         act_delete.triggered.connect(self.delete_selected); m_edit.addAction(act_delete)
+        self.act_repeat_model = QAction("Repeat Last Modeling Action", self)
+        self.act_repeat_model.setShortcut(QKeySequence("F4"))
+        self.act_repeat_model.triggered.connect(self.ctrl.repeat_last_model_action)
+        m_edit.addAction(self.act_repeat_model)
 
         m_sketch = mb.addMenu("Sketch")
         m_sketch.addAction("Create Line", self.ctrl.begin_create_line)
