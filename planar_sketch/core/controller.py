@@ -3554,24 +3554,59 @@ class SketchController:
             elif role == "output":
                 summary["tau_output"] = float(lam[k]) if summary.get("tau_output") is None else float(summary["tau_output"]) + float(lam[k])
 
-        # Joint loads: only passive constraints (exclude actuator/output closure)
-        include_output_in_passive = bool(use_output) and not bool(self.driver.get("enabled"))
-        mask_passive = np.array(
-            [
-                1.0
-                if (r == "passive" or (include_output_in_passive and r == "output"))
-                else 0.0
-                for r in roles
-            ],
+        # Joint loads: use passive constraints for pin force, and include output closure for net balance.
+        mask_passive = np.array([1.0 if r == "passive" else 0.0 for r in roles], dtype=float)
+        mask_net = np.array(
+            [1.0 if (r == "passive" or (use_output and r == "output")) else 0.0 for r in roles],
+            dtype=float,
+        )
+        fixed_types = {"fixed_x", "fixed_y"}
+        mask_fixed = np.array(
+            [1.0 if meta[k].get("type") in fixed_types else 0.0 for k in range(len(roles))],
             dtype=float,
         )
         lam_passive = lam * mask_passive
+        lam_net = lam * mask_net
+        lam_fixed = lam * mask_fixed
         reaction_passive = J.T @ lam_passive if J.size else np.zeros_like(f_ext)
+        reaction_net = J.T @ lam_net if J.size else np.zeros_like(f_ext)
+        reaction_fixed = J.T @ lam_fixed if J.size else np.zeros_like(f_ext)
+
+        applied_force: Dict[int, Tuple[float, float]] = {pid: (0.0, 0.0) for pid in point_ids}
+        for load in self.loads:
+            pid = int(load.get("pid", -1))
+            if pid not in applied_force:
+                continue
+            fx = float(load.get("fx", 0.0))
+            fy = float(load.get("fy", 0.0))
+            if abs(fx) > 0.0 or abs(fy) > 0.0:
+                cur_fx, cur_fy = applied_force[pid]
+                applied_force[pid] = (cur_fx + fx, cur_fy + fy)
 
         joint_loads: List[Dict[str, Any]] = []
         for idx, pid in enumerate(point_ids):
-            fx = float(reaction_passive[2 * idx])
-            fy = float(reaction_passive[2 * idx + 1])
+            point = self.points[pid]
+            if bool(point.get("fixed", False)):
+                fx = float(reaction_fixed[2 * idx])
+                fy = float(reaction_fixed[2 * idx + 1])
+            else:
+                applied_fx, applied_fy = applied_force.get(pid, (0.0, 0.0))
+                if abs(applied_fx) > 0.0 or abs(applied_fy) > 0.0:
+                    fx = float(reaction_net[2 * idx])
+                    fy = float(reaction_net[2 * idx + 1])
+                else:
+                    best_fx, best_fy, best_mag = 0.0, 0.0, 0.0
+                    for k, role in enumerate(roles):
+                        if role != "passive":
+                            continue
+                        if meta[k].get("type") in fixed_types:
+                            continue
+                        fx_k = float(J[k, 2 * idx] * lam[k])
+                        fy_k = float(J[k, 2 * idx + 1] * lam[k])
+                        mag_k = math.hypot(fx_k, fy_k)
+                        if mag_k > best_mag:
+                            best_fx, best_fy, best_mag = fx_k, fy_k, mag_k
+                    fx, fy = best_fx, best_fy
             mag = math.hypot(fx, fy)
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
 
