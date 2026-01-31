@@ -67,6 +67,7 @@ class SketchView(QGraphicsView):
 
     @safe_event
     def mouseMoveEvent(self, e):
+        self.ctrl.update_last_scene_pos(self.mapToScene(e.position().toPoint()))
         if self._rmb_down:
             if not self._rmb_pan:
                 dx = e.position().toPoint().x() - self._rmb_start.x()

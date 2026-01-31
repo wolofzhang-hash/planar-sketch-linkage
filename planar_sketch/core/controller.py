@@ -97,6 +97,9 @@ class SketchController:
         self._drag_active = False
         self._drag_pid: Optional[int] = None
         self._drag_before: Optional[Dict[int, Tuple[float, float]]] = None
+        self._last_model_action: Optional[str] = None
+        self._last_scene_pos: Optional[Tuple[float, float]] = None
+        self._last_point_pos: Optional[Tuple[float, float]] = None
 
         # --- Linkage-style simulation configuration ---
         # Driver: either a world-angle of a vector (pivot->tip) or a joint angle (i-j-k).
@@ -1597,6 +1600,8 @@ class SketchController:
     def cmd_add_point(self, x: float, y: float):
         pid = self._next_pid; self._next_pid += 1
         ctrl = self
+        self._last_model_action = "CreatePoint"
+        self._last_point_pos = (float(x), float(y))
         class AddPoint(Command):
             name = "Add Point"
             def do(self_):
@@ -1618,6 +1623,7 @@ class SketchController:
         p1, p2 = self.points[i], self.points[j]
         L = math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
         ctrl = self
+        self._last_model_action = "CreateLine"
         class AddLink(Command):
             name = "Add Link"
             def do(self_):
@@ -2289,6 +2295,21 @@ class SketchController:
         self.mode = "CreateLine"
         self._line_sel = []
         self.update_status()
+
+    def update_last_scene_pos(self, pos: QPointF):
+        self._last_scene_pos = (float(pos.x()), float(pos.y()))
+
+    def repeat_last_model_action(self):
+        self.commit_drag_if_any()
+        if self._last_model_action == "CreatePoint":
+            pos = self._last_scene_pos or self._last_point_pos or (0.0, 0.0)
+            self.cmd_add_point(pos[0], pos[1])
+            return
+        if self._last_model_action == "CreateLine":
+            self.begin_create_line()
+            return
+        if self.win and self.win.statusBar():
+            self.win.statusBar().showMessage("No previous modeling action.")
 
     def begin_coincide(self, master: int):
         self.commit_drag_if_any()
