@@ -33,6 +33,46 @@ class TextMarker(QGraphicsSimpleTextItem):
         self.setAcceptHoverEvents(False)
 
 
+class ForceArrowItem(QGraphicsPathItem):
+    def __init__(self, color: QColor):
+        super().__init__()
+        self._color = color
+        self.setZValue(20)
+        self.setPen(QPen(self._color, 2.4))
+        self.setBrush(QBrush(self._color))
+        # Do not intercept mouse events.
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def set_vector(self, x: float, y: float, fx: float, fy: float, scale: float = 1.0):
+        mag = (fx * fx + fy * fy) ** 0.5
+        if mag <= 1e-9:
+            self.setVisible(False)
+            return
+        ux = fx / mag
+        uy = fy / mag
+        length = max(8.0, min(120.0, mag * scale))
+        tip_x = x + ux * length
+        tip_y = y + uy * length
+        head_len = min(12.0, length * 0.35)
+        head_w = head_len * 0.55
+        hx = tip_x - ux * head_len
+        hy = tip_y - uy * head_len
+        nx = -uy
+        ny = ux
+        left_x = hx + nx * head_w
+        left_y = hy + ny * head_w
+        right_x = hx - nx * head_w
+        right_y = hy - ny * head_w
+
+        path = QPainterPath(QPointF(x, y))
+        path.lineTo(tip_x, tip_y)
+        path.lineTo(left_x, left_y)
+        path.moveTo(tip_x, tip_y)
+        path.lineTo(right_x, right_y)
+        self.setPath(path)
+        self.setVisible(True)
+
+
 class PointItem(QGraphicsEllipseItem):
     def __init__(self, pid: int, ctrl: "SketchController"):
         super().__init__(-5, -5, 10, 10)

@@ -15,7 +15,7 @@ import math
 from typing import Dict, Any, Optional, List, Tuple, Callable
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QPainterPath
+from PyQt6.QtGui import QPainterPath, QColor
 from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog
 
 import numpy as np
@@ -28,7 +28,7 @@ from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
 from .scipy_kinematics import SciPyKinematicSolver
-from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem, TrajectoryItem
+from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem, TrajectoryItem, ForceArrowItem
 from ..utils.constants import BODY_COLORS
 
 
@@ -99,8 +99,13 @@ class SketchController:
         self.output: Dict[str, Any] = {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
         # Extra measurements: a list of {type,name,...} items.
         self.measures: List[Dict[str, Any]] = []
+        # Load measurements: a list of {type,name,...} items.
+        self.load_measures: List[Dict[str, Any]] = []
         # Quasi-static loads: list of {type,pid,fx,fy,mz}
         self.loads: List[Dict[str, Any]] = []
+        # Display items for load arrows.
+        self._load_arrow_items: List[ForceArrowItem] = []
+        self._last_joint_loads: List[Dict[str, Any]] = []
         # Pose snapshots for "reset to initial".
         self._pose_initial: Optional[Dict[int, Tuple[float, float]]] = None
         self._pose_last_sim_start: Optional[Dict[int, Tuple[float, float]]] = None
@@ -940,6 +945,9 @@ class SketchController:
         dmark = TextMarker("↻")
         self.points[pid]["driver_marker"] = dmark
         self.scene.addItem(dmark)
+        omark = TextMarker("OUT")
+        self.points[pid]["output_marker"] = omark
+        self.scene.addItem(omark)
 
     def _remove_point(self, pid: int):
         if pid not in self.points: return
@@ -970,6 +978,8 @@ class SketchController:
             self.scene.removeItem(p["constraint_marker"])
         if "driver_marker" in p:
             self.scene.removeItem(p["driver_marker"])
+        if "output_marker" in p:
+            self.scene.removeItem(p["output_marker"])
         del self.points[pid]
         self.selected_point_ids.discard(pid)
         if self.selected_point_id == pid:
@@ -2297,6 +2307,12 @@ class SketchController:
             sub_load.addAction("Add Force (Fx,Fy)", lambda: self._prompt_add_force(pid))
             sub_load.addAction("Add Torque (Mz)", lambda: self._prompt_add_torque(pid))
             sub_load.addSeparator()
+            sub_load_meas = sub_load.addMenu("Add Load Measurement")
+            sub_load_meas.addAction("Joint Load Fx", lambda: self.add_load_measure_joint(pid, "fx"))
+            sub_load_meas.addAction("Joint Load Fy", lambda: self.add_load_measure_joint(pid, "fy"))
+            sub_load_meas.addAction("Joint Load Mag", lambda: self.add_load_measure_joint(pid, "mag"))
+            sub_load.addAction("Clear Load Measurements", self.clear_load_measures)
+            sub_load.addSeparator()
             sub_load.addAction("Clear Loads", self.clear_loads)
 
         m.addSeparator()
@@ -2416,6 +2432,11 @@ class SketchController:
                 pid = self.driver.get("pivot")
                 if pid is not None:
                     driver_marker_pid = int(pid)
+        output_marker_pid = None
+        if self.output.get("enabled"):
+            pid = self.output.get("pivot")
+            if pid is not None:
+                output_marker_pid = int(pid)
         for pid, p in self.points.items():
             it: PointItem = p["item"]
             it._internal = True
@@ -2446,6 +2467,16 @@ class SketchController:
                 and self.show_points_geometry
             )
             dmark.setVisible(show_driver)
+            omark: TextMarker = p["output_marker"]
+            omark_bounds = omark.boundingRect()
+            omark.setPos(p["x"] - omark_bounds.width() - 8, p["y"] - omark_bounds.height() - 4)
+            show_output = (
+                self.show_dim_markers
+                and output_marker_pid == pid
+                and (not self.is_point_effectively_hidden(pid))
+                and self.show_points_geometry
+            )
+            omark.setVisible(show_output)
             titem = p.get("traj_item")
             if titem is not None:
                 show_traj = (
@@ -2500,6 +2531,50 @@ class SketchController:
 
         for aid, a in self.angles.items():
             a["marker"].sync()
+
+        self._sync_load_arrows()
+
+    def _sync_load_arrows(self):
+        load_vectors: List[tuple[float, float, float, float]] = []
+        for ld in self.loads:
+            if str(ld.get("type", "force")).lower() != "force":
+                continue
+            pid = int(ld.get("pid", -1))
+            if pid not in self.points:
+                continue
+            if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
+                continue
+            fx = float(ld.get("fx", 0.0))
+            fy = float(ld.get("fy", 0.0))
+            if abs(fx) + abs(fy) < 1e-12:
+                continue
+            p = self.points[pid]
+            load_vectors.append((p["x"], p["y"], fx, fy))
+
+        for jl in self._last_joint_loads:
+            pid = int(jl.get("pid", -1))
+            if pid not in self.points:
+                continue
+            if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
+                continue
+            fx = float(jl.get("fx", 0.0))
+            fy = float(jl.get("fy", 0.0))
+            if abs(fx) + abs(fy) < 1e-12:
+                continue
+            p = self.points[pid]
+            load_vectors.append((p["x"], p["y"], fx, fy))
+
+        needed = len(load_vectors)
+        while len(self._load_arrow_items) < needed:
+            item = ForceArrowItem(QColor(220, 40, 40))
+            self._load_arrow_items.append(item)
+            self.scene.addItem(item)
+        for idx, item in enumerate(self._load_arrow_items):
+            if idx >= needed:
+                item.setVisible(False)
+                continue
+            x, y, fx, fy = load_vectors[idx]
+            item.set_vector(x, y, fx, fy, scale=0.25)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -2582,11 +2657,22 @@ class SketchController:
                 }
                 for ld in self.loads
             ],
+            "load_measures": [
+                {
+                    "type": str(lm.get("type", "joint_load")),
+                    "pid": int(lm.get("pid", -1)),
+                    "component": str(lm.get("component", "mag")),
+                    "name": str(lm.get("name", "")),
+                }
+                for lm in self.load_measures
+            ],
         }
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
         self.scene.clear()
         self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
+        self._load_arrow_items = []
+        self._last_joint_loads = []
         # Load parameters early so expression fields can be evaluated during/after construction.
         self.parameters.load_list(list(data.get("parameters", []) or []))
         self.selected_point_ids.clear()
@@ -2607,6 +2693,7 @@ class SketchController:
         bods = data.get("bodies", [])
         output = data.get("output", {}) or {}
         loads = data.get("loads", []) or []
+        load_measures = data.get("load_measures", []) or []
         max_pid = -1
         any_traj_enabled = False
         for p in pts:
@@ -2678,6 +2765,20 @@ class SketchController:
                 self.add_load_torque(pid, mz)
             else:
                 self.add_load_force(pid, fx, fy)
+
+        self.load_measures = []
+        for lm in load_measures:
+            pid = int(lm.get("pid", -1))
+            if pid not in self.points:
+                continue
+            comp = str(lm.get("component", "mag"))
+            name = str(lm.get("name", "")) or f"load P{pid} {comp}"
+            self.load_measures.append({
+                "type": str(lm.get("type", "joint_load")),
+                "pid": int(pid),
+                "component": comp,
+                "name": name,
+            })
         
         # --- Coincide constraints ---
         coincs = coincs or []
@@ -3368,6 +3469,7 @@ class SketchController:
                 fy = -float(f_ext[2 * idx + 1])
                 mag = math.hypot(fx, fy)
                 joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
+            self._last_joint_loads = list(joint_loads)
             return joint_loads, {"mode": "none"}
 
         def eval_constraints(qvec: np.ndarray) -> np.ndarray:
@@ -3417,6 +3519,7 @@ class SketchController:
             mag = math.hypot(fx, fy)
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
 
+        self._last_joint_loads = list(joint_loads)
         return joint_loads, summary
 
     def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
@@ -3460,6 +3563,15 @@ class SketchController:
     def clear_measures(self):
         self.measures = []
 
+    def add_load_measure_joint(self, pid: int, component: str):
+        component = component.lower()
+        label = {"fx": "Fx", "fy": "Fy", "mag": "Mag"}.get(component, component)
+        name = f"load P{int(pid)} {label}"
+        self.load_measures.append({"type": "joint_load", "pid": int(pid), "component": component, "name": name})
+
+    def clear_load_measures(self):
+        self.load_measures = []
+
     def get_measure_values_deg(self) -> List[tuple[str, Optional[float]]]:
         """Return measurement values in degrees.
 
@@ -3486,6 +3598,30 @@ class SketchController:
             else:
                 out.append((nm, abs_deg))
         return out
+        return out
+
+    def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
+        out: List[tuple[str, Optional[float]]] = []
+        if not self.load_measures:
+            return out
+        load_map: Dict[int, Dict[str, float]] = {}
+        for jl in self.compute_quasistatic_joint_loads():
+            pid = int(jl.get("pid", -1))
+            if pid < 0:
+                continue
+            load_map[pid] = {
+                "fx": float(jl.get("fx", 0.0)),
+                "fy": float(jl.get("fy", 0.0)),
+                "mag": float(jl.get("mag", 0.0)),
+            }
+        for m in self.load_measures:
+            nm = str(m.get("name", ""))
+            pid = int(m.get("pid", -1))
+            comp = str(m.get("component", "mag")).lower()
+            val = None
+            if pid in load_map and comp in load_map[pid]:
+                val = float(load_map[pid][comp])
+            out.append((nm, val))
         return out
 
     # ---- Angles ----

@@ -163,6 +163,15 @@ class SimulationPanel(QWidget):
         load_buttons.addWidget(self.btn_clear_loads)
         loads_layout.addLayout(load_buttons)
 
+        self.table_load_measures = QTableWidget(0, 2)
+        self.table_load_measures.setHorizontalHeaderLabels(["Load Measurement", "Value"])
+        self.table_load_measures.verticalHeader().setVisible(False)
+        self.table_load_measures.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_load_measures.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_load_measures.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        loads_layout.addWidget(QLabel("Tracked Load Measurements"))
+        loads_layout.addWidget(self.table_load_measures)
+
         # Quasi-static summary (torques)
         qs_info = QHBoxLayout()
         self.lbl_qs_mode = QLabel("Quasi-static: --")
@@ -396,6 +405,19 @@ class SimulationPanel(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table_joint_loads.setItem(row, col, item)
 
+        self._refresh_load_measure_table()
+
+    def _refresh_load_measure_table(self):
+        mv = self.ctrl.get_load_measure_values()
+        self.table_load_measures.setRowCount(len(mv))
+        for row, (nm, val) in enumerate(mv):
+            name_item = QTableWidgetItem(str(nm))
+            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}")
+            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_load_measures.setItem(row, 0, name_item)
+            self.table_load_measures.setItem(row, 1, value_item)
+
 
     # ---- sweep ----
     def play(self):
@@ -498,6 +520,8 @@ class SimulationPanel(QWidget):
             "output_deg": self.ctrl.get_output_angle_deg(),
         }
         for nm, val in self.ctrl.get_measure_values_deg():
+            rec[nm] = val
+        for nm, val in self.ctrl.get_load_measure_values():
             rec[nm] = val
         self._records.append(rec)
 
