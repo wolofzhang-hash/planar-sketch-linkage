@@ -44,7 +44,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Idle")
         self.current_file: Optional[str] = None
         self._build_menus()
-        self._init_demo()
+        self.file_new()
         self.update_undo_redo_actions()
         self.ctrl.update_status()
         self.scene.selectionChanged.connect(self._scene_selection_changed)
@@ -294,15 +294,3 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".json"): path += ".json"
         self.current_file = path
         self.file_save()
-
-    def _init_demo(self):
-        self.ctrl.cmd_add_point(0, 0)
-        self.ctrl.cmd_add_point(160, 0)
-        self.ctrl.cmd_add_point(80, 120)
-        self.ctrl.cmd_add_link(0, 1)
-        self.ctrl.cmd_add_link(1, 2)
-        self.ctrl.cmd_add_angle(0, 1, 2, 45.0)
-        self.ctrl.cmd_add_body_from_points([0, 1, 2])
-        self.ctrl.cmd_set_body_color(0, "Green")
-        self.ctrl.solve_constraints(); self.ctrl.update_graphics()
-        self.panel.defer_refresh_all(keep_selection=True)
