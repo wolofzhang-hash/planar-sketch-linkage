@@ -149,7 +149,8 @@ class SimulationPanel(QWidget):
         self.table_loads.setHorizontalHeaderLabels(["Point", "Type", "Fx", "Fy", "Mz"])
         self.table_loads.verticalHeader().setVisible(False)
         self.table_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table_loads.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_loads.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_loads.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         loads_layout.addWidget(QLabel("Applied Loads"))
         loads_layout.addWidget(self.table_loads)
@@ -157,9 +158,11 @@ class SimulationPanel(QWidget):
         load_buttons = QHBoxLayout()
         self.btn_add_force = QPushButton("Add Force (1 pt)")
         self.btn_add_torque = QPushButton("Add Torque (1 pt)")
+        self.btn_remove_load = QPushButton("Remove Selected")
         self.btn_clear_loads = QPushButton("Clear")
         load_buttons.addWidget(self.btn_add_force)
         load_buttons.addWidget(self.btn_add_torque)
+        load_buttons.addWidget(self.btn_remove_load)
         load_buttons.addWidget(self.btn_clear_loads)
         loads_layout.addLayout(load_buttons)
 
@@ -206,6 +209,7 @@ class SimulationPanel(QWidget):
         self.btn_clear_meas.clicked.connect(self._clear_measures)
         self.btn_add_force.clicked.connect(self._add_force_from_selection)
         self.btn_add_torque.clicked.connect(self._add_torque_from_selection)
+        self.btn_remove_load.clicked.connect(self._remove_selected_load)
         self.btn_clear_loads.clicked.connect(self._clear_loads)
         self.btn_play.clicked.connect(self.play)
         self.btn_stop.clicked.connect(self.stop)
@@ -361,6 +365,14 @@ class SimulationPanel(QWidget):
 
     def _clear_loads(self):
         self.ctrl.clear_loads()
+        self.refresh_labels()
+
+    def _remove_selected_load(self):
+        row = self.table_loads.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Loads", "Select a load row to remove.")
+            return
+        self.ctrl.remove_load_at(row)
         self.refresh_labels()
 
     def _refresh_load_tables(self):

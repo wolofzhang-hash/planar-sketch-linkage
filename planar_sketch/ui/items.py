@@ -40,20 +40,30 @@ class ForceArrowItem(QGraphicsPathItem):
         self.setZValue(20)
         self.setPen(QPen(self._color, 2.4))
         self.setBrush(QBrush(self._color))
+        self._label = QGraphicsSimpleTextItem("", self)
+        self._label.setBrush(self._color)
+        self._label.setZValue(25)
+        self._label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         # Do not intercept mouse events.
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
-    def set_vector(self, x: float, y: float, fx: float, fy: float, scale: float = 1.0):
+    def set_vector(self, x: float, y: float, fx: float, fy: float, scale: float = 1.0, label: str | None = None):
         mag = (fx * fx + fy * fy) ** 0.5
-        if mag <= 1e-9:
+        if mag <= 1e-9 or scale <= 0.0:
             self.setVisible(False)
+            self._label.setVisible(False)
             return
         ux = fx / mag
         uy = fy / mag
-        length = max(8.0, min(120.0, mag * scale))
+        length = mag * scale
+        if length <= 1e-6:
+            self.setVisible(False)
+            self._label.setVisible(False)
+            return
         tip_x = x + ux * length
         tip_y = y + uy * length
-        head_len = min(12.0, length * 0.35)
+        head_len = max(2.0, length * 0.3)
+        head_len = min(14.0, head_len, length * 0.8)
         head_w = head_len * 0.55
         hx = tip_x - ux * head_len
         hy = tip_y - uy * head_len
@@ -71,6 +81,13 @@ class ForceArrowItem(QGraphicsPathItem):
         path.lineTo(right_x, right_y)
         self.setPath(path)
         self.setVisible(True)
+        if label is not None:
+            self._label.setText(label)
+            offset = max(6.0, head_w + 4.0)
+            self._label.setPos(tip_x + nx * offset, tip_y + ny * offset)
+            self._label.setVisible(True)
+        else:
+            self._label.setVisible(False)
 
 
 class PointItem(QGraphicsEllipseItem):

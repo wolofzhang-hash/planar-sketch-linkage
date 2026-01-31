@@ -72,6 +72,7 @@ class SketchController:
         self.show_splines_geometry = True
         self.show_body_coloring = True
         self.show_trajectories = False
+        self.show_load_arrows = True
 
         self.mode = "Idle"
         self._line_sel: List[int] = []
@@ -2535,7 +2536,12 @@ class SketchController:
         self._sync_load_arrows()
 
     def _sync_load_arrows(self):
-        load_vectors: List[tuple[float, float, float, float]] = []
+        if not self.show_load_arrows:
+            for item in self._load_arrow_items:
+                item.setVisible(False)
+            return
+
+        load_vectors: List[Dict[str, float]] = []
         for ld in self.loads:
             if str(ld.get("type", "force")).lower() != "force":
                 continue
@@ -2549,7 +2555,7 @@ class SketchController:
             if abs(fx) + abs(fy) < 1e-12:
                 continue
             p = self.points[pid]
-            load_vectors.append((p["x"], p["y"], fx, fy))
+            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy})
 
         for jl in self._last_joint_loads:
             pid = int(jl.get("pid", -1))
@@ -2562,19 +2568,31 @@ class SketchController:
             if abs(fx) + abs(fy) < 1e-12:
                 continue
             p = self.points[pid]
-            load_vectors.append((p["x"], p["y"], fx, fy))
+            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy})
 
         needed = len(load_vectors)
         while len(self._load_arrow_items) < needed:
             item = ForceArrowItem(QColor(220, 40, 40))
             self._load_arrow_items.append(item)
             self.scene.addItem(item)
+        mags = [math.hypot(vec["fx"], vec["fy"]) for vec in load_vectors]
+        max_mag = max(mags) if mags else 0.0
+        target_len = 90.0
+        scale = (target_len / max_mag) if max_mag > 1e-9 else 1.0
+        scale = max(0.02, min(2.0, scale))
         for idx, item in enumerate(self._load_arrow_items):
             if idx >= needed:
                 item.setVisible(False)
                 continue
-            x, y, fx, fy = load_vectors[idx]
-            item.set_vector(x, y, fx, fy, scale=0.25)
+            vec = load_vectors[idx]
+            item.set_vector(
+                vec["x"],
+                vec["y"],
+                vec["fx"],
+                vec["fy"],
+                scale=scale,
+                label=str(idx + 1),
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -2899,6 +2917,10 @@ class SketchController:
 
     def add_load_torque(self, pid: int, mz: float):
         self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
+
+    def remove_load_at(self, index: int):
+        if 0 <= index < len(self.loads):
+            del self.loads[index]
 
     def clear_loads(self):
         self.loads = []
@@ -3508,7 +3530,16 @@ class SketchController:
                 summary["tau_output"] = float(lam[k]) if summary.get("tau_output") is None else float(summary["tau_output"]) + float(lam[k])
 
         # Joint loads: only passive constraints (exclude actuator/output closure)
-        mask_passive = np.array([1.0 if r == "passive" else 0.0 for r in roles], dtype=float)
+        include_output_in_passive = bool(use_output) and not bool(self.driver.get("enabled"))
+        mask_passive = np.array(
+            [
+                1.0
+                if (r == "passive" or (include_output_in_passive and r == "output"))
+                else 0.0
+                for r in roles
+            ],
+            dtype=float,
+        )
         lam_passive = lam * mask_passive
         reaction_passive = J.T @ lam_passive if J.size else np.zeros_like(f_ext)
 

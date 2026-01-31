@@ -127,6 +127,8 @@ class MainWindow(QMainWindow):
         self.act_body_color.triggered.connect(lambda c: self._toggle_body_coloring(c)); m_view.addAction(self.act_body_color)
         self.act_splines = QAction("Show Splines", self, checkable=True); self.act_splines.setChecked(True)
         self.act_splines.triggered.connect(lambda c: self._toggle_splines(c)); m_view.addAction(self.act_splines)
+        self.act_load_arrows = QAction("Show Load Arrows", self, checkable=True); self.act_load_arrows.setChecked(True)
+        self.act_load_arrows.triggered.connect(lambda c: self._toggle_load_arrows(c)); m_view.addAction(self.act_load_arrows)
         m_view.addSeparator()
         m_presets = m_view.addMenu("Presets")
         m_presets.addAction("Show All", self.preset_show_all)
@@ -184,6 +186,9 @@ class MainWindow(QMainWindow):
         self.ctrl.update_graphics()
     def _toggle_splines(self, checked: bool):
         self.ctrl.show_splines_geometry = bool(checked)
+        self.ctrl.update_graphics()
+    def _toggle_load_arrows(self, checked: bool):
+        self.ctrl.show_load_arrows = bool(checked)
         self.ctrl.update_graphics()
 
     def delete_selected(self):
