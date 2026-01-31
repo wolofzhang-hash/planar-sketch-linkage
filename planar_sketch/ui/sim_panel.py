@@ -123,14 +123,15 @@ class SimulationPanel(QWidget):
 
         measurements_tab = QWidget()
         measurements_layout = QVBoxLayout(measurements_tab)
-        self.table_meas = QTableWidget(0, 2)
-        self.table_meas.setHorizontalHeaderLabels(["Measurement", "Value (deg)"])
+        self.table_meas = QTableWidget(0, 3)
+        self.table_meas.setHorizontalHeaderLabels(["Type", "Measurement", "Value"])
         self.table_meas.verticalHeader().setVisible(False)
         self.table_meas.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_meas.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_meas.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_meas.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         measurements_layout.addWidget(self.table_meas)
+        self._measure_row_map: List[Dict[str, Any]] = []
 
         meas_buttons = QHBoxLayout()
         self.btn_clear_meas = QPushButton("Clear")
@@ -139,14 +140,6 @@ class SimulationPanel(QWidget):
         meas_buttons.addWidget(self.btn_delete_meas)
         measurements_layout.addLayout(meas_buttons)
 
-        self.table_load_measures = QTableWidget(0, 2)
-        self.table_load_measures.setHorizontalHeaderLabels(["Load Measurement", "Value"])
-        self.table_load_measures.verticalHeader().setVisible(False)
-        self.table_load_measures.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table_load_measures.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.table_load_measures.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        measurements_layout.addWidget(QLabel("Tracked Load Measurements"))
-        measurements_layout.addWidget(self.table_load_measures)
         measurements_layout.addStretch(1)
         tabs.addTab(measurements_tab, "Measurements")
 
@@ -266,7 +259,6 @@ class SimulationPanel(QWidget):
         s_in = "--" if a_in is None else f"{a_in:.3f}°"
         s_out = "--" if a_out is None else f"{a_out:.3f}°"
         self.lbl_angles.setText(f"Input: {s_in} | Output: {s_out}")
-        self._refresh_measure_table()
         self._refresh_load_tables()
 
     def _set_driver_from_selection(self):
@@ -326,19 +318,45 @@ class SimulationPanel(QWidget):
         if row < 0:
             QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
             return
-        self.ctrl.remove_measure_at(row)
+        if row >= len(self._measure_row_map):
+            QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
+            return
+        row_info = self._measure_row_map[row]
+        if row_info["kind"] != "measure":
+            QMessageBox.information(self, "Measurements", "Load measurements cannot be deleted here.")
+            return
+        self.ctrl.remove_measure_at(row_info["index"])
         self.refresh_labels()
 
     def _refresh_measure_table(self):
         mv = self.ctrl.get_measure_values_deg()
-        self.table_meas.setRowCount(len(mv))
-        for row, (nm, val) in enumerate(mv):
+        load_mv = self.ctrl.get_load_measure_values()
+        self._measure_row_map = []
+        total_rows = len(mv) + len(load_mv)
+        self.table_meas.setRowCount(total_rows)
+        row = 0
+        for index, (nm, val) in enumerate(mv):
+            type_item = QTableWidgetItem("Measurement")
             name_item = QTableWidgetItem(str(nm))
             value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}°")
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_meas.setItem(row, 0, name_item)
-            self.table_meas.setItem(row, 1, value_item)
+            for item in (type_item, name_item, value_item):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_meas.setItem(row, 0, type_item)
+            self.table_meas.setItem(row, 1, name_item)
+            self.table_meas.setItem(row, 2, value_item)
+            self._measure_row_map.append({"kind": "measure", "index": index})
+            row += 1
+        for index, (nm, val) in enumerate(load_mv):
+            type_item = QTableWidgetItem("Load")
+            name_item = QTableWidgetItem(str(nm))
+            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}")
+            for item in (type_item, name_item, value_item):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_meas.setItem(row, 0, type_item)
+            self.table_meas.setItem(row, 1, name_item)
+            self.table_meas.setItem(row, 2, value_item)
+            self._measure_row_map.append({"kind": "load", "index": index})
+            row += 1
 
     def _add_force_from_selection(self):
         pid = self._selected_one_point()
@@ -417,20 +435,7 @@ class SimulationPanel(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table_joint_loads.setItem(row, col, item)
 
-        self._refresh_load_measure_table()
-
-    def _refresh_load_measure_table(self):
-        mv = self.ctrl.get_load_measure_values()
-        self.table_load_measures.setRowCount(len(mv))
-        for row, (nm, val) in enumerate(mv):
-            name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}")
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            value_item.setFlags(value_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_load_measures.setItem(row, 0, name_item)
-            self.table_load_measures.setItem(row, 1, value_item)
-
-
+        self._refresh_measure_table()
     # ---- sweep ----
     def play(self):
         if not self.ctrl.driver.get("enabled") and not self.ctrl.output.get("enabled"):
