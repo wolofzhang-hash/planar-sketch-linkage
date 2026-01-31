@@ -127,18 +127,26 @@ class SimulationPanel(QWidget):
         self.table_meas.setHorizontalHeaderLabels(["Measurement", "Value (deg)"])
         self.table_meas.verticalHeader().setVisible(False)
         self.table_meas.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table_meas.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_meas.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_meas.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_meas.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         measurements_layout.addWidget(self.table_meas)
 
         meas_buttons = QHBoxLayout()
-        self.btn_add_meas_vec = QPushButton("Add Vector Measure (2 pts)")
-        self.btn_add_meas_joint = QPushButton("Add Joint Measure (3 pts)")
         self.btn_clear_meas = QPushButton("Clear")
-        meas_buttons.addWidget(self.btn_add_meas_vec)
-        meas_buttons.addWidget(self.btn_add_meas_joint)
+        self.btn_delete_meas = QPushButton("Delete")
         meas_buttons.addWidget(self.btn_clear_meas)
+        meas_buttons.addWidget(self.btn_delete_meas)
         measurements_layout.addLayout(meas_buttons)
+
+        self.table_load_measures = QTableWidget(0, 2)
+        self.table_load_measures.setHorizontalHeaderLabels(["Load Measurement", "Value"])
+        self.table_load_measures.verticalHeader().setVisible(False)
+        self.table_load_measures.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_load_measures.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table_load_measures.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        measurements_layout.addWidget(QLabel("Tracked Load Measurements"))
+        measurements_layout.addWidget(self.table_load_measures)
         measurements_layout.addStretch(1)
         tabs.addTab(measurements_tab, "Measurements")
 
@@ -165,15 +173,6 @@ class SimulationPanel(QWidget):
         load_buttons.addWidget(self.btn_remove_load)
         load_buttons.addWidget(self.btn_clear_loads)
         loads_layout.addLayout(load_buttons)
-
-        self.table_load_measures = QTableWidget(0, 2)
-        self.table_load_measures.setHorizontalHeaderLabels(["Load Measurement", "Value"])
-        self.table_load_measures.verticalHeader().setVisible(False)
-        self.table_load_measures.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table_load_measures.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.table_load_measures.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        loads_layout.addWidget(QLabel("Tracked Load Measurements"))
-        loads_layout.addWidget(self.table_load_measures)
 
         # Quasi-static summary (torques)
         qs_info = QHBoxLayout()
@@ -204,9 +203,8 @@ class SimulationPanel(QWidget):
         self.btn_clear_driver.clicked.connect(self._clear_driver)
         self.btn_set_output.clicked.connect(self._set_output_from_selection)
         self.btn_clear_output.clicked.connect(self._clear_output)
-        self.btn_add_meas_vec.clicked.connect(self._add_measure_vector_from_selection)
-        self.btn_add_meas_joint.clicked.connect(self._add_measure_joint_from_selection)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
+        self.btn_delete_meas.clicked.connect(self._delete_selected_measure)
         self.btn_add_force.clicked.connect(self._add_force_from_selection)
         self.btn_add_torque.clicked.connect(self._add_torque_from_selection)
         self.btn_remove_load.clicked.connect(self._remove_selected_load)
@@ -327,6 +325,14 @@ class SimulationPanel(QWidget):
 
     def _clear_measures(self):
         self.ctrl.clear_measures()
+        self.refresh_labels()
+
+    def _delete_selected_measure(self):
+        row = self.table_meas.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
+            return
+        self.ctrl.remove_measure_at(row)
         self.refresh_labels()
 
     def _refresh_measure_table(self):
