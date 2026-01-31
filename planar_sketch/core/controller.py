@@ -2243,7 +2243,6 @@ class SketchController:
 
     def cmd_move_system(self, before: Dict[int, Tuple[float, float]], after: Dict[int, Tuple[float, float]]):
         ctrl = self
-        model_before = self.snapshot_model()
         class MoveSystem(Command):
             name = "Move"
             def do(self_):
@@ -2251,7 +2250,9 @@ class SketchController:
                 ctrl.solve_constraints(); ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.refresh_fast()
             def undo(self_):
-                ctrl.apply_model_snapshot(model_before)
+                ctrl.apply_points_snapshot(before)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.refresh_fast()
         self.stack.push(MoveSystem())
 
     def cmd_move_point_by_table(self, pid: int, x: float, y: float):
@@ -2879,8 +2880,24 @@ class SketchController:
         }
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
-        self.scene.clear()
-        self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
+        self._drag_active = False
+        self._drag_pid = None
+        self._drag_before = None
+        self.scene.blockSignals(True)
+        try:
+            self.scene.clear()
+            self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
+            self._background_item = None
+            if self._background_image_original is not None:
+                self._ensure_background_item()
+                self._apply_background_pixmap()
+                scale = float(self.background_image.get("scale", 1.0))
+                pos = self.background_image.get("pos", (0.0, 0.0))
+                if self._background_item is not None:
+                    self._background_item.setScale(scale)
+                    self._background_item.setPos(float(pos[0]), float(pos[1]))
+        finally:
+            self.scene.blockSignals(False)
         self._load_arrow_items = []
         self._last_joint_loads = []
         # Load parameters early so expression fields can be evaluated during/after construction.
