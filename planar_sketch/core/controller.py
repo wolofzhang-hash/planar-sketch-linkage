@@ -15,8 +15,8 @@ import math
 from typing import Dict, Any, Optional, List, Tuple, Callable
 
 from PyQt6.QtCore import QPointF, Qt
-from PyQt6.QtGui import QPainterPath, QColor
-from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog
+from PyQt6.QtGui import QPainterPath, QColor, QImage, QPixmap
+from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog, QGraphicsPixmapItem, QMessageBox
 
 import numpy as np
 
@@ -73,6 +73,18 @@ class SketchController:
         self.show_body_coloring = True
         self.show_trajectories = False
         self.show_load_arrows = True
+
+        self.background_image: Dict[str, Any] = {
+            "path": None,
+            "visible": True,
+            "opacity": 0.6,
+            "grayscale": False,
+            "scale": 1.0,
+            "pos": (0.0, 0.0),
+        }
+        self._background_item: Optional[QGraphicsPixmapItem] = None
+        self._background_image_original: Optional[QImage] = None
+        self._background_pick_points: List[QPointF] = []
 
         self.mode = "Idle"
         self._line_sel: List[int] = []
@@ -136,10 +148,170 @@ class SketchController:
             if self._pos_master is None:
                 return "Point On Spline: select the point (RMB on point -> Point On Spline...)."
             return f"Point On Spline: select a spline for P{int(self._pos_master)}."
+        if self.mode == "BackgroundImagePick":
+            if len(self._background_pick_points) == 0:
+                return "Background Image: click the first reference point."
+            if len(self._background_pick_points) == 1:
+                return "Background Image: click the second reference point."
+            return "Background Image: configuring..."
         return "Idle | BoxSelect: drag LMB on empty. Ctrl+Box toggles. Ctrl+Click toggles points."
 
     def update_status(self):
         self.win.statusBar().showMessage(self.status_text())
+
+    def has_background_image(self) -> bool:
+        return self._background_item is not None and self._background_image_original is not None
+
+    def load_background_image(self, path: str) -> bool:
+        image = QImage(path)
+        if image.isNull():
+            QMessageBox.critical(self.win, "Background Image", "Failed to load image.")
+            return False
+        self._background_image_original = image
+        self.background_image["path"] = path
+        self._ensure_background_item()
+        self._apply_background_pixmap()
+        self._start_background_pick()
+        return True
+
+    def clear_background_image(self):
+        if self._background_item is not None:
+            self.scene.removeItem(self._background_item)
+        self._background_item = None
+        self._background_image_original = None
+        self.background_image["path"] = None
+        self._background_pick_points = []
+        if self.mode == "BackgroundImagePick":
+            self.mode = "Idle"
+        self.update_status()
+
+    def set_background_visible(self, visible: bool):
+        self.background_image["visible"] = bool(visible)
+        if self._background_item is not None:
+            self._background_item.setVisible(bool(visible))
+
+    def set_background_opacity(self, opacity: float):
+        opacity = max(0.0, min(1.0, float(opacity)))
+        self.background_image["opacity"] = opacity
+        if self._background_item is not None:
+            self._background_item.setOpacity(opacity)
+
+    def set_background_grayscale(self, grayscale: bool):
+        self.background_image["grayscale"] = bool(grayscale)
+        if self._background_item is not None:
+            self._apply_background_pixmap()
+
+    def _ensure_background_item(self):
+        if self._background_item is None:
+            self._background_item = QGraphicsPixmapItem()
+            self._background_item.setZValue(-1000)
+            self._background_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.scene.addItem(self._background_item)
+        self._background_item.setVisible(bool(self.background_image.get("visible", True)))
+        self._background_item.setOpacity(float(self.background_image.get("opacity", 0.6)))
+
+    def _apply_background_pixmap(self):
+        if self._background_item is None or self._background_image_original is None:
+            return
+        if self.background_image.get("grayscale", False):
+            img = self._background_image_original.convertToFormat(QImage.Format.Format_Grayscale8)
+        else:
+            img = self._background_image_original
+        self._background_item.setPixmap(QPixmap.fromImage(img))
+
+    def _start_background_pick(self):
+        if self._background_item is None or self._background_image_original is None:
+            return
+        self.mode = "BackgroundImagePick"
+        self._background_pick_points = []
+        self.background_image["scale"] = 1.0
+        self.background_image["pos"] = (0.0, 0.0)
+        self._background_item.setScale(1.0)
+        self._background_item.setPos(0.0, 0.0)
+        self.update_status()
+
+    def on_background_pick(self, scene_pos: QPointF) -> bool:
+        if self.mode != "BackgroundImagePick":
+            return False
+        if self._background_item is None or self._background_image_original is None:
+            return False
+        item_pos = self._background_item.mapFromScene(scene_pos)
+        if (
+            item_pos.x() < 0
+            or item_pos.y() < 0
+            or item_pos.x() > self._background_image_original.width()
+            or item_pos.y() > self._background_image_original.height()
+        ):
+            return True
+        self._background_pick_points.append(item_pos)
+        if len(self._background_pick_points) < 2:
+            self.update_status()
+            return True
+        self._finish_background_pick()
+        return True
+
+    def _finish_background_pick(self):
+        if len(self._background_pick_points) < 2:
+            return
+        p1_img = self._background_pick_points[0]
+        p2_img = self._background_pick_points[1]
+        dx = p2_img.x() - p1_img.x()
+        dy = p2_img.y() - p1_img.y()
+        pixel_dist = (dx * dx + dy * dy) ** 0.5
+        if pixel_dist <= 1e-6:
+            QMessageBox.warning(self.win, "Background Image", "Reference points are too close.")
+            self.mode = "Idle"
+            self.update_status()
+            return
+        dist, ok = QInputDialog.getDouble(
+            self.win,
+            "Background Image Scale",
+            "Distance between the two points (model units):",
+            100.0,
+            0.000001,
+            1e9,
+            6,
+        )
+        if not ok:
+            self.mode = "Idle"
+            self.update_status()
+            return
+        x1, ok = QInputDialog.getDouble(
+            self.win,
+            "Background Image Position",
+            "First point X coordinate (model units):",
+            0.0,
+            -1e9,
+            1e9,
+            6,
+        )
+        if not ok:
+            self.mode = "Idle"
+            self.update_status()
+            return
+        y1, ok = QInputDialog.getDouble(
+            self.win,
+            "Background Image Position",
+            "First point Y coordinate (model units):",
+            0.0,
+            -1e9,
+            1e9,
+            6,
+        )
+        if not ok:
+            self.mode = "Idle"
+            self.update_status()
+            return
+        scale = float(dist) / float(pixel_dist)
+        pos_x = float(x1) - scale * p1_img.x()
+        pos_y = float(y1) - scale * p1_img.y()
+        self.background_image["scale"] = scale
+        self.background_image["pos"] = (pos_x, pos_y)
+        if self._background_item is not None:
+            self._background_item.setScale(scale)
+            self._background_item.setPos(pos_x, pos_y)
+        self.mode = "Idle"
+        self.update_status()
 
     def point_body(self, pid: int) -> Optional[int]:
         for bid, b in self.bodies.items():
