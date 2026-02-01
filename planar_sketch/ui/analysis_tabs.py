@@ -24,6 +24,8 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QLineEdit,
     QComboBox,
+    QMenu,
+    QDialog,
 )
 
 from ..core.case_run_manager import CaseRunManager
@@ -33,6 +35,7 @@ from ..core.optimization import (
     ObjectiveSpec,
     ConstraintSpec,
 )
+from .expression_builder import ExpressionBuilderDialog
 
 
 class AnimationTab(QWidget):
@@ -240,10 +243,12 @@ class OptimizationTab(QWidget):
         self.table_obj.setHorizontalHeaderLabels(["Enabled", "Direction", "Expression"])
         self.table_obj.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_obj.verticalHeader().setVisible(False)
+        self.table_obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table_obj)
 
         self.btn_add_obj.clicked.connect(lambda _checked=False: self.add_objective_row())
         self.btn_del_obj.clicked.connect(self.remove_objective_row)
+        self.table_obj.customContextMenuRequested.connect(self._open_objective_context_menu)
         return group
 
     def _build_constraints_group(self) -> QWidget:
@@ -261,10 +266,12 @@ class OptimizationTab(QWidget):
         self.table_con.setHorizontalHeaderLabels(["Enabled", "Expression", "Comparator", "Limit"])
         self.table_con.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_con.verticalHeader().setVisible(False)
+        self.table_con.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table_con)
 
         self.btn_add_con.clicked.connect(lambda _checked=False: self.add_constraint_row())
         self.btn_del_con.clicked.connect(self.remove_constraint_row)
+        self.table_con.customContextMenuRequested.connect(self._open_constraint_context_menu)
         return group
 
     def _build_run_group(self) -> QWidget:
@@ -486,6 +493,80 @@ class OptimizationTab(QWidget):
         row = self.table_con.currentRow()
         if row >= 0:
             self.table_con.removeRow(row)
+
+    def _optimization_functions(self) -> List[str]:
+        return ["max(", "min(", "mean(", "rms(", "abs("]
+
+    def _optimization_signals(self) -> List[str]:
+        signals = ["input_deg", "output_deg", "hard_err", "success"]
+        signals.extend([name for name, _val in self.ctrl.get_measure_values_deg()])
+        signals.extend([name for name, _val in self.ctrl.get_load_measure_values()])
+        manager = self._manager()
+        case_id = manager.get_active_case()
+        if case_id:
+            case_spec = manager.load_case_spec(case_id) or {}
+            signals.extend(case_spec.get("measurements", {}).get("signals", []))
+        return sorted({str(sig) for sig in signals if sig})
+
+    def _open_objective_context_menu(self, pos) -> None:
+        item = self.table_obj.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        col = item.column()
+        if col != 2:
+            return
+        menu = QMenu(self)
+        act_builder = menu.addAction("Expression Builder...")
+        selected = menu.exec(self.table_obj.viewport().mapToGlobal(pos))
+        if selected == act_builder:
+            self._open_expression_builder_for_objective(row)
+
+    def _open_constraint_context_menu(self, pos) -> None:
+        item = self.table_con.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        col = item.column()
+        if col != 1:
+            return
+        menu = QMenu(self)
+        act_builder = menu.addAction("Expression Builder...")
+        selected = menu.exec(self.table_con.viewport().mapToGlobal(pos))
+        if selected == act_builder:
+            self._open_expression_builder_for_constraint(row)
+
+    def _open_expression_builder_for_objective(self, row: int) -> None:
+        expr_item = self.table_obj.item(row, 2)
+        current = expr_item.text() if expr_item else ""
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial=current,
+            tokens=self._optimization_signals(),
+            functions=self._optimization_functions(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            text = dialog.expression().strip()
+            if expr_item:
+                expr_item.setText(text)
+            else:
+                self.table_obj.setItem(row, 2, QTableWidgetItem(text))
+
+    def _open_expression_builder_for_constraint(self, row: int) -> None:
+        expr_item = self.table_con.item(row, 1)
+        current = expr_item.text() if expr_item else ""
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial=current,
+            tokens=self._optimization_signals(),
+            functions=self._optimization_functions(),
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            text = dialog.expression().strip()
+            if expr_item:
+                expr_item.setText(text)
+            else:
+                self.table_con.setItem(row, 1, QTableWidgetItem(text))
 
     def _collect_variables(self) -> Optional[List[DesignVariable]]:
         variables: List[DesignVariable] = []
