@@ -3949,6 +3949,24 @@ class SketchController:
         reaction_net = J.T @ lam_net if J.size else np.zeros_like(f_ext)
         reaction_fixed = J.T @ lam_fixed if J.size else np.zeros_like(f_ext)
 
+        spline_reactions: Dict[int, Tuple[float, float, float]] = {}
+        if J.size:
+            for k, info in enumerate(meta):
+                if info.get("type") != "point_spline":
+                    continue
+                pid = int(info.get("p", -1))
+                if pid not in idx_map:
+                    continue
+                idx = idx_map[pid]
+                fx_k = float(J[k, 2 * idx] * lam[k])
+                fy_k = float(J[k, 2 * idx + 1] * lam[k])
+                mag_k = math.hypot(fx_k, fy_k)
+                if mag_k <= 0.0:
+                    continue
+                prev = spline_reactions.get(pid)
+                if prev is None or mag_k > prev[2]:
+                    spline_reactions[pid] = (fx_k, fy_k, mag_k)
+
         applied_force: Dict[int, Tuple[float, float]] = {pid: (0.0, 0.0) for pid in point_ids}
         for load in self.loads:
             pid = int(load.get("pid", -1))
@@ -3966,6 +3984,8 @@ class SketchController:
             if bool(point.get("fixed", False)):
                 fx = float(reaction_fixed[2 * idx])
                 fy = float(reaction_fixed[2 * idx + 1])
+            elif pid in spline_reactions:
+                fx, fy, _mag = spline_reactions[pid]
             else:
                 applied_fx, applied_fy = applied_force.get(pid, (0.0, 0.0))
                 if abs(applied_fx) > 0.0 or abs(applied_fy) > 0.0:
