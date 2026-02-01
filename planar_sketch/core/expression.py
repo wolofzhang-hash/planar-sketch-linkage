@@ -26,12 +26,28 @@ def _rms(values: Iterable[float]) -> float:
     return math.sqrt(sum(v * v for v in vals) / float(len(vals)))
 
 
+def _first(values: Iterable[float]) -> float:
+    vals = list(values)
+    if not vals:
+        raise ExpressionError("first() requires at least one value")
+    return float(vals[0])
+
+
+def _last(values: Iterable[float]) -> float:
+    vals = list(values)
+    if not vals:
+        raise ExpressionError("last() requires at least one value")
+    return float(vals[-1])
+
+
 _ALLOWED_FUNCS = {
     "max": max,
     "min": min,
     "mean": _mean,
     "rms": _rms,
     "abs": abs,
+    "first": _first,
+    "last": _last,
 }
 
 
@@ -96,7 +112,9 @@ class ExpressionEvaluator(ast.NodeVisitor):
         func = _ALLOWED_FUNCS[name]
         if isinstance(arg, list):
             return float(func(arg))
-        return float(func([arg]) if name in ("mean", "rms") else func(arg))
+        if name in ("mean", "rms", "max", "min", "first", "last"):
+            return float(func([arg]))
+        return float(func(arg))
 
     def visit_Name(self, node: ast.Name) -> Any:
         key = node.id
