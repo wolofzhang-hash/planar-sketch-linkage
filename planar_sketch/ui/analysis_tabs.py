@@ -29,11 +29,15 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.case_run_manager import CaseRunManager
+from ..core.expression import evaluate_expression
+from ..core.headless_sim import simulate_case
 from ..core.optimization import (
     OptimizationWorker,
     DesignVariable,
     ObjectiveSpec,
     ConstraintSpec,
+    build_signals,
+    model_variable_signals,
 )
 from .expression_builder import ExpressionBuilderDialog
 
@@ -494,19 +498,42 @@ class OptimizationTab(QWidget):
         if row >= 0:
             self.table_con.removeRow(row)
 
-    def _optimization_functions(self) -> List[str]:
-        return ["max(", "min(", "mean(", "rms(", "abs("]
+    def _optimization_functions(self) -> Dict[str, List[str]]:
+        return {
+            "Aggregates": ["max(", "min(", "mean(", "rms(", "abs(", "first(", "last("],
+            "Operators": ["+", "-", "*", "/", "(", ")", ","],
+        }
 
-    def _optimization_signals(self) -> List[str]:
-        signals = ["input_deg", "output_deg", "hard_err", "success"]
-        signals.extend([name for name, _val in self.ctrl.get_measure_values_deg()])
-        signals.extend([name for name, _val in self.ctrl.get_load_measure_values()])
+    def _optimization_token_groups(self) -> Dict[str, List[str]]:
+        groups: Dict[str, List[str]] = {}
+        groups["Input/Output"] = ["input_deg", "output_deg"]
+        groups["Status"] = ["hard_err", "success"]
+
+        measurements = [name for name, _val in self.ctrl.get_measure_values_deg()]
+        load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
+
         manager = self._manager()
         case_id = manager.get_active_case()
         if case_id:
             case_spec = manager.load_case_spec(case_id) or {}
-            signals.extend(case_spec.get("measurements", {}).get("signals", []))
-        return sorted({str(sig) for sig in signals if sig})
+            measurements.extend(case_spec.get("measurements", {}).get("signals", []))
+
+        if measurements:
+            groups["Measurements"] = measurements
+        if load_measures:
+            groups["Load Measurements"] = load_measures
+
+        snapshot = self.ctrl.snapshot_model()
+        model_vars = sorted(model_variable_signals(snapshot).keys())
+        if model_vars:
+            groups["Model Variables"] = model_vars
+
+        cleaned: Dict[str, List[str]] = {}
+        for name, items in groups.items():
+            filtered = sorted({str(item) for item in items if str(item).strip()})
+            if filtered:
+                cleaned[name] = filtered
+        return cleaned
 
     def _open_objective_context_menu(self, pos) -> None:
         item = self.table_obj.itemAt(pos)
@@ -542,8 +569,9 @@ class OptimizationTab(QWidget):
         dialog = ExpressionBuilderDialog(
             self,
             initial=current,
-            tokens=self._optimization_signals(),
+            tokens=self._optimization_token_groups(),
             functions=self._optimization_functions(),
+            evaluator=self._evaluate_expression,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             text = dialog.expression().strip()
@@ -558,8 +586,9 @@ class OptimizationTab(QWidget):
         dialog = ExpressionBuilderDialog(
             self,
             initial=current,
-            tokens=self._optimization_signals(),
+            tokens=self._optimization_token_groups(),
             functions=self._optimization_functions(),
+            evaluator=self._evaluate_expression,
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             text = dialog.expression().strip()
@@ -567,6 +596,23 @@ class OptimizationTab(QWidget):
                 expr_item.setText(text)
             else:
                 self.table_con.setItem(row, 1, QTableWidgetItem(text))
+
+    def _evaluate_expression(self, expr: str) -> tuple[Optional[float], Optional[str]]:
+        manager = self._manager()
+        case_id = manager.get_active_case()
+        if not case_id:
+            return None, "Select an active case first"
+        case_spec = manager.load_case_spec(case_id)
+        if not case_spec:
+            return None, "Active case spec not found"
+
+        model_snapshot = manager.load_latest_model_snapshot(case_id)
+        if model_snapshot is None:
+            model_snapshot = self.ctrl.snapshot_model()
+
+        frames, _summary, _status = simulate_case(model_snapshot, case_spec)
+        signals = build_signals(frames, model_snapshot)
+        return evaluate_expression(expr, signals)
 
     def _collect_variables(self) -> Optional[List[DesignVariable]]:
         variables: List[DesignVariable] = []

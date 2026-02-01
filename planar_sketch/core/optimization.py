@@ -56,6 +56,34 @@ def _signals_from_frames(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
     return signals_map
 
 
+def model_variable_signals(snapshot: Dict[str, Any]) -> Dict[str, float]:
+    signals: Dict[str, float] = {}
+    for point in snapshot.get("points", []) or []:
+        pid = point.get("id")
+        if pid is None:
+            continue
+        signals[f"P{pid}.x"] = float(point.get("x", 0.0))
+        signals[f"P{pid}.y"] = float(point.get("y", 0.0))
+    for link in snapshot.get("links", []) or []:
+        lid = link.get("id")
+        if lid is None:
+            continue
+        signals[f"Link{lid}.L"] = float(link.get("L", 0.0))
+    for param in snapshot.get("parameters", []) or []:
+        name = str(param.get("name", "")).strip()
+        if not name:
+            continue
+        signals[f"Param.{name}"] = float(param.get("value", 0.0))
+    return signals
+
+
+def build_signals(frames: List[Dict[str, Any]], snapshot: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    signals = _signals_from_frames(frames)
+    if snapshot:
+        signals.update(model_variable_signals(snapshot))
+    return signals
+
+
 def _recompute_snapshot_from_parameters(snapshot: Dict[str, Any]) -> None:
     registry = ParameterRegistry()
     registry.load_list(list(snapshot.get("parameters", []) or []))
@@ -183,7 +211,7 @@ class OptimizationWorker(QThread):
 
                 snapshot = _apply_design_vars(self.model_snapshot, candidate)
                 frames, summary, status = simulate_case(snapshot, self.case_spec)
-                signals = _signals_from_frames(frames)
+                signals = build_signals(frames, snapshot)
 
                 obj_vals = []
                 obj_score = 0.0
