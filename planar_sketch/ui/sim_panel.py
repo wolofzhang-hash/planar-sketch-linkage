@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .analysis_tabs import AnimationTab, OptimizationTab
+from .i18n import tr
 from ..core.case_run_manager import CaseRunManager
 
 if TYPE_CHECKING:
@@ -56,8 +57,11 @@ class SimulationPanel(QWidget):
         self._last_run_data: Optional[Dict[str, Any]] = None
 
         layout = QVBoxLayout(self)
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
+        self.title = QLabel()
+        self.title.setStyleSheet("font-weight: 600;")
+        layout.addWidget(self.title)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs)
 
         main_tab = QWidget()
         main_layout = QVBoxLayout(main_tab)
@@ -187,13 +191,13 @@ class SimulationPanel(QWidget):
 
         loads_layout.addStretch(1)
 
-        tabs.addTab(loads_tab, "Loads")
-        tabs.addTab(measurements_tab, "Measurements")
-        tabs.addTab(main_tab, "Simulation")
+        self.tabs.addTab(loads_tab, "")
+        self.tabs.addTab(measurements_tab, "")
+        self.tabs.addTab(main_tab, "")
         self.animation_tab = AnimationTab(self.ctrl, on_active_case_changed=self._on_active_case_changed)
         self.optimization_tab = OptimizationTab(self.ctrl)
-        tabs.addTab(self.animation_tab, "Animation")
-        tabs.addTab(self.optimization_tab, "Optimization")
+        self.tabs.addTab(self.animation_tab, "")
+        self.tabs.addTab(self.optimization_tab, "")
 
         # Signals
         self.btn_clear_driver.clicked.connect(self._clear_driver)
@@ -214,8 +218,18 @@ class SimulationPanel(QWidget):
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
         self.apply_sweep_settings(self.ctrl.sweep_settings)
 
+        self.apply_language()
         self.refresh_labels()
         self._refresh_run_buttons()
+
+    def apply_language(self) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.title.setText(tr(lang, "panel.analysis_title"))
+        self.tabs.setTabText(0, tr(lang, "tab.loads"))
+        self.tabs.setTabText(1, tr(lang, "tab.measurements"))
+        self.tabs.setTabText(2, tr(lang, "tab.simulation"))
+        self.tabs.setTabText(3, tr(lang, "tab.animation"))
+        self.tabs.setTabText(4, tr(lang, "tab.optimization"))
 
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
