@@ -228,6 +228,7 @@ class MainWindow(QMainWindow):
         self.dock.setWindowTitle(tr(lang, "dock.sketch"))
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
+        self.sim_panel.apply_language()
 
     def solve_accurate_scipy(self):
         """Run SciPy kinematics solver once."""
