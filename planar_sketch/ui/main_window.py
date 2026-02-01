@@ -276,6 +276,8 @@ class MainWindow(QMainWindow):
         self.ctrl.load_dict({"points": [], "links": [], "angles": [], "splines": [], "point_splines": [], "bodies": [], "parameters": [], "version": "2.7.0"})
         self.ctrl.stack.clear()
         self.current_file = None
+        if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
+            self.sim_panel.animation_tab.refresh_cases()
 
     def file_open(self):
         self.ctrl.commit_drag_if_any()
@@ -286,6 +288,8 @@ class MainWindow(QMainWindow):
                 data = json.load(f)
             self.ctrl.load_dict(data)
             self.current_file = path
+            if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
+                self.sim_panel.animation_tab.refresh_cases()
             self.view.fit_all()
         except Exception as e:
             QMessageBox.critical(self, "Open failed", str(e))
@@ -308,3 +312,5 @@ class MainWindow(QMainWindow):
         if not path.lower().endswith(".json"): path += ".json"
         self.current_file = path
         self.file_save()
+        if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
+            self.sim_panel.animation_tab.refresh_cases()
