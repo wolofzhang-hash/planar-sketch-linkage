@@ -88,7 +88,7 @@ class ParametersTab(QWidget):
             self.table.setRowCount(len(items))
             for r, (name, val) in enumerate(items):
                 self.table.setItem(r, 0, QTableWidgetItem(str(name)))
-                self.table.setItem(r, 1, QTableWidgetItem(f"{float(val):.6g}"))
+                self.table.setItem(r, 1, QTableWidgetItem(self.ctrl.format_number(val)))
         # Keep selection is best-effort
         if keep_selection and self.table.rowCount() > 0 and self.table.currentRow() < 0:
             self.table.setCurrentCell(0, 0)
@@ -168,8 +168,8 @@ class PointsTab(QWidget):
                 self.table.setItem(r, 0, id_item)
                 x_expr = (p.get("x_expr") or "").strip()
                 y_expr = (p.get("y_expr") or "").strip()
-                x_item = QTableWidgetItem(x_expr if x_expr else f"{p['x']:.6g}")
-                y_item = QTableWidgetItem(y_expr if y_expr else f"{p['y']:.6g}")
+                x_item = QTableWidgetItem(x_expr if x_expr else self.ctrl.format_number(p["x"]))
+                y_item = QTableWidgetItem(y_expr if y_expr else self.ctrl.format_number(p["y"]))
                 if p.get("x_expr_error"):
                     x_item.setForeground(PURPLE)
                 if p.get("y_expr_error"):
@@ -195,9 +195,9 @@ class PointsTab(QWidget):
                 p = self.ctrl.points[pid]
                 # Don't overwrite expression text during dragging/fast updates.
                 if not (p.get("x_expr") or "").strip():
-                    self.table.item(r, 1).setText(f"{p['x']:.6g}")
+                    self.table.item(r, 1).setText(self.ctrl.format_number(p["x"]))
                 if not (p.get("y_expr") or "").strip():
-                    self.table.item(r, 2).setText(f"{p['y']:.6g}")
+                    self.table.item(r, 2).setText(self.ctrl.format_number(p["y"]))
 
     def _on_selection_changed(self):
         if self.panel.sync_guard: return
@@ -297,12 +297,12 @@ class LinksTab(QWidget):
                         curL = math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
                     else:
                         curL = float(l.get("L", 0.0))
-                    L_item = QTableWidgetItem(f"{curL:.6g}")
+                    L_item = QTableWidgetItem(self.ctrl.format_number(curL))
                     L_item.setFlags(L_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table.setItem(r, 3, L_item)
                 else:
                     L_expr = (l.get("L_expr") or "").strip()
-                    L_item = QTableWidgetItem(L_expr if L_expr else f"{l['L']:.6g}")
+                    L_item = QTableWidgetItem(L_expr if L_expr else self.ctrl.format_number(l["L"]))
                     if l.get("L_expr_error"):
                         L_item.setForeground(PURPLE)
                     self.table.setItem(r, 3, L_item)
@@ -409,7 +409,7 @@ class AnglesTab(QWidget):
                     it = QTableWidgetItem(str(a[key])); it.setFlags(it.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table.setItem(r, c, it)
                 deg_expr = (a.get("deg_expr") or "").strip()
-                deg_item = QTableWidgetItem(deg_expr if deg_expr else f"{a['deg']:.6g}")
+                deg_item = QTableWidgetItem(deg_expr if deg_expr else self.ctrl.format_number(a["deg"]))
                 if a.get("deg_expr_error"):
                     deg_item.setForeground(PURPLE)
                 self.table.setItem(r, 4, deg_item)
@@ -431,7 +431,7 @@ class AnglesTab(QWidget):
                 a = self.ctrl.angles[aid]
                 # Don't overwrite expression text during fast updates.
                 if not (a.get("deg_expr") or "").strip():
-                    self.table.item(r, 4).setText(f"{a['deg']:.6g}")
+                    self.table.item(r, 4).setText(self.ctrl.format_number(a["deg"]))
                 self.table.item(r, 6).setText("OVER" if a.get("over", False) else "OK")
 
     def _on_selection_changed(self):

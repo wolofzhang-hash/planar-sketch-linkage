@@ -28,7 +28,19 @@ from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
 from .scipy_kinematics import SciPyKinematicSolver
-from ..ui.items import TextMarker, PointItem, LinkItem, AngleItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem, TrajectoryItem, ForceArrowItem
+from ..ui.items import (
+    TextMarker,
+    PointItem,
+    LinkItem,
+    AngleItem,
+    CoincideItem,
+    PointLineItem,
+    SplineItem,
+    PointSplineItem,
+    TrajectoryItem,
+    ForceArrowItem,
+    TorqueArrowItem,
+)
 from ..utils.constants import BODY_COLORS
 
 
@@ -73,6 +85,7 @@ class SketchController:
         self.show_body_coloring = True
         self.show_trajectories = False
         self.show_load_arrows = True
+        self.display_precision = 3
 
         self.background_image: Dict[str, Any] = {
             "path": None,
@@ -121,6 +134,7 @@ class SketchController:
         self.loads: List[Dict[str, Any]] = []
         # Display items for load arrows.
         self._load_arrow_items: List[ForceArrowItem] = []
+        self._torque_arrow_items: List[TorqueArrowItem] = []
         self._last_joint_loads: List[Dict[str, Any]] = []
         self._last_quasistatic_summary: Dict[str, Any] = {}
         # Pose snapshots for "reset to initial".
@@ -159,6 +173,15 @@ class SketchController:
                 return "Background Image: click the second reference point."
             return "Background Image: configuring..."
         return "Idle | BoxSelect: drag LMB on empty. Ctrl+Box toggles. Ctrl+Click toggles points."
+
+    def format_number(self, value: Optional[float], unit: str = "", default: str = "--") -> str:
+        if value is None:
+            return default
+        try:
+            precision = int(self.display_precision)
+        except Exception:
+            precision = 3
+        return f"{float(value):.{precision}f}{unit}"
 
     def update_status(self):
         self.win.statusBar().showMessage(self.status_text())
@@ -2704,6 +2727,10 @@ class SketchController:
             )
             omark.setVisible(show_output)
             tmark: TextMarker = p["output_torque_marker"]
+            if tau_out is None:
+                tmark.setText("τ")
+            else:
+                tmark.setText(f"τ={self.format_number(tau_out)}")
             tmark_bounds = tmark.boundingRect()
             tmark.setPos(p["x"] - tmark_bounds.width() - 8, p["y"] + 6)
             show_output_torque = (
@@ -2735,9 +2762,9 @@ class SketchController:
             if l.get("ref", False):
                 # Reference length: show current (measured) length, but do not constrain.
                 curL = math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
-                mk.setText(f"({curL:.6g})")
+                mk.setText(f"({self.format_number(curL)})")
             else:
-                mk.setText(f"L={l['L']:.6g}")
+                mk.setText(f"L={self.format_number(l['L'])}")
             mk.setPos(mx, my)
             mk.setVisible(self.show_dim_markers and self.show_links_geometry and not l.get("hidden", False))
 
@@ -2776,11 +2803,30 @@ class SketchController:
         if not self.show_load_arrows:
             for item in self._load_arrow_items:
                 item.setVisible(False)
+            for item in self._torque_arrow_items:
+                item.setVisible(False)
             return
 
         load_vectors: List[Dict[str, float]] = []
+        torque_vectors: List[Dict[str, float]] = []
         for ld in self.loads:
             if str(ld.get("type", "force")).lower() != "force":
+                if str(ld.get("type", "")).lower() == "torque":
+                    pid = int(ld.get("pid", -1))
+                    if pid not in self.points:
+                        continue
+                    if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
+                        continue
+                    mz = float(ld.get("mz", 0.0))
+                    if abs(mz) < 1e-12:
+                        continue
+                    p = self.points[pid]
+                    torque_vectors.append({
+                        "x": p["x"],
+                        "y": p["y"],
+                        "mz": mz,
+                        "label": self.format_number(mz),
+                    })
                 continue
             pid = int(ld.get("pid", -1))
             if pid not in self.points:
@@ -2793,7 +2839,13 @@ class SketchController:
                 continue
             p = self.points[pid]
             mag = math.hypot(fx, fy)
-            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy, "label": f"{mag:.3f}"})
+            load_vectors.append({
+                "x": p["x"],
+                "y": p["y"],
+                "fx": fx,
+                "fy": fy,
+                "label": self.format_number(mag),
+            })
 
         for jl in self._last_joint_loads:
             pid = int(jl.get("pid", -1))
@@ -2807,7 +2859,13 @@ class SketchController:
                 continue
             p = self.points[pid]
             mag = math.hypot(fx, fy)
-            load_vectors.append({"x": p["x"], "y": p["y"], "fx": fx, "fy": fy, "label": f"{mag:.3f}"})
+            load_vectors.append({
+                "x": p["x"],
+                "y": p["y"],
+                "fx": fx,
+                "fy": fy,
+                "label": self.format_number(mag),
+            })
 
         needed = len(load_vectors)
         while len(self._load_arrow_items) < needed:
@@ -2833,9 +2891,33 @@ class SketchController:
                 label=str(vec.get("label", "")),
             )
 
+        torque_needed = len(torque_vectors)
+        while len(self._torque_arrow_items) < torque_needed:
+            item = TorqueArrowItem(QColor(220, 40, 40))
+            self._torque_arrow_items.append(item)
+            self.scene.addItem(item)
+        torque_mags = [abs(vec["mz"]) for vec in torque_vectors]
+        max_torque = max(torque_mags) if torque_mags else 0.0
+        target_radius = 26.0
+        torque_scale = (target_radius / max_torque) if max_torque > 1e-9 else 1.0
+        torque_scale = max(0.2, min(3.0, torque_scale))
+        for idx, item in enumerate(self._torque_arrow_items):
+            if idx >= torque_needed:
+                item.setVisible(False)
+                continue
+            vec = torque_vectors[idx]
+            item.set_torque(
+                vec["x"],
+                vec["y"],
+                vec["mz"],
+                scale=torque_scale,
+                label=str(vec.get("label", "")),
+            )
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": "2.7.0",
+            "display_precision": int(getattr(self, "display_precision", 3)),
             "parameters": self.parameters.to_list(),
             "background_image": {
                 "path": self.background_image.get("path"),
@@ -3012,6 +3094,7 @@ class SketchController:
         finally:
             self.scene.blockSignals(False)
         self._load_arrow_items = []
+        self._torque_arrow_items = []
         self._last_joint_loads = []
         # Load parameters early so expression fields can be evaluated during/after construction.
         self.parameters.load_list(list(data.get("parameters", []) or []))
@@ -3058,6 +3141,7 @@ class SketchController:
         driver = data.get("driver", {}) or {}
         output = data.get("output", {}) or {}
         measures = data.get("measures", []) or []
+        self.display_precision = int(data.get("display_precision", getattr(self, "display_precision", 3)))
         loads = data.get("loads", []) or []
         load_measures = data.get("load_measures", []) or []
         bg_path = self.background_image.get("path")

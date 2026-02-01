@@ -276,9 +276,9 @@ class SimulationPanel(QWidget):
 
         a_in = self.ctrl.get_input_angle_deg()
         a_out = self.ctrl.get_output_angle_deg()
-        s_in = "--" if a_in is None else f"{a_in:.3f}°"
-        s_out = "--" if a_out is None else f"{a_out:.3f}°"
-        self.lbl_angles.setText(f"Input: {s_in} | Output: {s_out}")
+        s_in = "--" if a_in is None else self.ctrl.format_number(a_in)
+        s_out = "--" if a_out is None else self.ctrl.format_number(a_out)
+        self.lbl_angles.setText(f"Input: {s_in}° | Output: {s_out}°")
         self._refresh_load_tables()
 
     def _set_driver_from_selection(self):
@@ -358,7 +358,7 @@ class SimulationPanel(QWidget):
         for index, (nm, val) in enumerate(mv):
             type_item = QTableWidgetItem("Measurement")
             name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}°")
+            value_item = QTableWidgetItem("--" if val is None else f"{self.ctrl.format_number(val)}°")
             for item in (type_item, name_item, value_item):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_meas.setItem(row, 0, type_item)
@@ -369,7 +369,7 @@ class SimulationPanel(QWidget):
         for index, (nm, val) in enumerate(load_mv):
             type_item = QTableWidgetItem("Load")
             name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else f"{val:.3f}")
+            value_item = QTableWidgetItem("--" if val is None else self.ctrl.format_number(val))
             for item in (type_item, name_item, value_item):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_meas.setItem(row, 0, type_item)
@@ -382,10 +382,22 @@ class SimulationPanel(QWidget):
         pid = self._selected_one_point()
         if pid is None:
             return
-        fx, ok = QInputDialog.getDouble(self, "Force X", "Fx", 0.0, decimals=4)
+        fx, ok = QInputDialog.getDouble(
+            self,
+            "Force X",
+            "Fx",
+            0.0,
+            decimals=int(self.ctrl.display_precision),
+        )
         if not ok:
             return
-        fy, ok = QInputDialog.getDouble(self, "Force Y", "Fy", 0.0, decimals=4)
+        fy, ok = QInputDialog.getDouble(
+            self,
+            "Force Y",
+            "Fy",
+            0.0,
+            decimals=int(self.ctrl.display_precision),
+        )
         if not ok:
             return
         self.ctrl.add_load_force(pid, fx, fy)
@@ -395,7 +407,13 @@ class SimulationPanel(QWidget):
         pid = self._selected_one_point()
         if pid is None:
             return
-        mz, ok = QInputDialog.getDouble(self, "Torque", "Mz (out-of-plane)", 0.0, decimals=4)
+        mz, ok = QInputDialog.getDouble(
+            self,
+            "Torque",
+            "Mz (out-of-plane)",
+            0.0,
+            decimals=int(self.ctrl.display_precision),
+        )
         if not ok:
             return
         self.ctrl.add_load_torque(pid, mz)
@@ -425,9 +443,9 @@ class SimulationPanel(QWidget):
             items = [
                 QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
                 QTableWidgetItem(ltype),
-                QTableWidgetItem(f"{fx:.3f}"),
-                QTableWidgetItem(f"{fy:.3f}"),
-                QTableWidgetItem(f"{mz:.3f}"),
+                QTableWidgetItem(self.ctrl.format_number(fx)),
+                QTableWidgetItem(self.ctrl.format_number(fy)),
+                QTableWidgetItem(self.ctrl.format_number(mz)),
             ]
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -440,16 +458,16 @@ class SimulationPanel(QWidget):
 
         tau_in = qs.get("tau_input", None)
         tau_out = qs.get("tau_output", None)
-        self.lbl_tau_in.setText("Input τ: --" if tau_in is None else f"Input τ: {tau_in:.3f}")
-        self.lbl_tau_out.setText("Output τ: --" if tau_out is None else f"Output τ: {tau_out:.3f}")
+        self.lbl_tau_in.setText("Input τ: --" if tau_in is None else f"Input τ: {self.ctrl.format_number(tau_in)}")
+        self.lbl_tau_out.setText("Output τ: --" if tau_out is None else f"Output τ: {self.ctrl.format_number(tau_out)}")
 
         self.table_joint_loads.setRowCount(len(joint_loads))
         for row, jl in enumerate(joint_loads):
             items = [
                 QTableWidgetItem(f"P{jl.get('pid')}"),
-                QTableWidgetItem(f"{jl.get('fx', 0.0):.3f}"),
-                QTableWidgetItem(f"{jl.get('fy', 0.0):.3f}"),
-                QTableWidgetItem(f"{jl.get('mag', 0.0):.3f}"),
+                QTableWidgetItem(self.ctrl.format_number(jl.get("fx", 0.0))),
+                QTableWidgetItem(self.ctrl.format_number(jl.get("fy", 0.0))),
+                QTableWidgetItem(self.ctrl.format_number(jl.get("mag", 0.0))),
             ]
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)

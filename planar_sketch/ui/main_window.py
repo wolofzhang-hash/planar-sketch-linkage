@@ -18,6 +18,7 @@ from .view import SketchView
 from .panel import SketchPanel
 from .items import PointItem, LinkItem, AngleItem, SplineItem, PointSplineItem
 from .sim_panel import SimulationPanel
+from .settings_dialog import SettingsDialog
 
 
 class MainWindow(QMainWindow):
@@ -116,6 +117,8 @@ class MainWindow(QMainWindow):
         self.act_repeat_model.setShortcut(QKeySequence("F4"))
         self.act_repeat_model.triggered.connect(self.ctrl.repeat_last_model_action)
         m_edit.addAction(self.act_repeat_model)
+        m_edit.addSeparator()
+        m_edit.addAction("Settings...", self.open_settings)
 
         m_sketch = mb.addMenu("Sketch")
         m_sketch.addAction("Create Line", self.ctrl.begin_create_line)
@@ -206,6 +209,15 @@ class MainWindow(QMainWindow):
         self.ctrl.set_background_visible(bool(checked))
     def _toggle_background_grayscale(self, checked: bool):
         self.ctrl.set_background_grayscale(bool(checked))
+
+    def open_settings(self):
+        dlg = SettingsDialog(self.ctrl, self)
+        if dlg.exec():
+            self.ctrl.display_precision = dlg.decimal_places()
+            self.ctrl.update_graphics()
+            self.panel.defer_refresh_all(keep_selection=True)
+            if hasattr(self, "sim_panel"):
+                self.sim_panel.refresh_labels()
 
     def load_background_image(self):
         self.ctrl.commit_drag_if_any()
