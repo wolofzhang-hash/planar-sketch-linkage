@@ -73,7 +73,10 @@ class ExpressionEvaluator(ast.NodeVisitor):
             tree = ast.parse(expr, mode="eval")
         except SyntaxError as exc:
             raise ExpressionError(f"Parse error: {exc}") from exc
-        return self.visit(tree.body)
+        result = self.visit(tree.body)
+        if isinstance(result, (list, tuple)):
+            raise ExpressionError("Use aggregate functions for signal arrays")
+        return result
 
     def visit_BinOp(self, node: ast.BinOp) -> float:
         left = self.visit(node.left)
