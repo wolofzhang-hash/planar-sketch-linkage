@@ -39,8 +39,9 @@ class ForceArrowItem(QGraphicsPathItem):
     def __init__(self, color: QColor):
         super().__init__()
         self._color = color
+        self._line_width = 1.6
         self.setZValue(20)
-        self.setPen(QPen(self._color, 2.4))
+        self._update_pen()
         self.setBrush(QBrush(self._color))
         self._label = QGraphicsSimpleTextItem("", self)
         self._label.setBrush(self._color)
@@ -48,6 +49,13 @@ class ForceArrowItem(QGraphicsPathItem):
         self._label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         # Do not intercept mouse events.
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def _update_pen(self) -> None:
+        self.setPen(QPen(self._color, float(self._line_width)))
+
+    def set_line_width(self, width: float) -> None:
+        self._line_width = max(0.2, float(width))
+        self._update_pen()
 
     def set_vector(self, x: float, y: float, fx: float, fy: float, scale: float = 1.0, label: str | None = None):
         mag = (fx * fx + fy * fy) ** 0.5
@@ -96,14 +104,22 @@ class TorqueArrowItem(QGraphicsPathItem):
     def __init__(self, color: QColor):
         super().__init__()
         self._color = color
+        self._line_width = 1.6
         self.setZValue(20)
-        self.setPen(QPen(self._color, 2.4))
+        self._update_pen()
         self.setBrush(QBrush(self._color))
         self._label = QGraphicsSimpleTextItem("", self)
         self._label.setBrush(self._color)
         self._label.setZValue(25)
         self._label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def _update_pen(self) -> None:
+        self.setPen(QPen(self._color, float(self._line_width)))
+
+    def set_line_width(self, width: float) -> None:
+        self._line_width = max(0.2, float(width))
+        self._update_pen()
 
     def set_torque(self, x: float, y: float, mz: float, scale: float = 1.0, label: str | None = None):
         mag = abs(float(mz))
