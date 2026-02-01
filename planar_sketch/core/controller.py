@@ -3811,6 +3811,7 @@ class SketchController:
 
         # External forces on translational DOFs
         f_ext = np.zeros(ndof, dtype=float)
+        applied_force: Dict[int, Tuple[float, float]] = {pid: (0.0, 0.0) for pid in point_ids}
 
         # Collect applied torques and convert them to equivalent force couples
         applied_torque: Dict[int, float] = {pid: 0.0 for pid in point_ids}
@@ -3847,6 +3848,9 @@ class SketchController:
             mz = float(load.get("mz", 0.0))
             f_ext[2 * idx] += fx
             f_ext[2 * idx + 1] += fy
+            if abs(fx) > 0.0 or abs(fy) > 0.0:
+                cur_fx, cur_fy = applied_force[pid]
+                applied_force[pid] = (cur_fx + fx, cur_fy + fy)
             if abs(mz) > 0.0:
                 applied_torque[pid] = applied_torque.get(pid, 0.0) + mz
 
@@ -3874,6 +3878,10 @@ class SketchController:
             f_ext[2 * j + 1] += Fy
             f_ext[2 * i] -= Fx
             f_ext[2 * i + 1] -= Fy
+            cur_fx, cur_fy = applied_force[point_ids[j]]
+            applied_force[point_ids[j]] = (cur_fx + Fx, cur_fy + Fy)
+            cur_fx, cur_fy = applied_force[point_ids[i]]
+            applied_force[point_ids[i]] = (cur_fx - Fx, cur_fy - Fy)
 
         # Build constraints for quasi-static
         use_output = bool(self.output.get("enabled"))
@@ -3966,17 +3974,6 @@ class SketchController:
                 prev = spline_reactions.get(pid)
                 if prev is None or mag_k > prev[2]:
                     spline_reactions[pid] = (fx_k, fy_k, mag_k)
-
-        applied_force: Dict[int, Tuple[float, float]] = {pid: (0.0, 0.0) for pid in point_ids}
-        for load in self.loads:
-            pid = int(load.get("pid", -1))
-            if pid not in applied_force:
-                continue
-            fx = float(load.get("fx", 0.0))
-            fy = float(load.get("fy", 0.0))
-            if abs(fx) > 0.0 or abs(fy) > 0.0:
-                cur_fx, cur_fy = applied_force[pid]
-                applied_force[pid] = (cur_fx + fx, cur_fy + fy)
 
         joint_loads: List[Dict[str, Any]] = []
         for idx, pid in enumerate(point_ids):
