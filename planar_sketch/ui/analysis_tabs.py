@@ -220,7 +220,7 @@ class OptimizationTab(QWidget):
         self.table_vars.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self.table_vars)
 
-        self.btn_add_var.clicked.connect(self.add_variable_row)
+        self.btn_add_var.clicked.connect(lambda _checked=False: self.add_variable_row())
         self.btn_del_var.clicked.connect(self.remove_variable_row)
         return group
 
@@ -241,7 +241,7 @@ class OptimizationTab(QWidget):
         self.table_obj.verticalHeader().setVisible(False)
         layout.addWidget(self.table_obj)
 
-        self.btn_add_obj.clicked.connect(self.add_objective_row)
+        self.btn_add_obj.clicked.connect(lambda _checked=False: self.add_objective_row())
         self.btn_del_obj.clicked.connect(self.remove_objective_row)
         return group
 
@@ -262,7 +262,7 @@ class OptimizationTab(QWidget):
         self.table_con.verticalHeader().setVisible(False)
         layout.addWidget(self.table_con)
 
-        self.btn_add_con.clicked.connect(self.add_constraint_row)
+        self.btn_add_con.clicked.connect(lambda _checked=False: self.add_constraint_row())
         self.btn_del_con.clicked.connect(self.remove_constraint_row)
         return group
 
