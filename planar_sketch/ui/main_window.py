@@ -214,6 +214,8 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self.ctrl, self)
         if dlg.exec():
             self.ctrl.display_precision = dlg.decimal_places()
+            self.ctrl.load_arrow_width = dlg.load_arrow_width()
+            self.ctrl.torque_arrow_width = dlg.torque_arrow_width()
             self.ctrl.update_graphics()
             self.panel.defer_refresh_all(keep_selection=True)
             if hasattr(self, "sim_panel"):

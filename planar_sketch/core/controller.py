@@ -86,6 +86,8 @@ class SketchController:
         self.show_trajectories = False
         self.show_load_arrows = True
         self.display_precision = 3
+        self.load_arrow_width = 1.6
+        self.torque_arrow_width = 1.6
 
         self.background_image: Dict[str, Any] = {
             "path": None,
@@ -2870,6 +2872,7 @@ class SketchController:
         needed = len(load_vectors)
         while len(self._load_arrow_items) < needed:
             item = ForceArrowItem(QColor(220, 40, 40))
+            item.set_line_width(self.load_arrow_width)
             self._load_arrow_items.append(item)
             self.scene.addItem(item)
         mags = [math.hypot(vec["fx"], vec["fy"]) for vec in load_vectors]
@@ -2881,6 +2884,7 @@ class SketchController:
             if idx >= needed:
                 item.setVisible(False)
                 continue
+            item.set_line_width(self.load_arrow_width)
             vec = load_vectors[idx]
             item.set_vector(
                 vec["x"],
@@ -2894,6 +2898,7 @@ class SketchController:
         torque_needed = len(torque_vectors)
         while len(self._torque_arrow_items) < torque_needed:
             item = TorqueArrowItem(QColor(220, 40, 40))
+            item.set_line_width(self.torque_arrow_width)
             self._torque_arrow_items.append(item)
             self.scene.addItem(item)
         torque_mags = [abs(vec["mz"]) for vec in torque_vectors]
@@ -2905,6 +2910,7 @@ class SketchController:
             if idx >= torque_needed:
                 item.setVisible(False)
                 continue
+            item.set_line_width(self.torque_arrow_width)
             vec = torque_vectors[idx]
             item.set_torque(
                 vec["x"],
@@ -2918,6 +2924,8 @@ class SketchController:
         return {
             "version": "2.7.0",
             "display_precision": int(getattr(self, "display_precision", 3)),
+            "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
+            "torque_arrow_width": float(getattr(self, "torque_arrow_width", 1.6)),
             "parameters": self.parameters.to_list(),
             "background_image": {
                 "path": self.background_image.get("path"),
@@ -3142,6 +3150,8 @@ class SketchController:
         output = data.get("output", {}) or {}
         measures = data.get("measures", []) or []
         self.display_precision = int(data.get("display_precision", getattr(self, "display_precision", 3)))
+        self.load_arrow_width = float(data.get("load_arrow_width", getattr(self, "load_arrow_width", 1.6)))
+        self.torque_arrow_width = float(data.get("torque_arrow_width", getattr(self, "torque_arrow_width", 1.6)))
         loads = data.get("loads", []) or []
         load_measures = data.get("load_measures", []) or []
         bg_path = self.background_image.get("path")
