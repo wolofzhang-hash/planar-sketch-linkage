@@ -7,8 +7,7 @@ New in v2.6.6:
 Previously (v2.4.19):
 - Restored point right-click menus for Driver / Measurement (also available in v2.4.19).
 - Reset pose to the sweep start pose
-- Plot window with custom X/Y (X can be time or any measurement; Y supports multiple series)
-- Export SVG/CSV from the plot window; export full sweep CSV (time/input + all measurements)
+- Export full sweep CSV (time/input + all measurements)
 """
 
 from __future__ import annotations
@@ -27,7 +26,6 @@ from PyQt6.QtWidgets import (
     QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
 )
 
-from .plot_window import PlotWindow
 from .analysis_tabs import AnimationTab, OptimizationTab
 from ..core.case_run_manager import CaseRunManager
 
@@ -52,7 +50,6 @@ class SimulationPanel(QWidget):
         self._frame = 0
 
         self._records: List[Dict[str, Any]] = []
-        self._plot_window: Optional[PlotWindow] = None
         self._pending_sim_start_capture = False
         self._run_context: Optional[Dict[str, Any]] = None
         self._run_start_snapshot: Optional[Dict[str, Any]] = None
@@ -115,14 +112,12 @@ class SimulationPanel(QWidget):
         self.btn_play = QPushButton("Play")
         self.btn_stop = QPushButton("Stop")
         self.btn_reset_pose = QPushButton("Reset Pose")
-        self.btn_plot = QPushButton("Plot...")
         self.btn_export = QPushButton("Export CSV (full sweep)")
         self.btn_save_run = QPushButton("Save Run")
         self.btn_open_last_run = QPushButton("Open Last Run")
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
-        btns.addWidget(self.btn_plot)
         btns.addWidget(self.btn_export)
         btns.addWidget(self.btn_save_run)
         btns.addWidget(self.btn_open_last_run)
@@ -210,7 +205,6 @@ class SimulationPanel(QWidget):
         self.btn_play.clicked.connect(self.play)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_reset_pose.clicked.connect(self.reset_pose)
-        self.btn_plot.clicked.connect(self.open_plot)
         self.btn_export.clicked.connect(self.export_csv)
         self.btn_save_run.clicked.connect(self.save_last_run)
         self.btn_open_last_run.clicked.connect(self.open_last_run)
@@ -783,22 +777,7 @@ class SimulationPanel(QWidget):
 
     def _on_active_case_changed(self) -> None:
         self.optimization_tab.refresh_active_case()
-    # ---- plot/export ----
-    def open_plot(self):
-        if not self._records:
-            QMessageBox.information(self, "Plot", "No sweep data yet. Run Play first.")
-            return
-        # Reuse existing window if present.
-        if self._plot_window is None:
-            self._plot_window = PlotWindow(self._records)
-        else:
-            # update records reference and refresh options
-            self._plot_window._records = self._records
-            self._plot_window._populate_axes_options()
-        self._plot_window.show()
-        self._plot_window.raise_()
-        self._plot_window.activateWindow()
-
+    # ---- export ----
     def export_csv(self):
         if not self._records:
             QMessageBox.information(self, "Export", "No sweep data yet. Run Play first.")
