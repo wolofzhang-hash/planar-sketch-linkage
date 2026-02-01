@@ -6,6 +6,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt, QPointF
+import math
+
 from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
 from PyQt6.QtWidgets import (
     QGraphicsItem,
@@ -85,6 +87,72 @@ class ForceArrowItem(QGraphicsPathItem):
             self._label.setText(label)
             offset = max(6.0, head_w + 4.0)
             self._label.setPos(tip_x + nx * offset, tip_y + ny * offset)
+            self._label.setVisible(True)
+        else:
+            self._label.setVisible(False)
+
+
+class TorqueArrowItem(QGraphicsPathItem):
+    def __init__(self, color: QColor):
+        super().__init__()
+        self._color = color
+        self.setZValue(20)
+        self.setPen(QPen(self._color, 2.4))
+        self.setBrush(QBrush(self._color))
+        self._label = QGraphicsSimpleTextItem("", self)
+        self._label.setBrush(self._color)
+        self._label.setZValue(25)
+        self._label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
+    def set_torque(self, x: float, y: float, mz: float, scale: float = 1.0, label: str | None = None):
+        mag = abs(float(mz))
+        if mag <= 1e-9 or scale <= 0.0:
+            self.setVisible(False)
+            self._label.setVisible(False)
+            return
+        radius = mag * scale
+        radius = max(10.0, min(40.0, radius))
+        start_angle = 30.0
+        span_angle = 300.0 if mz >= 0.0 else -300.0
+        rect = (x - radius, y - radius, radius * 2.0, radius * 2.0)
+
+        path = QPainterPath()
+        path.arcMoveTo(*rect, start_angle)
+        path.arcTo(*rect, start_angle, span_angle)
+
+        end_angle = start_angle + span_angle
+        angle_rad = math.radians(end_angle)
+        tip_x = x + radius * math.cos(angle_rad)
+        tip_y = y - radius * math.sin(angle_rad)
+        tangent_rad = angle_rad + (math.pi / 2.0 if span_angle > 0.0 else -math.pi / 2.0)
+        tdx = math.cos(tangent_rad)
+        tdy = -math.sin(tangent_rad)
+        head_len = max(4.0, min(10.0, radius * 0.35))
+        head_w = head_len * 0.6
+        base_x = tip_x - tdx * head_len
+        base_y = tip_y - tdy * head_len
+        px = -tdy
+        py = tdx
+        left_x = base_x + px * head_w
+        left_y = base_y + py * head_w
+        right_x = base_x - px * head_w
+        right_y = base_y - py * head_w
+        path.moveTo(tip_x, tip_y)
+        path.lineTo(left_x, left_y)
+        path.moveTo(tip_x, tip_y)
+        path.lineTo(right_x, right_y)
+        self.setPath(path)
+        self.setVisible(True)
+
+        if label is not None:
+            self._label.setText(label)
+            label_angle = start_angle + span_angle * 0.5
+            label_rad = math.radians(label_angle)
+            offset = radius + 8.0
+            label_x = x + offset * math.cos(label_rad)
+            label_y = y - offset * math.sin(label_rad)
+            self._label.setPos(label_x, label_y)
             self._label.setVisible(True)
         else:
             self._label.setVisible(False)
@@ -381,7 +449,7 @@ class AngleItem(QGraphicsSimpleTextItem):
         if i not in self.ctrl.points or j not in self.ctrl.points or k not in self.ctrl.points:
             self.setVisible(False); return
         pj = self.ctrl.points[j]
-        self.setText(f"A={a['deg']:.6g}°")
+        self.setText(f"A={self.ctrl.format_number(a['deg'])}°")
         self.setPos(pj["x"] + 10, pj["y"] - 10)
         hidden = bool(a.get("hidden", False)) or (not self.ctrl.show_angles_geometry)
         if self.ctrl.is_point_effectively_hidden(i) and self.ctrl.is_point_effectively_hidden(j) and self.ctrl.is_point_effectively_hidden(k):
