@@ -9,6 +9,7 @@ from PyQt6.QtCore import QTimer, QSignalBlocker, QItemSelectionModel
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QLabel
 
 from .tabs import ParametersTab, PointsTab, LinksTab, AnglesTab, SplinesTab, BodiesTab, ConstraintsTab
+from .i18n import tr
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -21,9 +22,9 @@ class SketchPanel(QWidget):
         self.ctrl.panel = self
         self.sync_guard = False
         layout = QVBoxLayout(self)
-        title = QLabel("Sketch Parameters")
-        title.setStyleSheet("font-weight: 600;")
-        layout.addWidget(title)
+        self.title = QLabel()
+        self.title.setStyleSheet("font-weight: 600;")
+        layout.addWidget(self.title)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
         self.points_tab = PointsTab(self)
@@ -33,13 +34,32 @@ class SketchPanel(QWidget):
         self.splines_tab = SplinesTab(self)
         self.bodies_tab = BodiesTab(self)
         self.constraints_tab = ConstraintsTab(self)
-        self.tabs.addTab(self.params_tab, "Parameters")
-        self.tabs.addTab(self.points_tab, "Points")
-        self.tabs.addTab(self.links_tab, "Lengths")
-        self.tabs.addTab(self.angles_tab, "Angles")
-        self.tabs.addTab(self.splines_tab, "Splines")
-        self.tabs.addTab(self.constraints_tab, "Constraints")
-        self.tabs.addTab(self.bodies_tab, "Rigid Bodies")
+        self.tabs.addTab(self.params_tab, "")
+        self.tabs.addTab(self.points_tab, "")
+        self.tabs.addTab(self.links_tab, "")
+        self.tabs.addTab(self.angles_tab, "")
+        self.tabs.addTab(self.splines_tab, "")
+        self.tabs.addTab(self.constraints_tab, "")
+        self.tabs.addTab(self.bodies_tab, "")
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.title.setText(tr(lang, "panel.title"))
+        self.tabs.setTabText(0, tr(lang, "tab.parameters"))
+        self.tabs.setTabText(1, tr(lang, "tab.points"))
+        self.tabs.setTabText(2, tr(lang, "tab.lengths"))
+        self.tabs.setTabText(3, tr(lang, "tab.angles"))
+        self.tabs.setTabText(4, tr(lang, "tab.splines"))
+        self.tabs.setTabText(5, tr(lang, "tab.constraints"))
+        self.tabs.setTabText(6, tr(lang, "tab.bodies"))
+        self.params_tab.apply_language()
+        self.points_tab.apply_language()
+        self.links_tab.apply_language()
+        self.angles_tab.apply_language()
+        self.splines_tab.apply_language()
+        self.constraints_tab.apply_language()
+        self.bodies_tab.apply_language()
 
     def defer_refresh_all(self, keep_selection=False):
         QTimer.singleShot(0, lambda: self.refresh_all(keep_selection=keep_selection))

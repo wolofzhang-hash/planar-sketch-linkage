@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 from ..utils.constants import BODY_COLORS, PURPLE, GRAY
 from ..core.geometry import parse_id_list
 from .expression_builder import ExpressionBuilderDialog
+from .i18n import tr
 
 PARAMETER_FUNCTIONS = ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(", "abs(", "min(", "max(", "pi", "E"]
 
@@ -40,8 +41,8 @@ class ParametersTab(QWidget):
         layout = QVBoxLayout(self)
 
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Add Param")
-        self.btn_del = QPushButton("Delete")
+        self.btn_add = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_add)
         btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
@@ -49,7 +50,7 @@ class ParametersTab(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(2)
-        self.table.setHorizontalHeaderLabels(["Name", "Value"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -58,6 +59,13 @@ class ParametersTab(QWidget):
         self.btn_add.clicked.connect(self._add_param)
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_add.setText(tr(lang, "button.add_param"))
+        self.btn_del.setText(tr(lang, "button.remove_param"))
+        self.table.setHorizontalHeaderLabels([tr(lang, "table.name"), tr(lang, "table.value")])
 
     def _add_param(self):
         # Generate a unique default name.
@@ -141,14 +149,14 @@ class PointsTab(QWidget):
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Add Point")
-        self.btn_del = QPushButton("Delete")
+        self.btn_add = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID", "X", "Y", "Fixed", "Hidden", "Trajectory", "Body"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -159,6 +167,21 @@ class PointsTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_add.setText(tr(lang, "button.add_point"))
+        self.btn_del.setText(tr(lang, "button.remove_point"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.id"),
+            tr(lang, "table.x"),
+            tr(lang, "table.y"),
+            tr(lang, "table.fixed"),
+            tr(lang, "table.hidden"),
+            tr(lang, "table.trajectory"),
+            tr(lang, "table.body"),
+        ])
 
     def _delete_selected(self):
         ids = self.panel.selected_points_from_table(include_hidden=True)
@@ -337,14 +360,14 @@ class LinksTab(QWidget):
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Add Length (from 2 selected points)")
-        self.btn_del = QPushButton("Delete")
+        self.btn_add = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["ID", "i", "j", "L", "Hidden", "State"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -354,6 +377,20 @@ class LinksTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_add.setText(tr(lang, "button.add_length"))
+        self.btn_del.setText(tr(lang, "button.remove_length"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.id"),
+            tr(lang, "table.i"),
+            tr(lang, "table.j"),
+            tr(lang, "table.length"),
+            tr(lang, "table.hidden"),
+            tr(lang, "table.state"),
+        ])
 
     def _add_link_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
@@ -532,14 +569,14 @@ class AnglesTab(QWidget):
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Add Angle (from 3 selected points, middle is vertex)")
-        self.btn_del = QPushButton("Delete")
+        self.btn_add = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID", "i", "j(vertex)", "k", "deg", "Hidden", "State"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -549,6 +586,21 @@ class AnglesTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_add.setText(tr(lang, "button.add_angle"))
+        self.btn_del.setText(tr(lang, "button.remove_angle"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.id"),
+            tr(lang, "table.i"),
+            tr(lang, "table.vertex"),
+            tr(lang, "table.k"),
+            tr(lang, "table.deg"),
+            tr(lang, "table.hidden"),
+            tr(lang, "table.state"),
+        ])
 
     def _add_angle_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
@@ -715,15 +767,15 @@ class SplinesTab(QWidget):
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
         btn_row = QHBoxLayout()
-        self.btn_add = QPushButton("Add Spline (from selected points)")
-        self.btn_del = QPushButton("Delete")
+        self.btn_add = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         self.table = QTableWidget()
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["ID", "Points", "Hidden"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         layout.addWidget(self.table)
@@ -732,6 +784,17 @@ class SplinesTab(QWidget):
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_add.setText(tr(lang, "button.add_spline"))
+        self.btn_del.setText(tr(lang, "button.remove_spline"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.id"),
+            tr(lang, "table.points"),
+            tr(lang, "table.hidden"),
+        ])
 
     def _add_spline_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
@@ -808,8 +871,8 @@ class ConstraintsTab(QWidget):
         layout = QVBoxLayout(self)
 
         btn_row = QHBoxLayout()
-        self.btn_toggle = QPushButton("Enable/Disable")
-        self.btn_delete = QPushButton("Delete")
+        self.btn_toggle = QPushButton()
+        self.btn_delete = QPushButton()
         btn_row.addWidget(self.btn_toggle)
         btn_row.addWidget(self.btn_delete)
         btn_row.addStretch(1)
@@ -817,7 +880,7 @@ class ConstraintsTab(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["Key", "Type", "Entities", "Enabled", "State"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.table)
@@ -825,6 +888,19 @@ class ConstraintsTab(QWidget):
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_toggle.clicked.connect(self._toggle_selected)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_toggle.setText(tr(lang, "button.toggle_constraint"))
+        self.btn_delete.setText(tr(lang, "button.remove_constraint"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.key"),
+            tr(lang, "table.type"),
+            tr(lang, "table.entities"),
+            tr(lang, "table.enabled"),
+            tr(lang, "table.state"),
+        ])
 
     def _selected_key(self) -> Optional[str]:
         sel = self.table.selectedItems()
@@ -922,33 +998,33 @@ class BodiesTab(QWidget):
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
         btn_row = QHBoxLayout()
-        self.btn_make = QPushButton("Make Body (from selected points)")
-        self.btn_del = QPushButton("Delete Body")
+        self.btn_make = QPushButton()
+        self.btn_del = QPushButton()
         btn_row.addWidget(self.btn_make); btn_row.addWidget(self.btn_del)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("Point IDs:"))
+        self.label_point_ids = QLabel()
+        row2.addWidget(self.label_point_ids)
         self.edit_ids = QLineEdit()
-        self.edit_ids.setPlaceholderText("e.g. 0,1,2")
-        self.btn_set = QPushButton("Set Members")
-        self.btn_add = QPushButton("Add IDs")
-        self.btn_rm = QPushButton("Remove IDs")
+        self.btn_set = QPushButton()
+        self.btn_add = QPushButton()
+        self.btn_rm = QPushButton()
         row2.addWidget(self.edit_ids, 1)
         row2.addWidget(self.btn_set); row2.addWidget(self.btn_add); row2.addWidget(self.btn_rm)
         layout.addLayout(row2)
 
         row3 = QHBoxLayout()
-        self.btn_add_sel = QPushButton("Add selected points")
-        self.btn_rm_sel = QPushButton("Remove selected points")
+        self.btn_add_sel = QPushButton()
+        self.btn_rm_sel = QPushButton()
         row3.addWidget(self.btn_add_sel); row3.addWidget(self.btn_rm_sel)
         row3.addStretch(1)
         layout.addLayout(row3)
 
         self.table = QTableWidget()
         self.table.setColumnCount(6)
-        self.table.setHorizontalHeaderLabels(["ID", "Name", "Points", "Color", "Hidden", "RigidEdges"])
+        self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         layout.addWidget(self.table)
@@ -963,6 +1039,27 @@ class BodiesTab(QWidget):
 
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.apply_language()
+
+    def apply_language(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.btn_make.setText(tr(lang, "button.create_body"))
+        self.btn_del.setText(tr(lang, "button.remove_body"))
+        self.label_point_ids.setText(tr(lang, "label.point_ids"))
+        self.edit_ids.setPlaceholderText(tr(lang, "label.point_ids_placeholder"))
+        self.btn_set.setText(tr(lang, "button.set_members"))
+        self.btn_add.setText(tr(lang, "button.add_members"))
+        self.btn_rm.setText(tr(lang, "button.remove_members"))
+        self.btn_add_sel.setText(tr(lang, "button.add_selected"))
+        self.btn_rm_sel.setText(tr(lang, "button.remove_selected"))
+        self.table.setHorizontalHeaderLabels([
+            tr(lang, "table.id"),
+            tr(lang, "table.name"),
+            tr(lang, "table.points"),
+            tr(lang, "table.color"),
+            tr(lang, "table.hidden"),
+            tr(lang, "table.rigid_edges"),
+        ])
 
     def _make_body(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)

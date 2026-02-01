@@ -88,6 +88,7 @@ class SketchController:
         self.display_precision = 3
         self.load_arrow_width = 1.6
         self.torque_arrow_width = 1.6
+        self.ui_language = "en"
 
         self.background_image: Dict[str, Any] = {
             "path": None,
