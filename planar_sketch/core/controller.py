@@ -131,6 +131,7 @@ class SketchController:
         self._sim_zero_input_rad: Optional[float] = None
         self._sim_zero_output_rad: Optional[float] = None
         self._sim_zero_meas_deg: Dict[str, float] = {}
+        self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 2.0}
 
     def status_text(self) -> str:
         if self.mode == "CreateLine":
@@ -2952,6 +2953,11 @@ class SketchController:
                 }
                 for lm in self.load_measures
             ],
+            "sweep": {
+                "start": float(self.sweep_settings.get("start", 0.0)),
+                "end": float(self.sweep_settings.get("end", 360.0)),
+                "step": float(self.sweep_settings.get("step", 2.0)),
+            },
         }
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
@@ -2978,6 +2984,25 @@ class SketchController:
                 self.background_image["pos"] = (float(pos[0]), float(pos[1]))
             except Exception:
                 self.background_image["pos"] = (0.0, 0.0)
+        sweep_info = data.get("sweep", {}) or {}
+        try:
+            sweep_start = float(sweep_info.get("start", self.sweep_settings.get("start", 0.0)))
+        except Exception:
+            sweep_start = self.sweep_settings.get("start", 0.0)
+        try:
+            sweep_end = float(sweep_info.get("end", self.sweep_settings.get("end", 360.0)))
+        except Exception:
+            sweep_end = self.sweep_settings.get("end", 360.0)
+        try:
+            sweep_step = float(sweep_info.get("step", self.sweep_settings.get("step", 2.0)))
+        except Exception:
+            sweep_step = self.sweep_settings.get("step", 2.0)
+        sweep_step = abs(sweep_step)
+        if sweep_step == 0:
+            sweep_step = float(self.sweep_settings.get("step", 2.0)) or 2.0
+        self.sweep_settings = {"start": sweep_start, "end": sweep_end, "step": sweep_step}
+        if hasattr(self.win, "sim_panel"):
+            self.win.sim_panel.apply_sweep_settings(self.sweep_settings)
         self.scene.blockSignals(True)
         try:
             self.scene.clear()
