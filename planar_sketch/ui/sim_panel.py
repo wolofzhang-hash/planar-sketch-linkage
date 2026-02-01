@@ -222,7 +222,7 @@ class SimulationPanel(QWidget):
         self._refresh_run_buttons()
 
     def _project_dir(self) -> str:
-        if getattr(self.ctrl, "win", None) and self.ctrl.win.current_file:
+        if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
             return os.path.dirname(self.ctrl.win.current_file)
         return os.getcwd()
 
