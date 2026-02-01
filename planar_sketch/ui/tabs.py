@@ -4,17 +4,21 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Optional, List
+from typing import TYPE_CHECKING, Optional
 
 from PyQt6.QtCore import Qt, QSignalBlocker, QItemSelectionModel, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QLabel, QMessageBox, QPushButton, QLineEdit, QComboBox
+    QLabel, QMessageBox, QPushButton, QLineEdit, QComboBox,
+    QMenu, QInputDialog, QDialog
 )
 
 from ..utils.constants import BODY_COLORS, PURPLE, GRAY
 from ..core.geometry import parse_id_list
+from .expression_builder import ExpressionBuilderDialog
+
+PARAMETER_FUNCTIONS = ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(", "abs(", "min(", "max(", "pi", "E"]
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -148,11 +152,13 @@ class PointsTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(lambda: self.ctrl.cmd_add_point(0.0, 0.0))
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.table.customContextMenuRequested.connect(self._open_context_menu)
 
     def _delete_selected(self):
         ids = self.panel.selected_points_from_table(include_hidden=True)
@@ -245,6 +251,86 @@ class PointsTab(QWidget):
             self.panel.defer_refresh_all(keep_selection=True)
         QTimer.singleShot(0, apply)
 
+    def _open_context_menu(self, pos) -> None:
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        col = item.column()
+        if col not in (1, 2):
+            return
+        pid_item = self.table.item(row, 0)
+        if not pid_item:
+            return
+        pid = int(pid_item.text())
+        axis = "x" if col == 1 else "y"
+        menu = QMenu(self)
+        act_builder = menu.addAction("Expression Builder...")
+        act_new_param = menu.addAction("New Parameter...")
+        act_use_param = menu.addAction("Use Existing Parameter...")
+        act_clear = menu.addAction("Use Numeric Value")
+        selected = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if selected == act_builder:
+            self._open_expression_builder(row, pid, axis)
+        elif selected == act_new_param:
+            self._create_new_parameter(row, pid, axis)
+        elif selected == act_use_param:
+            self._use_existing_parameter(row, pid, axis)
+        elif selected == act_clear:
+            self._clear_parameterization(row, pid, axis)
+
+    def _open_expression_builder(self, row: int, pid: int, axis: str) -> None:
+        p = self.ctrl.points.get(pid)
+        if not p:
+            return
+        expr = (p.get(f"{axis}_expr") or "").strip()
+        if not expr:
+            expr = self.ctrl.format_number(p.get(axis, 0.0))
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial=expr,
+            tokens=list(self.ctrl.parameters.params.keys()),
+            functions=PARAMETER_FUNCTIONS,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_point_expr(row, axis, dialog.expression().strip())
+
+    def _create_new_parameter(self, row: int, pid: int, axis: str) -> None:
+        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        if not ok or not name.strip():
+            return
+        p = self.ctrl.points.get(pid, {})
+        value = float(p.get(axis, 0.0))
+        self.ctrl.cmd_set_param(name.strip(), value)
+        self._apply_point_expr(row, axis, name.strip())
+
+    def _use_existing_parameter(self, row: int, pid: int, axis: str) -> None:
+        params = sorted(self.ctrl.parameters.params.keys())
+        if not params:
+            QMessageBox.information(self, "Parameters", "No parameters available.")
+            return
+        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        if not ok or not name:
+            return
+        self._apply_point_expr(row, axis, name)
+
+    def _clear_parameterization(self, row: int, pid: int, axis: str) -> None:
+        p = self.ctrl.points.get(pid, {})
+        value = self.ctrl.format_number(p.get(axis, 0.0))
+        self._apply_point_expr(row, axis, value)
+
+    def _apply_point_expr(self, row: int, axis: str, expr_text: str) -> None:
+        pid_item = self.table.item(row, 0)
+        if not pid_item:
+            return
+        pid = int(pid_item.text())
+        x_item = self.table.item(row, 1)
+        y_item = self.table.item(row, 2)
+        x_text = expr_text if axis == "x" else (x_item.text().strip() if x_item else "")
+        y_text = expr_text if axis == "y" else (y_item.text().strip() if y_item else "")
+        self.ctrl.cmd_set_point_expr(pid, x_text, y_text)
+        self.panel.defer_refresh_all(keep_selection=True)
+
 class LinksTab(QWidget):
     def __init__(self, panel: "SketchPanel"):
         super().__init__()
@@ -261,11 +347,13 @@ class LinksTab(QWidget):
         self.table.setHorizontalHeaderLabels(["ID", "i", "j", "L", "Hidden", "State"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(self._add_link_from_points)
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.table.customContextMenuRequested.connect(self._open_context_menu)
 
     def _add_link_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
@@ -359,6 +447,85 @@ class LinksTab(QWidget):
             self.panel.defer_refresh_all(keep_selection=True)
         QTimer.singleShot(0, apply)
 
+    def _open_context_menu(self, pos) -> None:
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        col = item.column()
+        if col != 3:
+            return
+        lid_item = self.table.item(row, 0)
+        if not lid_item:
+            return
+        lid = int(lid_item.text())
+        link = self.ctrl.links.get(lid, {})
+        if link.get("ref", False):
+            QMessageBox.information(self, "Link", "Reference links are read-only.")
+            return
+        menu = QMenu(self)
+        act_builder = menu.addAction("Expression Builder...")
+        act_new_param = menu.addAction("New Parameter...")
+        act_use_param = menu.addAction("Use Existing Parameter...")
+        act_clear = menu.addAction("Use Numeric Value")
+        selected = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if selected == act_builder:
+            self._open_expression_builder(row, lid)
+        elif selected == act_new_param:
+            self._create_new_parameter(row, lid)
+        elif selected == act_use_param:
+            self._use_existing_parameter(row, lid)
+        elif selected == act_clear:
+            self._clear_parameterization(row, lid)
+
+    def _open_expression_builder(self, row: int, lid: int) -> None:
+        l = self.ctrl.links.get(lid)
+        if not l:
+            return
+        expr = (l.get("L_expr") or "").strip()
+        if not expr:
+            expr = self.ctrl.format_number(l.get("L", 0.0))
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial=expr,
+            tokens=list(self.ctrl.parameters.params.keys()),
+            functions=PARAMETER_FUNCTIONS,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_link_expr(row, dialog.expression().strip())
+
+    def _create_new_parameter(self, row: int, lid: int) -> None:
+        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        if not ok or not name.strip():
+            return
+        link = self.ctrl.links.get(lid, {})
+        value = float(link.get("L", 0.0))
+        self.ctrl.cmd_set_param(name.strip(), value)
+        self._apply_link_expr(row, name.strip())
+
+    def _use_existing_parameter(self, row: int, lid: int) -> None:
+        params = sorted(self.ctrl.parameters.params.keys())
+        if not params:
+            QMessageBox.information(self, "Parameters", "No parameters available.")
+            return
+        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        if not ok or not name:
+            return
+        self._apply_link_expr(row, name)
+
+    def _clear_parameterization(self, row: int, lid: int) -> None:
+        link = self.ctrl.links.get(lid, {})
+        value = self.ctrl.format_number(link.get("L", 0.0))
+        self._apply_link_expr(row, value)
+
+    def _apply_link_expr(self, row: int, expr_text: str) -> None:
+        lid_item = self.table.item(row, 0)
+        if not lid_item:
+            return
+        lid = int(lid_item.text())
+        self.ctrl.cmd_set_link_expr(lid, expr_text)
+        self.panel.defer_refresh_all(keep_selection=True)
+
 class AnglesTab(QWidget):
     def __init__(self, panel: "SketchPanel"):
         super().__init__()
@@ -375,11 +542,13 @@ class AnglesTab(QWidget):
         self.table.setHorizontalHeaderLabels(["ID", "i", "j(vertex)", "k", "deg", "Hidden", "State"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(self._add_angle_from_points)
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
+        self.table.customContextMenuRequested.connect(self._open_context_menu)
 
     def _add_angle_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
@@ -463,6 +632,81 @@ class AnglesTab(QWidget):
             self.ctrl.cmd_set_angle_hidden(aid, hidden)
             self.panel.defer_refresh_all(keep_selection=True)
         QTimer.singleShot(0, apply)
+
+    def _open_context_menu(self, pos) -> None:
+        item = self.table.itemAt(pos)
+        if not item:
+            return
+        row = item.row()
+        col = item.column()
+        if col != 4:
+            return
+        aid_item = self.table.item(row, 0)
+        if not aid_item:
+            return
+        aid = int(aid_item.text())
+        menu = QMenu(self)
+        act_builder = menu.addAction("Expression Builder...")
+        act_new_param = menu.addAction("New Parameter...")
+        act_use_param = menu.addAction("Use Existing Parameter...")
+        act_clear = menu.addAction("Use Numeric Value")
+        selected = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if selected == act_builder:
+            self._open_expression_builder(row, aid)
+        elif selected == act_new_param:
+            self._create_new_parameter(row, aid)
+        elif selected == act_use_param:
+            self._use_existing_parameter(row, aid)
+        elif selected == act_clear:
+            self._clear_parameterization(row, aid)
+
+    def _open_expression_builder(self, row: int, aid: int) -> None:
+        a = self.ctrl.angles.get(aid)
+        if not a:
+            return
+        expr = (a.get("deg_expr") or "").strip()
+        if not expr:
+            expr = self.ctrl.format_number(a.get("deg", 0.0))
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial=expr,
+            tokens=list(self.ctrl.parameters.params.keys()),
+            functions=PARAMETER_FUNCTIONS,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self._apply_angle_expr(row, dialog.expression().strip())
+
+    def _create_new_parameter(self, row: int, aid: int) -> None:
+        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        if not ok or not name.strip():
+            return
+        angle = self.ctrl.angles.get(aid, {})
+        value = float(angle.get("deg", 0.0))
+        self.ctrl.cmd_set_param(name.strip(), value)
+        self._apply_angle_expr(row, name.strip())
+
+    def _use_existing_parameter(self, row: int, aid: int) -> None:
+        params = sorted(self.ctrl.parameters.params.keys())
+        if not params:
+            QMessageBox.information(self, "Parameters", "No parameters available.")
+            return
+        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        if not ok or not name:
+            return
+        self._apply_angle_expr(row, name)
+
+    def _clear_parameterization(self, row: int, aid: int) -> None:
+        angle = self.ctrl.angles.get(aid, {})
+        value = self.ctrl.format_number(angle.get("deg", 0.0))
+        self._apply_angle_expr(row, value)
+
+    def _apply_angle_expr(self, row: int, expr_text: str) -> None:
+        aid_item = self.table.item(row, 0)
+        if not aid_item:
+            return
+        aid = int(aid_item.text())
+        self.ctrl.cmd_set_angle_expr(aid, expr_text)
+        self.panel.defer_refresh_all(keep_selection=True)
 
 
 class SplinesTab(QWidget):
