@@ -14,6 +14,7 @@ Previously (v2.4.19):
 from __future__ import annotations
 
 import csv
+import math
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
 from PyQt6.QtCore import QTimer, Qt
@@ -527,8 +528,6 @@ class SimulationPanel(QWidget):
 
 
     def _on_tick(self):
-        pose_before = self.ctrl.snapshot_points()
-
         # stop condition based on direction
         if ((self._theta_step_cur > 0 and self._theta_last_ok > self._theta_end)
                 or (self._theta_step_cur < 0 and self._theta_last_ok < self._theta_end)):
@@ -537,52 +536,59 @@ class SimulationPanel(QWidget):
             return
 
         ok = True
-        step_applied = True
+        step_applied = False
         msg = ""
         has_point_spline = any(
             ps.get("enabled", True)
             for ps in getattr(self.ctrl, "point_splines", {}).values()
         )
         iters = 200 if has_point_spline else 80
-        if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
-            try:
-                nfev = int(float(self.ed_nfev.text() or "250"))
-            except Exception:
-                nfev = 250
-            ok, msg = self.ctrl.drive_to_deg_scipy(self._theta_deg, max_nfev=nfev)
-            if not ok:
-                # Fallback to PBD so the UI stays responsive
-                self.ctrl.drive_to_deg(self._theta_deg, iters=iters)
-        else:
-            self.ctrl.drive_to_deg(self._theta_deg, iters=iters)
+        base_step = self._theta_step
+        step_target = self._theta_step_cur
+        theta_target = self._theta_last_ok + step_target
+        while True:
+            pose_before = self.ctrl.snapshot_points()
+            if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
+                try:
+                    nfev = int(float(self.ed_nfev.text() or "250"))
+                except Exception:
+                    nfev = 250
+                ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
+                if not ok:
+                    # Fallback to PBD so the UI stays responsive
+                    self.ctrl.drive_to_deg(theta_target, iters=iters)
+            else:
+                self.ctrl.drive_to_deg(theta_target, iters=iters)
 
-        # Feasibility check: do not "stretch" links across dead points.
-        # If the requested step is infeasible, rollback and stop.
-        tol = 1e-3
-        if hasattr(self.ctrl, "max_constraint_error"):
-            max_err, detail = self.ctrl.max_constraint_error()
-            hard_err = max(
-                detail.get("length", 0.0),
-                detail.get("angle", 0.0),
-                detail.get("coincide", 0.0),
-                detail.get("point_line", 0.0),
-            )
-            if hard_err > tol:
-                # rollback to previous pose
-                self.ctrl.apply_points_snapshot(pose_before)
-                self.ctrl.solve_constraints(iters=iters)
-                self.ctrl.update_graphics()
-                if self.ctrl.panel:
-                    self.ctrl.panel.defer_refresh_all()
-                ok = False
-                msg = f"infeasible step (hard_err={hard_err:.3g}, max_err={max_err:.3g})"
-                step_applied = False
-                if abs(self._theta_step_cur) <= self._theta_step_min:
-                    self.stop()
-                    QMessageBox.warning(self, "Sweep", f"Sweep stopped: {msg}")
-                else:
-                    self._theta_step_cur *= 0.5
-                    self._theta_deg = self._theta_last_ok + self._theta_step_cur
+            # Feasibility check: do not "stretch" links across dead points.
+            # If the requested step is infeasible, rollback and reduce the step.
+            tol = 1e-3
+            if hasattr(self.ctrl, "max_constraint_error"):
+                max_err, detail = self.ctrl.max_constraint_error()
+                hard_err = max(
+                    detail.get("length", 0.0),
+                    detail.get("angle", 0.0),
+                    detail.get("coincide", 0.0),
+                    detail.get("point_line", 0.0),
+                )
+                if hard_err > tol:
+                    # rollback to previous pose
+                    self.ctrl.apply_points_snapshot(pose_before)
+                    self.ctrl.solve_constraints(iters=iters)
+                    self.ctrl.update_graphics()
+                    if self.ctrl.panel:
+                        self.ctrl.panel.defer_refresh_all()
+                    ok = False
+                    msg = f"infeasible step (hard_err={hard_err:.3g}, max_err={max_err:.3g})"
+                    if abs(step_target) <= self._theta_step_min:
+                        self.stop()
+                        step_applied = False
+                        break
+                    step_target *= 0.5
+                    theta_target = self._theta_last_ok + step_target
+                    continue
+            step_applied = True
+            break
 
         if self._pending_sim_start_capture:
             self.ctrl.update_sim_start_pose_snapshot()
@@ -607,8 +613,14 @@ class SimulationPanel(QWidget):
 
         self._frame += 1
         if step_applied:
-            self._theta_last_ok = self._theta_deg
-            self._theta_deg = self._theta_last_ok + self._theta_step_cur
+            self._theta_last_ok = theta_target
+            self._theta_deg = self._theta_last_ok + step_target
+            self._theta_step_cur = step_target
+            if abs(self._theta_step_cur) < abs(base_step):
+                grow = abs(self._theta_step_cur) * 1.25
+                grow = min(abs(base_step), grow)
+                self._theta_step_cur = math.copysign(grow, base_step)
+                self._theta_deg = self._theta_last_ok + self._theta_step_cur
     # ---- plot/export ----
     def open_plot(self):
         if not self._records:
