@@ -42,7 +42,7 @@ class ForceArrowItem(QGraphicsPathItem):
         self._line_width = 1.6
         self.setZValue(20)
         self._update_pen()
-        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self._label = QGraphicsSimpleTextItem("", self)
         self._label.setBrush(self._color)
         self._label.setZValue(25)
@@ -107,7 +107,7 @@ class TorqueArrowItem(QGraphicsPathItem):
         self._line_width = 1.6
         self.setZValue(20)
         self._update_pen()
-        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self._label = QGraphicsSimpleTextItem("", self)
         self._label.setBrush(self._color)
         self._label.setZValue(25)
