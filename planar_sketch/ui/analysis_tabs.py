@@ -307,7 +307,7 @@ class OptimizationTab(QWidget):
         return group
 
     def _project_dir(self) -> str:
-        if getattr(self.ctrl, "win", None) and self.ctrl.win.current_file:
+        if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
             return os.path.dirname(self.ctrl.win.current_file)
         return os.getcwd()
 
@@ -340,7 +340,7 @@ class OptimizationTab(QWidget):
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_vars.setItem(row, 0, enabled_item)
 
-        combo = QComboBox()
+        combo = QComboBox(self.table_vars)
         opts = self._variable_options()
         combo.addItems(opts)
         if name and name in opts:
@@ -392,7 +392,7 @@ class OptimizationTab(QWidget):
         enabled_item = QTableWidgetItem()
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_obj.setItem(row, 0, enabled_item)
-        combo = QComboBox()
+        combo = QComboBox(self.table_obj)
         combo.addItems(["min", "max"])
         combo.setCurrentText(direction)
         self.table_obj.setCellWidget(row, 1, combo)
@@ -410,7 +410,7 @@ class OptimizationTab(QWidget):
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_con.setItem(row, 0, enabled_item)
         self.table_con.setItem(row, 1, QTableWidgetItem(expression))
-        combo = QComboBox()
+        combo = QComboBox(self.table_con)
         combo.addItems(["<=", ">="])
         combo.setCurrentText(comparator)
         self.table_con.setCellWidget(row, 2, combo)
