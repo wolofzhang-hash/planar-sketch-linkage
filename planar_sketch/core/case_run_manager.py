@@ -8,6 +8,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -138,6 +139,97 @@ class CaseRunManager:
         cases.sort(key=lambda c: c.updated_utc, reverse=True)
         return cases
 
+    def update_case_name(self, case_id: str, new_name: str) -> bool:
+        new_name = new_name.strip()
+        if not new_name:
+            return False
+        index = self._load_index()
+        entry = None
+        for item in index.get("cases", []):
+            if item.get("case_id") == case_id:
+                entry = item
+                break
+        if entry is None:
+            return False
+        now = _utc_now()
+        entry["name"] = new_name
+        entry["updated_utc"] = now
+        self._save_index(index)
+        spec = self.load_case_spec(case_id)
+        if spec:
+            created = spec.get("created_utc", entry.get("created_utc", now))
+            self._write_case_spec(case_id, spec, created, now, new_name)
+        return True
+
+    def rename_case_id(self, case_id: str, new_case_id: str) -> bool:
+        new_case_id = new_case_id.strip()
+        if not new_case_id or new_case_id == case_id:
+            return False
+        index = self._load_index()
+        for item in index.get("cases", []):
+            if item.get("case_id") == new_case_id:
+                return False
+        entry = None
+        for item in index.get("cases", []):
+            if item.get("case_id") == case_id:
+                entry = item
+                break
+        if entry is None:
+            return False
+        now = _utc_now()
+        entry["case_id"] = new_case_id
+        entry["updated_utc"] = now
+        case_hash = entry.get("case_hash")
+        if case_hash:
+            index.setdefault("hash_map", {})[case_hash] = new_case_id
+        self._save_index(index)
+
+        old_path = os.path.join(self.cases_dir, f"{case_id}.case.json")
+        new_path = os.path.join(self.cases_dir, f"{new_case_id}.case.json")
+        spec = _read_json(old_path)
+        if spec:
+            created = spec.get("created_utc", entry.get("created_utc", now))
+            name = spec.get("name", entry.get("name", f"Case {new_case_id}"))
+            self._write_case_spec(new_case_id, spec, created, now, name)
+        if os.path.exists(old_path):
+            os.remove(old_path)
+
+        old_runs = os.path.join(self.runs_dir, case_id)
+        new_runs = os.path.join(self.runs_dir, new_case_id)
+        if os.path.exists(old_runs) and not os.path.exists(new_runs):
+            os.rename(old_runs, new_runs)
+
+        active = self.get_active_case()
+        if active == case_id:
+            self.set_active_case(new_case_id)
+
+        self._update_last_run_path(case_id, new_case_id)
+        return True
+
+    def delete_case_runs(self, case_id: str) -> bool:
+        runs_path = os.path.join(self.runs_dir, case_id)
+        if os.path.isdir(runs_path):
+            shutil.rmtree(runs_path)
+        self._update_last_run_path(case_id, None)
+        return True
+
+    def _update_last_run_path(self, old_case_id: str, new_case_id: Optional[str]) -> None:
+        last_path = os.path.join(self.runs_dir, "last_run.txt")
+        try:
+            with open(last_path, "r", encoding="utf-8") as fh:
+                current = fh.read().strip()
+        except Exception:
+            return
+        if not current or f"{os.sep}{old_case_id}{os.sep}" not in current:
+            return
+        if new_case_id:
+            updated = current.replace(f"{os.sep}{old_case_id}{os.sep}", f"{os.sep}{new_case_id}{os.sep}")
+            with open(last_path, "w", encoding="utf-8") as fh:
+                fh.write(updated)
+        else:
+            with open(last_path, "w", encoding="utf-8") as fh:
+                fh.write("")
+
     def load_case_spec(self, case_id: str) -> Dict[str, Any]:
         path = os.path.join(self.cases_dir, f"{case_id}.case.json")
         return _read_json(path)
@@ -164,6 +256,7 @@ class CaseRunManager:
         model_snapshot: Dict[str, Any],
         frames: List[Dict[str, Any]],
         status: Dict[str, Any],
+        end_snapshot: Optional[Dict[str, Any]] = None,
     ) -> str:
         case_info = self.get_or_create_case(case_spec)
         run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
@@ -174,6 +267,9 @@ class CaseRunManager:
         model_path = os.path.join(run_dir, "model.json")
         case_path = os.path.join(run_dir, "case.json")
         _write_json(model_path, model_snapshot)
+        if end_snapshot is not None:
+            end_path = os.path.join(run_dir, "model_end.json")
+            _write_json(end_path, end_snapshot)
         _write_json(case_path, self.load_case_spec(case_info.case_id))
 
         frame_path = os.path.join(results_dir, "frames.csv")
