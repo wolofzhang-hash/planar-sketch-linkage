@@ -1163,10 +1163,10 @@ class SketchController:
         mk = TextMarker(f"P{pid}")
         self.points[pid]["marker"] = mk
         self.scene.addItem(mk)
-        cmark = TextMarker("△")
+        cmark = TextMarker("△", font_point_size=14.0, bold=True)
         self.points[pid]["constraint_marker"] = cmark
         self.scene.addItem(cmark)
-        dmark = TextMarker("↻")
+        dmark = TextMarker("↻", font_point_size=14.0, bold=True)
         self.points[pid]["driver_marker"] = dmark
         self.scene.addItem(dmark)
         omark = TextMarker("OUT")
