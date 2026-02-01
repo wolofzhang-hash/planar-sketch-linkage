@@ -55,6 +55,8 @@ class SimulationPanel(QWidget):
         self._plot_window: Optional[PlotWindow] = None
         self._pending_sim_start_capture = False
         self._run_context: Optional[Dict[str, Any]] = None
+        self._run_start_snapshot: Optional[Dict[str, Any]] = None
+        self._last_run_data: Optional[Dict[str, Any]] = None
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -115,15 +117,14 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose = QPushButton("Reset Pose")
         self.btn_plot = QPushButton("Plot...")
         self.btn_export = QPushButton("Export CSV (full sweep)")
-        self.chk_save_run = QCheckBox("Save Run (case+results)")
-        self.chk_save_run.setChecked(True)
+        self.btn_save_run = QPushButton("Save Run")
         self.btn_open_last_run = QPushButton("Open Last Run")
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
         btns.addWidget(self.btn_plot)
         btns.addWidget(self.btn_export)
-        btns.addWidget(self.chk_save_run)
+        btns.addWidget(self.btn_save_run)
         btns.addWidget(self.btn_open_last_run)
         main_layout.addLayout(btns)
 
@@ -211,6 +212,7 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose.clicked.connect(self.reset_pose)
         self.btn_plot.clicked.connect(self.open_plot)
         self.btn_export.clicked.connect(self.export_csv)
+        self.btn_save_run.clicked.connect(self.save_last_run)
         self.btn_open_last_run.clicked.connect(self.open_last_run)
 
         self.ed_start.editingFinished.connect(self._on_sweep_field_changed)
@@ -533,6 +535,8 @@ class SimulationPanel(QWidget):
 
         self._records = []
         self._frame = 0
+        self._last_run_data = None
+        self._run_start_snapshot = self.ctrl.snapshot_model()
         self._theta_last_ok = start
         self._theta_deg = start
         self._theta_end = end
@@ -540,15 +544,13 @@ class SimulationPanel(QWidget):
         self._theta_step_cur = step
         self._theta_step_min = max(abs(step) / 128.0, 1e-4)
 
-        if self.chk_save_run.isChecked():
-            case_spec = self._build_case_spec()
-            self._run_context = {
-                "started_utc": self._utc_now(),
-                "start_time": time.time(),
-                "case_spec": case_spec,
-            }
-        else:
-            self._run_context = None
+        case_spec = self._build_case_spec()
+        self._run_context = {
+            "started_utc": self._utc_now(),
+            "start_time": time.time(),
+            "case_spec": case_spec,
+        }
+        self._refresh_run_buttons()
 
         # Do one immediate tick for responsiveness
         self._on_tick()
@@ -721,7 +723,6 @@ class SimulationPanel(QWidget):
             self._timer.stop()
         if not self._run_context:
             return
-        manager = self._run_manager()
         start_time = self._run_context.get("start_time", time.time())
         elapsed = max(0.0, time.time() - float(start_time))
         status = {
@@ -732,18 +733,43 @@ class SimulationPanel(QWidget):
             "finished_utc": self._utc_now(),
         }
         case_spec = self._run_context.get("case_spec", {})
-        model_snapshot = self.ctrl.snapshot_model()
-        manager.save_run(case_spec, model_snapshot, self._records, status)
+        end_snapshot = self.ctrl.snapshot_model()
+        self._last_run_data = {
+            "case_spec": case_spec,
+            "start_snapshot": self._run_start_snapshot or end_snapshot,
+            "end_snapshot": end_snapshot,
+            "records": list(self._records),
+            "status": status,
+        }
         self._run_context = None
+        self._refresh_run_buttons()
+        if hasattr(self.ctrl, "win") and self.ctrl.win:
+            self.ctrl.win.statusBar().showMessage("Run finished (not saved)")
+
+    def _refresh_run_buttons(self) -> None:
+        manager = self._run_manager()
+        self.btn_open_last_run.setEnabled(bool(manager.last_run_path()))
+        self.btn_save_run.setEnabled(bool(self._last_run_data))
+
+    def save_last_run(self) -> None:
+        if not self._last_run_data:
+            QMessageBox.information(self, "Run", "No completed run to save yet.")
+            return
+        manager = self._run_manager()
+        payload = self._last_run_data
+        manager.save_run(
+            payload.get("case_spec", {}),
+            payload.get("start_snapshot", {}),
+            payload.get("records", []),
+            payload.get("status", {}),
+            end_snapshot=payload.get("end_snapshot"),
+        )
+        self._last_run_data = None
         self._refresh_run_buttons()
         if hasattr(self, "animation_tab"):
             self.animation_tab.refresh_cases()
         if hasattr(self.ctrl, "win") and self.ctrl.win:
             self.ctrl.win.statusBar().showMessage("Run saved")
-
-    def _refresh_run_buttons(self) -> None:
-        manager = self._run_manager()
-        self.btn_open_last_run.setEnabled(bool(manager.last_run_path()))
 
     def open_last_run(self) -> None:
         manager = self._run_manager()

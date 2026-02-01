@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import math
 import os
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QWidget,
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSlider,
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
@@ -26,6 +28,9 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QMenu,
     QDialog,
+    QListWidget,
+    QListWidgetItem,
+    QInputDialog,
 )
 
 from ..core.case_run_manager import CaseRunManager
@@ -41,6 +46,8 @@ from ..core.optimization import (
 )
 from .expression_builder import ExpressionBuilderDialog
 
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 class AnimationTab(QWidget):
     def __init__(self, ctrl: Any, on_active_case_changed=None):
@@ -61,6 +68,16 @@ class AnimationTab(QWidget):
         layout.addWidget(QLabel("Cases"))
         layout.addWidget(self.table_cases)
 
+        case_btn_row = QHBoxLayout()
+        self.btn_rename_case = QPushButton("Rename Case")
+        self.btn_rename_case_id = QPushButton("Rename Case ID")
+        self.btn_delete_case_results = QPushButton("Delete Case Results")
+        case_btn_row.addWidget(self.btn_rename_case)
+        case_btn_row.addWidget(self.btn_rename_case_id)
+        case_btn_row.addWidget(self.btn_delete_case_results)
+        case_btn_row.addStretch(1)
+        layout.addLayout(case_btn_row)
+
         self.table_runs = QTableWidget(0, 6)
         self.table_runs.setHorizontalHeaderLabels(["Run ID", "Success", "Steps", "Success Rate", "Max Hard Err", "Time"])
         self.table_runs.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -74,19 +91,33 @@ class AnimationTab(QWidget):
         self.btn_open_run = QPushButton("Open Run Folder")
         self.btn_load_snapshot = QPushButton("Load Run Snapshot")
         self.btn_set_active = QPushButton("Set Active Case")
+        self.btn_load_run_data = QPushButton("Load Run Data")
         btn_row.addWidget(self.btn_open_run)
         btn_row.addWidget(self.btn_load_snapshot)
         btn_row.addWidget(self.btn_set_active)
+        btn_row.addWidget(self.btn_load_run_data)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
+
+        layout.addWidget(self._build_replay_group())
 
         self.table_cases.itemSelectionChanged.connect(self.refresh_runs)
         self.btn_open_run.clicked.connect(self.open_run_folder)
         self.btn_load_snapshot.clicked.connect(self.load_run_snapshot)
         self.btn_set_active.clicked.connect(self.set_active_case)
+        self.btn_load_run_data.clicked.connect(self.load_run_data)
+        self.btn_rename_case.clicked.connect(self.rename_case)
+        self.btn_rename_case_id.clicked.connect(self.rename_case_id)
+        self.btn_delete_case_results.clicked.connect(self.delete_case_results)
 
         self._cases_cache: List[Any] = []
         self._runs_cache: List[Dict[str, Any]] = []
+        self._frames: List[Dict[str, Any]] = []
+        self._frame_index = 0
+        self._frame_timer = QTimer(self)
+        self._frame_timer.timeout.connect(self._advance_frame)
+        self._plot_lines = []
+        self._plot_markers = []
         self.refresh_cases()
 
     def _project_dir(self) -> str:
@@ -187,6 +218,339 @@ class AnimationTab(QWidget):
         self.lbl_active.setText(f"Active Case: {case_id}")
         if self._on_active_case_changed:
             self._on_active_case_changed()
+
+    def _build_replay_group(self) -> QWidget:
+        group = QGroupBox("Replay + Plot")
+        layout = QVBoxLayout(group)
+
+        controls = QHBoxLayout()
+        self.btn_replay_play = QPushButton("Play")
+        self.btn_replay_pause = QPushButton("Pause")
+        self.btn_replay_stop = QPushButton("Stop")
+        self.btn_replay_restart = QPushButton("Replay")
+        controls.addWidget(self.btn_replay_play)
+        controls.addWidget(self.btn_replay_pause)
+        controls.addWidget(self.btn_replay_stop)
+        controls.addWidget(self.btn_replay_restart)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        slider_row = QHBoxLayout()
+        self.slider_frame = QSlider(Qt.Orientation.Horizontal)
+        self.slider_frame.setRange(0, 0)
+        self.lbl_frame = QLabel("Frame: --")
+        slider_row.addWidget(self.slider_frame, 1)
+        slider_row.addWidget(self.lbl_frame)
+        layout.addLayout(slider_row)
+
+        plot_ctrl = QHBoxLayout()
+        plot_ctrl.addWidget(QLabel("X:"))
+        self.cb_plot_x = QComboBox()
+        plot_ctrl.addWidget(self.cb_plot_x, 1)
+        plot_ctrl.addWidget(QLabel("Y:"))
+        self.lst_plot_y = QListWidget()
+        self.lst_plot_y.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self.lst_plot_y.setMaximumHeight(120)
+        plot_ctrl.addWidget(self.lst_plot_y, 2)
+        plot_btns = QVBoxLayout()
+        self.btn_plot_run = QPushButton("Plot")
+        plot_btns.addWidget(self.btn_plot_run)
+        plot_btns.addStretch(1)
+        plot_ctrl.addLayout(plot_btns)
+        layout.addLayout(plot_ctrl)
+
+        self.fig = Figure(figsize=(6, 3.5))
+        self.ax = self.fig.add_subplot(111)
+        self.canvas = FigureCanvas(self.fig)
+        layout.addWidget(self.canvas)
+
+        self.btn_replay_play.clicked.connect(self.play_replay)
+        self.btn_replay_pause.clicked.connect(self.pause_replay)
+        self.btn_replay_stop.clicked.connect(self.stop_replay)
+        self.btn_replay_restart.clicked.connect(self.restart_replay)
+        self.slider_frame.valueChanged.connect(self._on_slider_changed)
+        self.btn_plot_run.clicked.connect(self.plot_run)
+        return group
+
+    def rename_case(self) -> None:
+        case_id = self._selected_case_id()
+        if not case_id:
+            QMessageBox.information(self, "Case", "Select a case first.")
+            return
+        manager = self._manager()
+        new_name, ok = QInputDialog.getText(self, "Rename Case", "New case name:")
+        if not ok:
+            return
+        if manager.update_case_name(case_id, new_name):
+            self.refresh_cases()
+        else:
+            QMessageBox.warning(self, "Case", "Failed to rename case.")
+
+    def rename_case_id(self) -> None:
+        case_id = self._selected_case_id()
+        if not case_id:
+            QMessageBox.information(self, "Case", "Select a case first.")
+            return
+        manager = self._manager()
+        new_id, ok = QInputDialog.getText(self, "Rename Case ID", "New case ID:")
+        if not ok:
+            return
+        if manager.rename_case_id(case_id, new_id):
+            self.refresh_cases()
+        else:
+            QMessageBox.warning(self, "Case", "Failed to rename case ID.")
+
+    def delete_case_results(self) -> None:
+        case_id = self._selected_case_id()
+        if not case_id:
+            QMessageBox.information(self, "Case", "Select a case first.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Results",
+            f"Delete all runs for case {case_id}?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        manager = self._manager()
+        manager.delete_case_runs(case_id)
+        self.refresh_runs()
+
+    def load_run_data(self) -> None:
+        run = self._selected_run()
+        if not run:
+            QMessageBox.information(self, "Run", "Select a run first.")
+            return
+        path = run.get("path")
+        if not path:
+            return
+        frames_path = os.path.join(path, "results", "frames.csv")
+        if not os.path.exists(frames_path):
+            QMessageBox.warning(self, "Run", "frames.csv not found.")
+            return
+        model_path = os.path.join(path, "model.json")
+        if not os.path.exists(model_path):
+            QMessageBox.warning(self, "Run", "model.json not found.")
+            return
+        try:
+            with open(frames_path, "r", encoding="utf-8") as fh:
+                reader = csv.DictReader(fh)
+                self._frames = [self._coerce_frame_row(row) for row in reader]
+        except Exception as exc:
+            QMessageBox.critical(self, "Run", f"Failed to load frames: {exc}")
+            return
+        try:
+            with open(model_path, "r", encoding="utf-8") as fh:
+                snapshot = json.load(fh)
+            self.ctrl.apply_model_snapshot(snapshot)
+            self.ctrl.mark_sim_start_pose()
+            if self.ctrl.panel:
+                self.ctrl.panel.defer_refresh_all()
+        except Exception as exc:
+            QMessageBox.critical(self, "Run", f"Failed to load model snapshot: {exc}")
+            return
+        self._frame_index = 0
+        self.slider_frame.setRange(0, max(0, len(self._frames) - 1))
+        self.slider_frame.setValue(0)
+        self._populate_plot_options()
+        self.plot_run()
+        self._apply_frame(0)
+
+    def _coerce_frame_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        for key, val in row.items():
+            if val is None or val == "":
+                out[key] = None
+                continue
+            if isinstance(val, str):
+                lower = val.strip().lower()
+                if lower in ("true", "false"):
+                    out[key] = lower == "true"
+                    continue
+                try:
+                    out[key] = float(val)
+                    continue
+                except ValueError:
+                    out[key] = val
+                    continue
+            out[key] = val
+        return out
+
+    def _populate_plot_options(self) -> None:
+        self.cb_plot_x.clear()
+        self.lst_plot_y.clear()
+        if not self._frames:
+            self.cb_plot_x.addItem("(no data)", None)
+            return
+        keys = set()
+        for r in self._frames:
+            keys.update(r.keys())
+
+        def is_numeric_key(key: str) -> bool:
+            saw_value = False
+            for r in self._frames:
+                v = r.get(key)
+                if v is None:
+                    continue
+                if isinstance(v, bool):
+                    return False
+                try:
+                    float(v)
+                except (TypeError, ValueError):
+                    return False
+                saw_value = True
+            return saw_value
+
+        x_candidates: List[str] = []
+        for k in ["input_deg", "time"]:
+            if k in keys and is_numeric_key(k):
+                x_candidates.append(k)
+        meas = sorted([k for k in keys if k not in {"time", "input_deg"} and is_numeric_key(k)])
+        x_candidates.extend(meas)
+
+        def label_for(k: str) -> str:
+            if k == "time":
+                return "Time"
+            if k == "input_deg":
+                return "Input (deg)"
+            return str(k)
+
+        for k in x_candidates:
+            self.cb_plot_x.addItem(label_for(k), k)
+
+        default_y = meas[0] if meas else None
+        for k in meas:
+            it = QListWidgetItem(label_for(k))
+            it.setData(Qt.ItemDataRole.UserRole, k)
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked if default_y and k == default_y else Qt.CheckState.Unchecked)
+            self.lst_plot_y.addItem(it)
+
+        if "input_deg" in keys:
+            idx = self.cb_plot_x.findData("input_deg")
+            if idx >= 0:
+                self.cb_plot_x.setCurrentIndex(idx)
+
+    def _selected_plot_y(self) -> List[str]:
+        ys: List[str] = []
+        for i in range(self.lst_plot_y.count()):
+            it = self.lst_plot_y.item(i)
+            if it.checkState() == Qt.CheckState.Checked:
+                key = it.data(Qt.ItemDataRole.UserRole)
+                if key:
+                    ys.append(str(key))
+        return ys
+
+    def _series_for(self, key: str) -> List[float]:
+        out: List[float] = []
+        for r in self._frames:
+            v = r.get(key)
+            if v is None or isinstance(v, bool):
+                out.append(float("nan"))
+                continue
+            try:
+                out.append(float(v))
+            except (TypeError, ValueError):
+                out.append(float("nan"))
+        return out
+
+    def plot_run(self) -> None:
+        if not self._frames:
+            QMessageBox.information(self, "Plot", "No run data loaded.")
+            return
+        x_key = self.cb_plot_x.currentData()
+        if not x_key:
+            return
+        y_keys = self._selected_plot_y()
+        if not y_keys:
+            QMessageBox.information(self, "Plot", "Please select at least one Y series.")
+            return
+        x_vals = self._series_for(str(x_key))
+        self.ax.clear()
+        self._plot_lines = []
+        self._plot_markers = []
+        for key in y_keys:
+            y_vals = self._series_for(key)
+            line, = self.ax.plot(x_vals, y_vals, label=key)
+            marker, = self.ax.plot([], [], marker="o", linestyle="", color=line.get_color())
+            self._plot_lines.append(line)
+            self._plot_markers.append(marker)
+        self.ax.set_xlabel(self.cb_plot_x.currentText())
+        self.ax.set_ylabel("Value")
+        if len(y_keys) > 1:
+            self.ax.legend()
+        self.ax.grid(True)
+        self.canvas.draw_idle()
+        self._update_plot_marker()
+
+    def _update_plot_marker(self) -> None:
+        if not self._frames or not self._plot_lines:
+            return
+        idx = max(0, min(self._frame_index, len(self._frames) - 1))
+        x_key = self.cb_plot_x.currentData()
+        if not x_key:
+            return
+        x_vals = self._series_for(str(x_key))
+        if idx >= len(x_vals):
+            return
+        x_val = x_vals[idx]
+        y_keys = [line.get_label() for line in self._plot_lines]
+        for marker, key in zip(self._plot_markers, y_keys):
+            y_vals = self._series_for(key)
+            if idx < len(y_vals):
+                marker.set_data([x_val], [y_vals[idx]])
+        self.canvas.draw_idle()
+
+    def _apply_frame(self, index: int) -> None:
+        if not self._frames:
+            return
+        idx = max(0, min(index, len(self._frames) - 1))
+        frame = self._frames[idx]
+        input_val = frame.get("input_deg")
+        if input_val is not None:
+            try:
+                self.ctrl.drive_to_deg(float(input_val))
+            except Exception:
+                pass
+        self._frame_index = idx
+        self.lbl_frame.setText(f"Frame: {idx + 1}/{len(self._frames)}")
+        self._update_plot_marker()
+
+    def _advance_frame(self) -> None:
+        if not self._frames:
+            self._frame_timer.stop()
+            return
+        next_idx = self._frame_index + 1
+        if next_idx >= len(self._frames):
+            self._frame_timer.stop()
+            return
+        self.slider_frame.setValue(next_idx)
+
+    def _on_slider_changed(self, value: int) -> None:
+        self._apply_frame(value)
+
+    def play_replay(self) -> None:
+        if not self._frames:
+            QMessageBox.information(self, "Replay", "Load run data first.")
+            return
+        if self._frame_index >= len(self._frames) - 1:
+            self.slider_frame.setValue(0)
+        self._frame_timer.start(50)
+
+    def pause_replay(self) -> None:
+        if self._frame_timer.isActive():
+            self._frame_timer.stop()
+
+    def stop_replay(self) -> None:
+        if self._frame_timer.isActive():
+            self._frame_timer.stop()
+        self.slider_frame.setValue(0)
+
+    def restart_replay(self) -> None:
+        if not self._frames:
+            return
+        self.slider_frame.setValue(0)
+        self._frame_timer.start(50)
 
 
 class OptimizationTab(QWidget):
