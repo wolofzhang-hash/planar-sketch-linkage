@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QHeaderView,
+    QComboBox,
     QAbstractItemView,
     QMessageBox,
     QGroupBox,
