@@ -61,40 +61,23 @@ class AnimationTab(QWidget):
         self.table_case_runs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_case_runs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table_case_runs.verticalHeader().setVisible(False)
+        self.table_case_runs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(QLabel("Cases + Runs"))
         layout.addWidget(self.table_case_runs)
 
-        case_btn_row = QHBoxLayout()
-        self.btn_rename_case = QPushButton("Rename Case")
-        self.btn_rename_case_id = QPushButton("Rename Case ID")
-        self.btn_delete_case_results = QPushButton("Delete Case Results")
-        case_btn_row.addWidget(self.btn_rename_case)
-        case_btn_row.addWidget(self.btn_rename_case_id)
-        case_btn_row.addWidget(self.btn_delete_case_results)
-        case_btn_row.addStretch(1)
-        layout.addLayout(case_btn_row)
-
-        btn_row = QHBoxLayout()
-        self.btn_open_run = QPushButton("Open Run Folder")
-        self.btn_load_snapshot = QPushButton("Load Run Snapshot")
+        action_row = QHBoxLayout()
         self.btn_set_active = QPushButton("Set Active Case")
         self.btn_load_run_data = QPushButton("Load Run Data")
-        btn_row.addWidget(self.btn_open_run)
-        btn_row.addWidget(self.btn_load_snapshot)
-        btn_row.addWidget(self.btn_set_active)
-        btn_row.addWidget(self.btn_load_run_data)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
+        action_row.addWidget(self.btn_set_active)
+        action_row.addWidget(self.btn_load_run_data)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
 
         layout.addWidget(self._build_replay_group())
 
-        self.btn_open_run.clicked.connect(self.open_run_folder)
-        self.btn_load_snapshot.clicked.connect(self.load_run_snapshot)
         self.btn_set_active.clicked.connect(self.set_active_case)
         self.btn_load_run_data.clicked.connect(self.load_run_data)
-        self.btn_rename_case.clicked.connect(self.rename_case)
-        self.btn_rename_case_id.clicked.connect(self.rename_case_id)
-        self.btn_delete_case_results.clicked.connect(self.delete_case_results)
+        self.table_case_runs.customContextMenuRequested.connect(self._open_case_run_context_menu)
 
         self._cases_cache: List[Any] = []
         self._row_cache: List[Dict[str, Any]] = []
@@ -335,6 +318,7 @@ class AnimationTab(QWidget):
             return
         self._plot_window._records = self._frames
         self._plot_window._populate_axes_options()
+        self._plot_window.set_frame_index(self._frame_index)
 
     def open_plot_window(self) -> None:
         if not self._frames:
@@ -346,6 +330,7 @@ class AnimationTab(QWidget):
             self._plot_window._records = self._frames
             self._plot_window._populate_axes_options()
         self._plot_window.show()
+        self._plot_window.set_frame_index(self._frame_index)
         self._plot_window.raise_()
         self._plot_window.activateWindow()
 
@@ -362,6 +347,10 @@ class AnimationTab(QWidget):
                 pass
         self._frame_index = idx
         self.lbl_frame.setText(f"Frame: {idx + 1}/{len(self._frames)}")
+        if self._plot_window is not None and self._plot_window.isVisible():
+            self._plot_window.set_frame_index(idx)
+            if self._frame_timer.isActive():
+                self._plot_window.bring_to_front()
 
     def _advance_frame(self) -> None:
         if not self._frames:
@@ -398,6 +387,34 @@ class AnimationTab(QWidget):
             return
         self.slider_frame.setValue(0)
         self._frame_timer.start(50)
+
+    def _open_case_run_context_menu(self, pos) -> None:
+        menu = QMenu(self)
+        act_set_active = menu.addAction("Set Active Case")
+        act_load_run_data = menu.addAction("Load Run Data")
+        menu.addSeparator()
+        act_open_run = menu.addAction("Open Run Folder")
+        act_load_snapshot = menu.addAction("Load Run Snapshot")
+        menu.addSeparator()
+        act_rename_case = menu.addAction("Rename Case")
+        act_rename_case_id = menu.addAction("Rename Case ID")
+        act_delete_case_results = menu.addAction("Delete Case Results")
+
+        selected = menu.exec(self.table_case_runs.viewport().mapToGlobal(pos))
+        if selected == act_set_active:
+            self.set_active_case()
+        elif selected == act_load_run_data:
+            self.load_run_data()
+        elif selected == act_open_run:
+            self.open_run_folder()
+        elif selected == act_load_snapshot:
+            self.load_run_snapshot()
+        elif selected == act_rename_case:
+            self.rename_case()
+        elif selected == act_rename_case_id:
+            self.rename_case_id()
+        elif selected == act_delete_case_results:
+            self.delete_case_results()
 
 
 class OptimizationTab(QWidget):
@@ -577,6 +594,36 @@ class OptimizationTab(QWidget):
             return "Parameter"
         return "Coordinate"
 
+    def _row_for_table_widget(self, table: QTableWidget, widget: Optional[QComboBox], columns: List[int]) -> int:
+        if widget is None:
+            return -1
+        index = table.indexAt(widget.pos())
+        if index.isValid():
+            return index.row()
+        for row in range(table.rowCount()):
+            for col in columns:
+                if table.cellWidget(row, col) is widget:
+                    return row
+        return -1
+
+    def _on_variable_type_changed(self, var_type: str) -> None:
+        combo = self.sender()
+        if not isinstance(combo, QComboBox):
+            return
+        row = self._row_for_table_widget(self.table_vars, combo, [1])
+        if row < 0:
+            return
+        self._apply_variable_type(row, var_type)
+
+    def _on_variable_name_changed(self) -> None:
+        combo = self.sender()
+        if not isinstance(combo, QComboBox):
+            return
+        row = self._row_for_table_widget(self.table_vars, combo, [2])
+        if row < 0:
+            return
+        self._update_current_value(row)
+
     def add_variable_row(self, name: Optional[str] = None) -> None:
         row = self.table_vars.rowCount()
         self.table_vars.insertRow(row)
@@ -588,7 +635,7 @@ class OptimizationTab(QWidget):
         type_combo = QComboBox(self.table_vars)
         type_combo.addItems(self._variable_type_options())
         type_combo.setCurrentText(self._infer_variable_type(name))
-        type_combo.currentTextChanged.connect(lambda t, r=row: self._on_variable_type_changed(r, t))
+        type_combo.currentTextChanged.connect(self._on_variable_type_changed)
         self.table_vars.setCellWidget(row, 1, type_combo)
 
         combo = QComboBox(self.table_vars)
@@ -599,7 +646,7 @@ class OptimizationTab(QWidget):
         elif name:
             combo.addItem(name)
             combo.setCurrentText(name)
-        combo.currentTextChanged.connect(lambda _t, r=row: self._update_current_value(r))
+        combo.currentTextChanged.connect(self._on_variable_name_changed)
         self.table_vars.setCellWidget(row, 2, combo)
 
         current_item = QTableWidgetItem("--")
@@ -658,7 +705,7 @@ class OptimizationTab(QWidget):
             return None
         return float(self.ctrl.points[pid].get(axis, 0.0))
 
-    def _on_variable_type_changed(self, row: int, var_type: str) -> None:
+    def _apply_variable_type(self, row: int, var_type: str) -> None:
         combo = self.table_vars.cellWidget(row, 2)
         if not isinstance(combo, QComboBox):
             return
@@ -816,14 +863,13 @@ class OptimizationTab(QWidget):
         case_spec = manager.load_case_spec(case_id)
         if not case_spec:
             return None, "Active case spec not found"
-
-        model_snapshot = manager.load_latest_model_snapshot(case_id)
-        if model_snapshot is None:
-            model_snapshot = self.ctrl.snapshot_model()
-
-        frames, _summary, _status = simulate_case(model_snapshot, case_spec)
-        signals = build_signals(frames, model_snapshot)
-        return evaluate_expression(expr, signals)
+        model_snapshot = self.ctrl.snapshot_model()
+        try:
+            frames, _summary, _status = simulate_case(model_snapshot, case_spec)
+            signals = build_signals(frames, model_snapshot)
+            return evaluate_expression(expr, signals)
+        except Exception as exc:
+            return None, str(exc)
 
     def _collect_variables(self) -> Optional[List[DesignVariable]]:
         variables: List[DesignVariable] = []
