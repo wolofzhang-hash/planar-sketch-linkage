@@ -32,10 +32,13 @@ class PlotWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Plot")
         self.resize(1000, 650)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         self._records: List[Dict[str, Any]] = records or []
         self._last_x_key: Optional[str] = None
         self._last_y_keys: List[str] = []
+        self._marker_lines = []
+        self._frame_index = 0
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -76,6 +79,15 @@ class PlotWindow(QMainWindow):
         self.btn_export_csv.clicked.connect(self.export_csv)
 
         self._populate_axes_options()
+
+    def bring_to_front(self) -> None:
+        if self.isVisible():
+            self.raise_()
+            self.activateWindow()
+
+    def set_frame_index(self, index: int) -> None:
+        self._frame_index = index
+        self._update_markers()
 
     def _populate_axes_options(self):
         self.cb_x.clear()
@@ -167,6 +179,27 @@ class PlotWindow(QMainWindow):
                 out.append(float("nan"))
         return out
 
+    def _clamp_frame_index(self, length: int) -> int:
+        if length <= 0:
+            return 0
+        return max(0, min(self._frame_index, length - 1))
+
+    def _update_markers(self) -> None:
+        if not self._records or self._last_x_key is None or not self._last_y_keys:
+            return
+        if not self._marker_lines or len(self._marker_lines) != len(self._last_y_keys):
+            return
+        x = self._get_series(self._last_x_key)
+        if not x:
+            return
+        idx = self._clamp_frame_index(len(x))
+        for marker, key in zip(self._marker_lines, self._last_y_keys):
+            y = self._get_series(key)
+            if not y:
+                continue
+            marker.set_data([x[idx]], [y[idx]])
+        self.canvas.draw_idle()
+
     def plot(self):
         if not self._records:
             QMessageBox.information(self, "Plot", "No sweep data yet. Run Play in the Simulation panel first.")
@@ -186,9 +219,13 @@ class PlotWindow(QMainWindow):
         x = self._get_series(self._last_x_key)
 
         self.ax.clear()
+        self._marker_lines = []
+        idx = self._clamp_frame_index(len(x))
         for k in self._last_y_keys:
             y = self._get_series(k)
-            self.ax.plot(x, y, label=k)
+            line = self.ax.plot(x, y, label=k)[0]
+            marker = self.ax.plot([x[idx]], [y[idx]], marker="o", linestyle="None", color=line.get_color())[0]
+            self._marker_lines.append(marker)
         self.ax.set_xlabel(self.cb_x.currentText())
         self.ax.set_ylabel("Value")
         if len(self._last_y_keys) > 1:
