@@ -3997,10 +3997,6 @@ class SketchController:
             f_ext[2 * j + 1] += Fy
             f_ext[2 * i] -= Fx
             f_ext[2 * i + 1] -= Fy
-            cur_fx, cur_fy = applied_force[point_ids[j]]
-            applied_force[point_ids[j]] = (cur_fx + Fx, cur_fy + Fy)
-            cur_fx, cur_fy = applied_force[point_ids[i]]
-            applied_force[point_ids[i]] = (cur_fx - Fx, cur_fy - Fy)
 
         # Build constraints for quasi-static
         use_output = bool(self.output.get("enabled"))
@@ -4069,12 +4065,42 @@ class SketchController:
             [1.0 if meta[k].get("type") in fixed_types else 0.0 for k in range(len(roles))],
             dtype=float,
         )
+        mask_nonrigid = np.array(
+            [
+                1.0
+                if (roles[k] == "passive" and meta[k].get("type") not in {"rigid_edge", *fixed_types})
+                else 0.0
+                for k in range(len(roles))
+            ],
+            dtype=float,
+        )
         lam_passive = lam * mask_passive
         lam_net = lam * mask_net
         lam_fixed = lam * mask_fixed
+        lam_nonrigid = lam * mask_nonrigid
         reaction_passive = J.T @ lam_passive if J.size else np.zeros_like(f_ext)
         reaction_net = J.T @ lam_net if J.size else np.zeros_like(f_ext)
         reaction_fixed = J.T @ lam_fixed if J.size else np.zeros_like(f_ext)
+        reaction_nonrigid = J.T @ lam_nonrigid if J.size else np.zeros_like(f_ext)
+
+        link_reactions: Dict[int, Tuple[float, float, float]] = {}
+        if J.size:
+            for k, info in enumerate(meta):
+                if info.get("type") != "link_len":
+                    continue
+                for end_key in ("i", "j"):
+                    pid = int(info.get(end_key, -1))
+                    if pid not in idx_map:
+                        continue
+                    idx = idx_map[pid]
+                    fx_k = float(J[k, 2 * idx] * lam[k])
+                    fy_k = float(J[k, 2 * idx + 1] * lam[k])
+                    mag_k = math.hypot(fx_k, fy_k)
+                    if mag_k <= 0.0:
+                        continue
+                    prev = link_reactions.get(pid)
+                    if prev is None or mag_k > prev[2]:
+                        link_reactions[pid] = (fx_k, fy_k, mag_k)
 
         spline_reactions: Dict[int, Tuple[float, float, float]] = {}
         if J.size:
@@ -4100,6 +4126,8 @@ class SketchController:
             if bool(point.get("fixed", False)):
                 fx = float(reaction_fixed[2 * idx])
                 fy = float(reaction_fixed[2 * idx + 1])
+            elif pid in link_reactions:
+                fx, fy, _mag = link_reactions[pid]
             elif pid in spline_reactions:
                 fx, fy, _mag = spline_reactions[pid]
             else:
@@ -4108,18 +4136,8 @@ class SketchController:
                     fx = float(reaction_net[2 * idx])
                     fy = float(reaction_net[2 * idx + 1])
                 else:
-                    best_fx, best_fy, best_mag = 0.0, 0.0, 0.0
-                    for k, role in enumerate(roles):
-                        if role != "passive":
-                            continue
-                        if meta[k].get("type") in fixed_types:
-                            continue
-                        fx_k = float(J[k, 2 * idx] * lam[k])
-                        fy_k = float(J[k, 2 * idx + 1] * lam[k])
-                        mag_k = math.hypot(fx_k, fy_k)
-                        if mag_k > best_mag:
-                            best_fx, best_fy, best_mag = fx_k, fy_k, mag_k
-                    fx, fy = best_fx, best_fy
+                    fx = float(reaction_nonrigid[2 * idx])
+                    fy = float(reaction_nonrigid[2 * idx + 1])
             mag = math.hypot(fx, fy)
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
 
