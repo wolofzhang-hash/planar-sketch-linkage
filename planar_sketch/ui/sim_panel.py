@@ -196,6 +196,11 @@ class SimulationPanel(QWidget):
         self.btn_plot.clicked.connect(self.open_plot)
         self.btn_export.clicked.connect(self.export_csv)
 
+        self.ed_start.editingFinished.connect(self._on_sweep_field_changed)
+        self.ed_end.editingFinished.connect(self._on_sweep_field_changed)
+        self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
+        self.apply_sweep_settings(self.ctrl.sweep_settings)
+
         self.refresh_labels()
 
     # ---- selection helpers ----
@@ -219,6 +224,27 @@ class SimulationPanel(QWidget):
             QMessageBox.information(self, "Selection", "Please select exactly 1 point (Ctrl+Click).")
             return None
         return pids[0]
+
+    def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
+        self.ed_start.setText(f"{float(settings.get('start', 0.0))}")
+        self.ed_end.setText(f"{float(settings.get('end', 360.0))}")
+        self.ed_step.setText(f"{float(settings.get('step', 2.0))}")
+
+    def _sync_sweep_settings_from_fields(self) -> None:
+        try:
+            start = float(self.ed_start.text())
+            end = float(self.ed_end.text())
+            step = float(self.ed_step.text())
+        except Exception:
+            return
+        step = abs(step)
+        if step == 0:
+            step = float(self.ctrl.sweep_settings.get("step", 2.0)) or 2.0
+        self.ctrl.sweep_settings = {"start": start, "end": end, "step": step}
+        self.ed_step.setText(f"{step}")
+
+    def _on_sweep_field_changed(self) -> None:
+        self._sync_sweep_settings_from_fields()
 
     # ---- UI actions ----
     def refresh_labels(self):
@@ -442,9 +468,14 @@ class SimulationPanel(QWidget):
         except ValueError:
             QMessageBox.warning(self, "Sweep", "Start/End/Step must be numbers.")
             return
+        step = abs(step)
         if step == 0:
-            QMessageBox.warning(self, "Sweep", "Step must be non-zero.")
+            QMessageBox.warning(self, "Sweep", "Step must be greater than 0.")
             return
+        if end < start:
+            step = -step
+        self.ctrl.sweep_settings = {"start": start, "end": end, "step": abs(step)}
+        self.ed_step.setText(f"{abs(step)}")
 
         self.stop()
         self.ctrl.mark_sim_start_pose()
