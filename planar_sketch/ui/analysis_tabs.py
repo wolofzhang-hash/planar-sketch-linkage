@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from typing import Any, Dict, List, Optional
 
@@ -212,8 +213,8 @@ class OptimizationTab(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        self.table_vars = QTableWidget(0, 5)
-        self.table_vars.setHorizontalHeaderLabels(["Enabled", "Variable", "Current", "Lower", "Upper"])
+        self.table_vars = QTableWidget(0, 6)
+        self.table_vars.setHorizontalHeaderLabels(["Enabled", "Type", "Variable", "Current", "Lower", "Upper"])
         self.table_vars.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_vars.verticalHeader().setVisible(False)
         self.table_vars.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -325,12 +326,34 @@ class OptimizationTab(QWidget):
         if self.table_obj.rowCount() == 0:
             self.add_objective_row(direction="min", expression="max(load.P9.Mag)")
 
-    def _variable_options(self) -> List[str]:
-        opts = []
+    def _variable_type_options(self) -> List[str]:
+        return ["Coordinate", "Length", "Parameter", "All"]
+
+    def _variable_options_for_type(self, var_type: str) -> List[str]:
+        coords = []
         for pid in sorted(self.ctrl.points.keys()):
-            opts.append(f"P{pid}.x")
-            opts.append(f"P{pid}.y")
-        return opts
+            coords.append(f"P{pid}.x")
+            coords.append(f"P{pid}.y")
+        lengths = [f"Link{lid}.L" for lid in sorted(self.ctrl.links.keys())]
+        params = [f"Param.{name}" for name in sorted(self.ctrl.parameters.params.keys())]
+        if var_type == "Coordinate":
+            return coords
+        if var_type == "Length":
+            return lengths
+        if var_type == "Parameter":
+            return params
+        return coords + lengths + params
+
+    def _infer_variable_type(self, name: Optional[str]) -> str:
+        if not name:
+            return "Coordinate"
+        if name.startswith("P") and "." in name:
+            return "Coordinate"
+        if name.startswith("Link") and name.endswith(".L"):
+            return "Length"
+        if name.startswith("Param."):
+            return "Parameter"
+        return "Coordinate"
 
     def add_variable_row(self, name: Optional[str] = None) -> None:
         row = self.table_vars.rowCount()
@@ -340,8 +363,14 @@ class OptimizationTab(QWidget):
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_vars.setItem(row, 0, enabled_item)
 
+        type_combo = QComboBox(self.table_vars)
+        type_combo.addItems(self._variable_type_options())
+        type_combo.setCurrentText(self._infer_variable_type(name))
+        type_combo.currentTextChanged.connect(lambda t, r=row: self._on_variable_type_changed(r, t))
+        self.table_vars.setCellWidget(row, 1, type_combo)
+
         combo = QComboBox(self.table_vars)
-        opts = self._variable_options()
+        opts = self._variable_options_for_type(type_combo.currentText())
         combo.addItems(opts)
         if name and name in opts:
             combo.setCurrentText(name)
@@ -349,13 +378,13 @@ class OptimizationTab(QWidget):
             combo.addItem(name)
             combo.setCurrentText(name)
         combo.currentTextChanged.connect(lambda _t, r=row: self._update_current_value(r))
-        self.table_vars.setCellWidget(row, 1, combo)
+        self.table_vars.setCellWidget(row, 2, combo)
 
         current_item = QTableWidgetItem("--")
         current_item.setFlags(current_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table_vars.setItem(row, 2, current_item)
-        self.table_vars.setItem(row, 3, QTableWidgetItem(""))
+        self.table_vars.setItem(row, 3, current_item)
         self.table_vars.setItem(row, 4, QTableWidgetItem(""))
+        self.table_vars.setItem(row, 5, QTableWidgetItem(""))
         self._update_current_value(row)
 
     def remove_variable_row(self) -> None:
@@ -364,18 +393,39 @@ class OptimizationTab(QWidget):
             self.table_vars.removeRow(row)
 
     def _update_current_value(self, row: int) -> None:
-        combo = self.table_vars.cellWidget(row, 1)
+        combo = self.table_vars.cellWidget(row, 2)
         if not isinstance(combo, QComboBox):
             return
         name = combo.currentText()
         current = self._get_variable_value(name)
-        item = self.table_vars.item(row, 2)
+        item = self.table_vars.item(row, 3)
         if item:
             item.setText("--" if current is None else f"{current:.4f}")
 
     def _get_variable_value(self, name: str) -> Optional[float]:
         name = name.strip()
         if not name.startswith("P") or "." not in name:
+            if name.startswith("Param."):
+                param = name[len("Param.") :]
+                if param in self.ctrl.parameters.params:
+                    return float(self.ctrl.parameters.params.get(param, 0.0))
+            if name.startswith("Link") and name.endswith(".L"):
+                lid_str = name[len("Link") : -len(".L")]
+                try:
+                    lid = int(lid_str)
+                except Exception:
+                    return None
+                link = self.ctrl.links.get(lid)
+                if not link:
+                    return None
+                if link.get("ref", False):
+                    i = int(link.get("i", -1))
+                    j = int(link.get("j", -1))
+                    if i in self.ctrl.points and j in self.ctrl.points:
+                        p1 = self.ctrl.points[i]
+                        p2 = self.ctrl.points[j]
+                        return math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
+                return float(link.get("L", 0.0))
             return None
         pid_str, axis = name[1:].split(".", 1)
         try:
@@ -385,6 +435,22 @@ class OptimizationTab(QWidget):
         if pid not in self.ctrl.points:
             return None
         return float(self.ctrl.points[pid].get(axis, 0.0))
+
+    def _on_variable_type_changed(self, row: int, var_type: str) -> None:
+        combo = self.table_vars.cellWidget(row, 2)
+        if not isinstance(combo, QComboBox):
+            return
+        current = combo.currentText()
+        opts = self._variable_options_for_type(var_type)
+        combo.blockSignals(True)
+        combo.clear()
+        combo.addItems(opts)
+        if current in opts:
+            combo.setCurrentText(current)
+        elif opts:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+        self._update_current_value(row)
 
     def add_objective_row(self, direction: str = "min", expression: str = "") -> None:
         row = self.table_obj.rowCount()
@@ -426,10 +492,10 @@ class OptimizationTab(QWidget):
         for row in range(self.table_vars.rowCount()):
             enabled_item = self.table_vars.item(row, 0)
             enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
-            combo = self.table_vars.cellWidget(row, 1)
+            combo = self.table_vars.cellWidget(row, 2)
             name = combo.currentText() if isinstance(combo, QComboBox) else ""
-            lower_item = self.table_vars.item(row, 3)
-            upper_item = self.table_vars.item(row, 4)
+            lower_item = self.table_vars.item(row, 4)
+            upper_item = self.table_vars.item(row, 5)
             try:
                 lower = float(lower_item.text()) if lower_item and lower_item.text().strip() else None
                 upper = float(upper_item.text()) if upper_item and upper_item.text().strip() else None

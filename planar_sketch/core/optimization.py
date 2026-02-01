@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from .expression import evaluate_expression
+from .parameters import ParameterRegistry
 from .headless_sim import simulate_case
 
 
@@ -55,8 +56,72 @@ def _signals_from_frames(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
     return signals_map
 
 
+def _recompute_snapshot_from_parameters(snapshot: Dict[str, Any]) -> None:
+    registry = ParameterRegistry()
+    registry.load_list(list(snapshot.get("parameters", []) or []))
+
+    for p in snapshot.get("points", []) or []:
+        for key_num, key_expr in (("x", "x_expr"), ("y", "y_expr")):
+            expr = (p.get(key_expr) or "").strip()
+            if not expr:
+                continue
+            val, err = registry.eval_expr(expr)
+            if err is None and val is not None:
+                p[key_num] = float(val)
+
+    for l in snapshot.get("links", []) or []:
+        if bool(l.get("ref", False)):
+            continue
+        expr = (l.get("L_expr") or "").strip()
+        if not expr:
+            continue
+        val, err = registry.eval_expr(expr)
+        if err is None and val is not None:
+            l["L"] = float(val)
+
+    for a in snapshot.get("angles", []) or []:
+        expr = (a.get("deg_expr") or "").strip()
+        if not expr:
+            continue
+        val, err = registry.eval_expr(expr)
+        if err is None and val is not None:
+            a["deg"] = float(val)
+
+
 def _apply_design_vars(model_snapshot: Dict[str, Any], variables: Dict[str, float]) -> Dict[str, Any]:
     snapshot = copy.deepcopy(model_snapshot)
+    point_vars: Dict[str, float] = {}
+    link_vars: Dict[int, float] = {}
+    param_vars: Dict[str, float] = {}
+
+    for key, val in variables.items():
+        if key.startswith("P") and "." in key:
+            point_vars[key] = val
+            continue
+        if key.startswith("Param."):
+            param_name = key[len("Param.") :]
+            if param_name:
+                param_vars[param_name] = val
+            continue
+        if key.startswith("Link") and key.endswith(".L"):
+            lid_str = key[len("Link") : -len(".L")]
+            try:
+                lid = int(lid_str)
+            except Exception:
+                continue
+            link_vars[lid] = float(val)
+
+    if param_vars:
+        params_list = list(snapshot.get("parameters", []) or [])
+        existing = {str(p.get("name", "")): p for p in params_list if isinstance(p, dict)}
+        for name, val in param_vars.items():
+            if name in existing:
+                existing[name]["value"] = float(val)
+            else:
+                params_list.append({"name": name, "value": float(val)})
+        snapshot["parameters"] = params_list
+        _recompute_snapshot_from_parameters(snapshot)
+
     points = snapshot.get("points", []) or []
     for p in points:
         pid = p.get("id")
@@ -64,8 +129,14 @@ def _apply_design_vars(model_snapshot: Dict[str, Any], variables: Dict[str, floa
             continue
         for axis in ("x", "y"):
             key = f"P{pid}.{axis}"
-            if key in variables:
-                p[axis] = float(variables[key])
+            if key in point_vars:
+                p[axis] = float(point_vars[key])
+
+    links = snapshot.get("links", []) or []
+    for l in links:
+        lid = l.get("id")
+        if lid in link_vars:
+            l["L"] = float(link_vars[lid])
     return snapshot
 
 
