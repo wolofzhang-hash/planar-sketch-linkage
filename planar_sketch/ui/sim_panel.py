@@ -15,6 +15,9 @@ from __future__ import annotations
 
 import csv
 import math
+import os
+import time
+from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
 from PyQt6.QtCore import QTimer, Qt
@@ -25,6 +28,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .plot_window import PlotWindow
+from .analysis_tabs import AnimationTab, OptimizationTab
+from ..core.case_run_manager import CaseRunManager
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -49,6 +54,7 @@ class SimulationPanel(QWidget):
         self._records: List[Dict[str, Any]] = []
         self._plot_window: Optional[PlotWindow] = None
         self._pending_sim_start_capture = False
+        self._run_context: Optional[Dict[str, Any]] = None
 
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -109,11 +115,16 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose = QPushButton("Reset Pose")
         self.btn_plot = QPushButton("Plot...")
         self.btn_export = QPushButton("Export CSV (full sweep)")
+        self.chk_save_run = QCheckBox("Save Run (case+results)")
+        self.chk_save_run.setChecked(True)
+        self.btn_open_last_run = QPushButton("Open Last Run")
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
         btns.addWidget(self.btn_plot)
         btns.addWidget(self.btn_export)
+        btns.addWidget(self.chk_save_run)
+        btns.addWidget(self.btn_open_last_run)
         main_layout.addLayout(btns)
 
         main_layout.addStretch(1)
@@ -183,6 +194,10 @@ class SimulationPanel(QWidget):
         tabs.addTab(loads_tab, "Loads")
         tabs.addTab(measurements_tab, "Measurements")
         tabs.addTab(main_tab, "Simulation")
+        self.animation_tab = AnimationTab(self.ctrl, on_active_case_changed=self._on_active_case_changed)
+        self.optimization_tab = OptimizationTab(self.ctrl)
+        tabs.addTab(self.animation_tab, "Animation")
+        tabs.addTab(self.optimization_tab, "Optimization")
 
         # Signals
         self.btn_clear_driver.clicked.connect(self._clear_driver)
@@ -196,6 +211,7 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose.clicked.connect(self.reset_pose)
         self.btn_plot.clicked.connect(self.open_plot)
         self.btn_export.clicked.connect(self.export_csv)
+        self.btn_open_last_run.clicked.connect(self.open_last_run)
 
         self.ed_start.editingFinished.connect(self._on_sweep_field_changed)
         self.ed_end.editingFinished.connect(self._on_sweep_field_changed)
@@ -203,6 +219,18 @@ class SimulationPanel(QWidget):
         self.apply_sweep_settings(self.ctrl.sweep_settings)
 
         self.refresh_labels()
+        self._refresh_run_buttons()
+
+    def _project_dir(self) -> str:
+        if getattr(self.ctrl, "win", None) and self.ctrl.win.current_file:
+            return os.path.dirname(self.ctrl.win.current_file)
+        return os.getcwd()
+
+    def _run_manager(self) -> CaseRunManager:
+        return CaseRunManager(self._project_dir())
+
+    def _utc_now(self) -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ---- selection helpers ----
     def _selected_two_points(self) -> Optional[tuple[int, int]]:
@@ -281,6 +309,8 @@ class SimulationPanel(QWidget):
         s_out = "--" if a_out is None else self.ctrl.format_number(a_out)
         self.lbl_angles.setText(f"Input: {s_in}° | Output: {s_out}°")
         self._refresh_load_tables()
+        if hasattr(self, "optimization_tab"):
+            self.optimization_tab.refresh_active_case()
 
     def _set_driver_from_selection(self):
         pair = self._selected_two_points()
@@ -510,6 +540,16 @@ class SimulationPanel(QWidget):
         self._theta_step_cur = step
         self._theta_step_min = max(abs(step) / 128.0, 1e-4)
 
+        if self.chk_save_run.isChecked():
+            case_spec = self._build_case_spec()
+            self._run_context = {
+                "started_utc": self._utc_now(),
+                "start_time": time.time(),
+                "case_spec": case_spec,
+            }
+        else:
+            self._run_context = None
+
         # Do one immediate tick for responsiveness
         self._on_tick()
         self._timer.start(15)
@@ -517,6 +557,8 @@ class SimulationPanel(QWidget):
     def stop(self):
         if self._timer.isActive():
             self._timer.stop()
+        if self._run_context is not None:
+            self._complete_run(success=False, reason="stopped")
 
     def reset_pose(self):
         self.stop()
@@ -531,7 +573,7 @@ class SimulationPanel(QWidget):
         # stop condition based on direction
         if ((self._theta_step_cur > 0 and self._theta_last_ok > self._theta_end)
                 or (self._theta_step_cur < 0 and self._theta_last_ok < self._theta_end)):
-            self.stop()
+            self._complete_run(success=True, reason="completed")
             self.refresh_labels()
             return
 
@@ -581,7 +623,7 @@ class SimulationPanel(QWidget):
                     ok = False
                     msg = f"infeasible step (hard_err={hard_err:.3g}, max_err={max_err:.3g})"
                     if abs(step_target) <= self._theta_step_min:
-                        self.stop()
+                        self._complete_run(success=False, reason=msg or "infeasible_step")
                         step_applied = False
                         break
                     step_target *= 0.5
@@ -601,10 +643,21 @@ class SimulationPanel(QWidget):
         rec: Dict[str, Any] = {
             "time": self._frame,
             "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
-            "ok": ok,
+            "success": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
         }
+        try:
+            _max_err, detail = self.ctrl.max_constraint_error()
+            rec["hard_err"] = max(
+                detail.get("length", 0.0),
+                detail.get("angle", 0.0),
+                detail.get("coincide", 0.0),
+                detail.get("point_line", 0.0),
+                detail.get("point_spline", 0.0),
+            )
+        except Exception:
+            rec["hard_err"] = None
         for nm, val in self.ctrl.get_measure_values_deg():
             rec[nm] = val
         for nm, val in self.ctrl.get_load_measure_values():
@@ -621,6 +674,89 @@ class SimulationPanel(QWidget):
                 grow = min(abs(base_step), grow)
                 self._theta_step_cur = math.copysign(grow, base_step)
                 self._theta_deg = self._theta_last_ok + self._theta_step_cur
+
+    def _build_case_spec(self) -> Dict[str, Any]:
+        has_point_spline = any(
+            ps.get("enabled", True)
+            for ps in getattr(self.ctrl, "point_splines", {}).values()
+        )
+        try:
+            max_nfev = int(float(self.ed_nfev.text() or "250"))
+        except Exception:
+            max_nfev = 250
+        iters = 200 if has_point_spline else 80
+        signals = ["input_deg", "output_deg", "hard_err", "success"]
+        signals.extend([name for name, _val in self.ctrl.get_measure_values_deg()])
+        signals.extend([name for name, _val in self.ctrl.get_load_measure_values()])
+        return {
+            "schema_version": "1.0",
+            "analysis_mode": "quasi_static",
+            "driver": dict(self.ctrl.driver),
+            "output": dict(self.ctrl.output),
+            "sweep": {
+                "start_deg": float(self.ctrl.sweep_settings.get("start", 0.0)),
+                "end_deg": float(self.ctrl.sweep_settings.get("end", 360.0)),
+                "step_deg": float(self.ctrl.sweep_settings.get("step", 2.0)),
+                "adaptive": False,
+                "min_step_deg": float(self._theta_step_min),
+                "max_step_deg": float(abs(self._theta_step)),
+            },
+            "solver": {
+                "use_scipy": bool(self.chk_scipy.isChecked()),
+                "max_nfev": max_nfev,
+                "pbd_iters": iters,
+                "hard_err_tol": 1e-3,
+                "treat_point_spline_as_soft": bool(has_point_spline),
+            },
+            "loads": list(self.ctrl.loads),
+            "measurements": {
+                "signals": signals,
+                "measures": list(self.ctrl.measures),
+                "load_measures": list(self.ctrl.load_measures),
+            },
+        }
+
+    def _complete_run(self, success: bool, reason: str) -> None:
+        if self._timer.isActive():
+            self._timer.stop()
+        if not self._run_context:
+            return
+        manager = self._run_manager()
+        start_time = self._run_context.get("start_time", time.time())
+        elapsed = max(0.0, time.time() - float(start_time))
+        status = {
+            "success": bool(success),
+            "elapsed_sec": elapsed,
+            "reason": reason,
+            "started_utc": self._run_context.get("started_utc"),
+            "finished_utc": self._utc_now(),
+        }
+        case_spec = self._run_context.get("case_spec", {})
+        model_snapshot = self.ctrl.snapshot_model()
+        manager.save_run(case_spec, model_snapshot, self._records, status)
+        self._run_context = None
+        self._refresh_run_buttons()
+        if hasattr(self, "animation_tab"):
+            self.animation_tab.refresh_cases()
+        if hasattr(self.ctrl, "win") and self.ctrl.win:
+            self.ctrl.win.statusBar().showMessage("Run saved")
+
+    def _refresh_run_buttons(self) -> None:
+        manager = self._run_manager()
+        self.btn_open_last_run.setEnabled(bool(manager.last_run_path()))
+
+    def open_last_run(self) -> None:
+        manager = self._run_manager()
+        path = manager.last_run_path()
+        if not path:
+            QMessageBox.information(self, "Run", "No last run available.")
+            return
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _on_active_case_changed(self) -> None:
+        self.optimization_tab.refresh_active_case()
     # ---- plot/export ----
     def open_plot(self):
         if not self._records:
