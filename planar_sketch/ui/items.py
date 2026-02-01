@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from PyQt6.QtCore import Qt, QPointF
 import math
 
-from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush
+from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QFont
 from PyQt6.QtWidgets import (
     QGraphicsItem,
     QGraphicsEllipseItem,
@@ -26,10 +26,15 @@ if TYPE_CHECKING:
 
 
 class TextMarker(QGraphicsSimpleTextItem):
-    def __init__(self, text: str = ""):
+    def __init__(self, text: str = "", font_point_size: float | None = None, bold: bool = False):
         super().__init__(text)
         self.setZValue(30)
         self.setBrush(DARK)
+        if font_point_size is not None:
+            font = QFont(self.font())
+            font.setPointSizeF(float(font_point_size))
+            font.setBold(bool(bold))
+            self.setFont(font)
         # Markers should not intercept mouse events (allow right-click on underlying items).
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setAcceptHoverEvents(False)
