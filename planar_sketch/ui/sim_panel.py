@@ -802,8 +802,9 @@ class SimulationPanel(QWidget):
         self.stop()
         ok = self.ctrl.reset_pose_to_sim_start()
         if not ok:
-            QMessageBox.information(self, "Reset", "No start pose captured yet. Press Play once first.")
+            QMessageBox.information(self, "Reset", "No start pose captured yet. Press Run once first.")
         self.refresh_labels()
+        self.ctrl.update_graphics()
 
     def _sweep_reached_end(self) -> bool:
         tol = max(float(getattr(self, "_theta_step_min", 1e-4)), 1e-6)
@@ -1130,7 +1131,7 @@ class SimulationPanel(QWidget):
     # ---- export ----
     def export_csv(self):
         if not self._records:
-            QMessageBox.information(self, "Export", "No sweep data yet. Run Play first.")
+            QMessageBox.information(self, "Export", "No sweep data yet. Run first.")
             return
         path, _ = QFileDialog.getSaveFileName(self, "Export Sweep CSV", "", "CSV (*.csv)")
         if not path:

@@ -215,6 +215,32 @@ class CaseRunManager:
         self._update_last_run_path(case_id, None)
         return True
 
+    def delete_case(self, case_id: str) -> bool:
+        index = self._load_index()
+        entries = index.get("cases", [])
+        entry = next((item for item in entries if item.get("case_id") == case_id), None)
+        if entry is None:
+            return False
+        entries = [item for item in entries if item.get("case_id") != case_id]
+        index["cases"] = entries
+        case_hash = entry.get("case_hash")
+        if case_hash and index.get("hash_map", {}).get(case_hash) == case_id:
+            index["hash_map"].pop(case_hash, None)
+        self._save_index(index)
+        spec_path = os.path.join(self.cases_dir, f"{case_id}.case.json")
+        if os.path.exists(spec_path):
+            os.remove(spec_path)
+        self.delete_case_runs(case_id)
+        active = self.get_active_case()
+        if active == case_id:
+            active_path = os.path.join(self.cases_dir, "active_case.txt")
+            try:
+                os.remove(active_path)
+            except Exception:
+                with open(active_path, "w", encoding="utf-8") as fh:
+                    fh.write("")
+        return True
+
     def _update_last_run_path(self, old_case_id: str, new_case_id: Optional[str]) -> None:
         last_path = os.path.join(self.runs_dir, "last_run.txt")
         try:
