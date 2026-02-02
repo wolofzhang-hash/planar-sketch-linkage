@@ -148,7 +148,7 @@ class SketchController:
         self._sim_zero_output_rad: Optional[float] = None
         self._sim_zero_driver_rad: List[Optional[float]] = []
         self._sim_zero_meas_deg: Dict[str, float] = {}
-        self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 2.0}
+        self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 200.0}
 
     @staticmethod
     def _default_driver() -> Dict[str, Any]:
@@ -3395,11 +3395,15 @@ class SketchController:
             "sweep": {
                 "start": float(self.sweep_settings.get("start", 0.0)),
                 "end": float(self.sweep_settings.get("end", 360.0)),
-                "step": float(self.sweep_settings.get("step", 2.0)),
+                "step": float(self.sweep_settings.get("step", 200.0)),
             },
         }
 
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
+        if hasattr(self.win, "sim_panel"):
+            self.win.sim_panel.stop()
+            if hasattr(self.win.sim_panel, "animation_tab"):
+                self.win.sim_panel.animation_tab.stop_replay()
         self._drag_active = False
         self._drag_pid = None
         self._drag_before = None
@@ -3433,12 +3437,12 @@ class SketchController:
         except Exception:
             sweep_end = self.sweep_settings.get("end", 360.0)
         try:
-            sweep_step = float(sweep_info.get("step", self.sweep_settings.get("step", 2.0)))
+            sweep_step = float(sweep_info.get("step", self.sweep_settings.get("step", 200.0)))
         except Exception:
-            sweep_step = self.sweep_settings.get("step", 2.0)
+            sweep_step = self.sweep_settings.get("step", 200.0)
         sweep_step = abs(sweep_step)
         if sweep_step == 0:
-            sweep_step = float(self.sweep_settings.get("step", 2.0)) or 2.0
+            sweep_step = float(self.sweep_settings.get("step", 200.0)) or 200.0
         self.sweep_settings = {"start": sweep_start, "end": sweep_end, "step": sweep_step}
         if hasattr(self.win, "sim_panel"):
             self.win.sim_panel.apply_sweep_settings(self.sweep_settings)

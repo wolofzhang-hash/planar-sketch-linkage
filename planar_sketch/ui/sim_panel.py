@@ -110,7 +110,7 @@ class SimulationPanel(QWidget):
         main_layout.addWidget(self.table_outputs)
 
         # Sweep controls
-        self.ed_step = QLineEdit("2")
+        self.ed_step = QLineEdit("200")
         self.lbl_step = QLabel()
 
         # Solver backend
@@ -125,6 +125,9 @@ class SimulationPanel(QWidget):
         self.lbl_max_nfev = QLabel()
         solver_row.addWidget(self.lbl_max_nfev)
         solver_row.addWidget(self.ed_nfev)
+        self.chk_reset_before_run = QCheckBox()
+        self.chk_reset_before_run.setChecked(True)
+        solver_row.addWidget(self.chk_reset_before_run)
         self.input_fields = [self.ed_step, self.ed_nfev]
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
@@ -268,6 +271,7 @@ class SimulationPanel(QWidget):
         self.btn_remove_load.setText(tr(lang, "sim.remove_selected"))
         self.btn_clear_loads.setText(tr(lang, "sim.clear"))
         self.lbl_joint_loads.setText(tr(lang, "sim.joint_loads"))
+        self.chk_reset_before_run.setText(tr(lang, "sim.reset_before_run"))
         self.table_meas.setHorizontalHeaderLabels([
             tr(lang, "sim.table.type"),
             tr(lang, "sim.table.measurement"),
@@ -336,11 +340,11 @@ class SimulationPanel(QWidget):
         return pids[0]
 
     def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
-        step = settings.get("step", 2.0)
+        step = settings.get("step", 200.0)
         try:
             step_val = int(round(float(step)))
         except Exception:
-            step_val = 2
+            step_val = 200
         step_val = max(step_val, 1)
         self.ed_step.setText(f"{step_val}")
 
@@ -351,7 +355,7 @@ class SimulationPanel(QWidget):
             return
         step = int(round(abs(step)))
         if step <= 0:
-            step = int(round(float(self.ctrl.sweep_settings.get("step", 2.0)) or 2.0))
+            step = int(round(float(self.ctrl.sweep_settings.get("step", 200.0)) or 200.0))
             step = max(step, 1)
         self.ctrl.sweep_settings = {
             "start": self.ctrl.sweep_settings.get("start", 0.0),
@@ -432,7 +436,7 @@ class SimulationPanel(QWidget):
                     QTableWidgetItem("--" if angle_val is None else self.ctrl.format_number(angle_val)),
                 ]
                 items[0].setFlags(items[0].flags() & ~Qt.ItemFlag.ItemIsEditable)
-                items[3].setFlags(items[3].flags() & ~Qt.ItemFlag.ItemIsEditable)
+                items[3].setFlags(items[3].flags())
                 for col, item in enumerate(items):
                     self.table_drivers.setItem(row, col, item)
         finally:
@@ -467,7 +471,7 @@ class SimulationPanel(QWidget):
         active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
         if row < 0 or row >= len(active_drivers):
             return
-        if col not in (1, 2):
+        if col not in (1, 2, 3):
             return
         item = self.table_drivers.item(row, col)
         if item is None:
@@ -475,13 +479,34 @@ class SimulationPanel(QWidget):
         try:
             value = float(item.text())
         except Exception:
-            QMessageBox.warning(self, "Sweep", "Start/End must be numbers.")
+            if col == 3:
+                QMessageBox.warning(self, "Sweep", "Angle must be numbers.")
+            else:
+                QMessageBox.warning(self, "Sweep", "Start/End must be numbers.")
             self._refresh_driver_table(active_drivers)
             return
-        key = "sweep_start" if col == 1 else "sweep_end"
-        active_drivers[row][key] = value
-        if len(active_drivers) == 1:
-            self.ctrl.sweep_settings[key.replace("sweep_", "")] = value
+        if col in (1, 2):
+            key = "sweep_start" if col == 1 else "sweep_end"
+            active_drivers[row][key] = value
+            if len(active_drivers) == 1:
+                self.ctrl.sweep_settings[key.replace("sweep_", "")] = value
+            self.refresh_labels()
+            return
+        angles = self.ctrl.get_driver_angles_deg()
+        if not angles or row >= len(angles):
+            self._refresh_driver_table(active_drivers)
+            return
+        has_sim_zero = bool(getattr(self.ctrl, "_sim_zero_driver_rad", [])) or getattr(self.ctrl, "_sim_zero_input_rad", None) is not None
+        if has_sim_zero:
+            updated = list(angles)
+            updated[row] = value
+        else:
+            updated = [0.0 for _ in angles]
+            current = angles[row]
+            if current is None:
+                current = 0.0
+            updated[row] = value - float(current)
+        self.ctrl.drive_to_multi_deg(updated, iters=80)
         self.refresh_labels()
 
     def _set_driver_from_selection(self):
@@ -701,6 +726,11 @@ class SimulationPanel(QWidget):
         if not self.ctrl.drivers and not self.ctrl.outputs:
             QMessageBox.information(self, "Driver", "Set a driver or output first.")
             return
+        if hasattr(self, "chk_reset_before_run") and self.chk_reset_before_run.isChecked():
+            if self.ctrl.reset_pose_to_sim_start():
+                self.ctrl.update_graphics()
+                if self.ctrl.panel:
+                    self.ctrl.panel.defer_refresh_all(keep_selection=True)
         try:
             step = float(self.ed_step.text())
         except ValueError:
@@ -949,6 +979,7 @@ class SimulationPanel(QWidget):
             "success": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
+            "driver_deg": list(self.ctrl.get_driver_angles_deg()),
         }
         try:
             _max_err, detail = self.ctrl.max_constraint_error()

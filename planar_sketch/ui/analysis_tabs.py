@@ -467,12 +467,19 @@ class AnimationTab(QWidget):
             return
         idx = max(0, min(index, len(self._frames) - 1))
         frame = self._frames[idx]
-        input_val = frame.get("input_deg")
-        if input_val is not None:
+        driver_vals = frame.get("driver_deg")
+        if isinstance(driver_vals, list) and driver_vals:
             try:
-                self.ctrl.drive_to_deg(float(input_val))
+                self.ctrl.drive_to_multi_deg([float(val) for val in driver_vals], iters=80)
             except Exception:
                 pass
+        else:
+            input_val = frame.get("input_deg")
+            if input_val is not None:
+                try:
+                    self.ctrl.drive_to_deg(float(input_val))
+                except Exception:
+                    pass
         self._frame_index = idx
         self._set_frame_label(idx, len(self._frames))
         if self._plot_window is not None and self._plot_window.isVisible():
