@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import csv
 import importlib.util
 import json
@@ -202,7 +203,8 @@ class AnimationTab(QWidget):
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 data = fh.read()
-            self.ctrl.load_dict(json.loads(data))
+            if not self.ctrl.load_dict(json.loads(data), action="load a run snapshot"):
+                return
             if self.ctrl.panel:
                 self.ctrl.panel.defer_refresh_all()
         except Exception as exc:
@@ -369,6 +371,21 @@ class AnimationTab(QWidget):
                 if lower in ("true", "false"):
                     out[key] = lower == "true"
                     continue
+                stripped = val.strip()
+                if (stripped.startswith("[") and stripped.endswith("]")) or (
+                    stripped.startswith("{") and stripped.endswith("}")
+                ):
+                    parsed = None
+                    try:
+                        parsed = json.loads(stripped)
+                    except Exception:
+                        try:
+                            parsed = ast.literal_eval(stripped)
+                        except Exception:
+                            parsed = None
+                    if isinstance(parsed, (list, dict)):
+                        out[key] = parsed
+                        continue
                 try:
                     out[key] = float(val)
                     continue
@@ -515,6 +532,24 @@ class AnimationTab(QWidget):
         if self._frame_timer.isActive():
             self._frame_timer.stop()
         self.slider_frame.setValue(0)
+
+    def is_replay_active(self) -> bool:
+        return self._frame_timer.isActive()
+
+    def confirm_stop_replay(self, action: str) -> bool:
+        if not self.is_replay_active():
+            return True
+        prompt = f"Animation is playing. Stop it to {action}?"
+        confirm = QMessageBox.question(
+            self,
+            "Animation",
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return False
+        self.stop_replay()
+        return True
 
 
 
