@@ -451,7 +451,15 @@ class SketchController:
         return self.to_dict()
 
     def apply_model_snapshot(self, data: Dict[str, Any]):
-        self.load_dict(data, clear_undo=False)
+        self.load_dict(data, clear_undo=False, action="apply a model snapshot")
+
+    def _confirm_stop_replay(self, action: str) -> bool:
+        win = getattr(self, "win", None)
+        sim_panel = getattr(win, "sim_panel", None) if win else None
+        animation_tab = getattr(sim_panel, "animation_tab", None) if sim_panel else None
+        if animation_tab is not None and hasattr(animation_tab, "confirm_stop_replay"):
+            return animation_tab.confirm_stop_replay(action)
+        return True
 
     def compute_body_rigid_edges(self, point_ids: List[int]) -> List[Tuple[int, int, float]]:
         pts = [pid for pid in point_ids if pid in self.points]
@@ -1074,6 +1082,8 @@ class SketchController:
 
     # --- Parameter commands (Undo/Redo) ---
     def cmd_set_param(self, name: str, value: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         name = str(name).strip()
         before = dict(self.parameters.params)
 
@@ -1097,6 +1107,8 @@ class SketchController:
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Param {name}"))
 
     def cmd_delete_param(self, name: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         name = str(name).strip()
         before = dict(self.parameters.params)
 
@@ -1120,6 +1132,8 @@ class SketchController:
         self.stack.push(Command(do=do, undo=undo, desc=f"Delete Param {name}"))
 
     def cmd_rename_param(self, old: str, new: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         old = str(old).strip(); new = str(new).strip()
         before = dict(self.parameters.params)
 
@@ -1143,6 +1157,8 @@ class SketchController:
         self.stack.push(Command(do=do, undo=undo, desc=f"Rename Param {old}->{new}"))
 
     def cmd_set_point_expr(self, pid: int, x_text: str, y_text: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points:
             return
         p = self.points[pid]
@@ -1185,6 +1201,8 @@ class SketchController:
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Point Expr P{pid}"))
 
     def cmd_set_link_expr(self, lid: int, L_text: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if lid not in self.links:
             return
         l = self.links[lid]
@@ -1220,6 +1238,8 @@ class SketchController:
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Link Expr L{lid}"))
 
     def cmd_set_angle_expr(self, aid: int, deg_text: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if aid not in self.angles:
             return
         a = self.angles[aid]
@@ -1923,6 +1943,8 @@ class SketchController:
 
     # ------ commands ------
     def cmd_add_point(self, x: float, y: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         pid = self._next_pid; self._next_pid += 1
         ctrl = self
         self._last_model_action = "CreatePoint"
@@ -1943,6 +1965,8 @@ class SketchController:
         self.stack.push(AddPoint())
 
     def cmd_add_link(self, i: int, j: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if i == j or i not in self.points or j not in self.points: return
         lid = self._next_lid; self._next_lid += 1
         p1, p2 = self.points[i], self.points[j]
@@ -1965,6 +1989,8 @@ class SketchController:
         self.stack.push(AddLink())
 
     def cmd_add_angle(self, i: int, j: int, k: int, deg: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if len({i, j, k}) < 3: return
         if i not in self.points or j not in self.points or k not in self.points: return
         aid = self._next_aid; self._next_aid += 1
@@ -1986,6 +2012,8 @@ class SketchController:
 
     
     def cmd_add_spline(self, point_ids: List[int]):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         pts = [pid for pid in point_ids if pid in self.points]
         if len(pts) < 2:
             return
@@ -2007,6 +2035,8 @@ class SketchController:
         self.stack.push(AddSpline())
 
     def cmd_set_spline_points(self, sid: int, point_ids: List[int]):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if sid not in self.splines:
             return
         ctrl = self
@@ -2023,6 +2053,8 @@ class SketchController:
         self.stack.push(SetSplinePoints())
 
     def cmd_set_spline_hidden(self, sid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if sid not in self.splines:
             return
         ctrl = self
@@ -2038,6 +2070,8 @@ class SketchController:
         self.stack.push(SetSplineHidden())
 
     def cmd_delete_spline(self, sid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if sid not in self.splines:
             return
         ctrl = self
@@ -2054,6 +2088,8 @@ class SketchController:
 
 
     def cmd_set_angle_enabled(self, aid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if aid not in self.angles: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2067,6 +2103,8 @@ class SketchController:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetAE())
     def cmd_add_body_from_points(self, point_ids: List[int]):
+            if not self._confirm_stop_replay("modify the model"):
+                return
             pts = [pid for pid in point_ids if pid in self.points]
             if len(pts) < 2: return
             bid = self._next_bid; self._next_bid += 1
@@ -2088,6 +2126,8 @@ class SketchController:
             self.stack.push(AddBody())
 
     def cmd_body_set_members(self, bid: int, new_points: List[int]):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if bid not in self.bodies: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2108,6 +2148,8 @@ class SketchController:
         self.stack.push(SetMembers())
 
     def cmd_set_body_color(self, bid: int, color_name: str):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if bid not in self.bodies: return
         if color_name not in BODY_COLORS: return
         prev = self.bodies[bid].get("color_name", "Blue")
@@ -2125,6 +2167,8 @@ class SketchController:
         self.stack.push(SetBodyColor())
 
     def cmd_delete_body(self, bid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if bid not in self.bodies: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2139,6 +2183,8 @@ class SketchController:
         self.stack.push(DelBody())
 
     def cmd_delete_point(self, pid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2153,6 +2199,8 @@ class SketchController:
         self.stack.push(DelPoint())
 
     def cmd_delete_link(self, lid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if lid not in self.links: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2167,6 +2215,8 @@ class SketchController:
         self.stack.push(DelLink())
 
     def cmd_delete_angle(self, aid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if aid not in self.angles: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2183,6 +2233,8 @@ class SketchController:
 
     def cmd_add_coincide(self, a: int, b: int):
         """Add a coincidence (point-on-point) constraint between points a and b."""
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if a == b or a not in self.points or b not in self.points:
             return
         # avoid duplicates (unordered pair)
@@ -2209,6 +2261,8 @@ class SketchController:
         self.stack.push(AddCoincide())
 
     def cmd_delete_coincide(self, cid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if cid not in self.coincides: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2223,6 +2277,8 @@ class SketchController:
         self.stack.push(DelCoincide())
 
     def cmd_set_coincide_hidden(self, cid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if cid not in self.coincides: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2237,6 +2293,8 @@ class SketchController:
         self.stack.push(SetCH())
 
     def cmd_set_coincide_enabled(self, cid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if cid not in self.coincides: return
         ctrl = self
         model_before = self.snapshot_model()
@@ -2252,6 +2310,8 @@ class SketchController:
 
     def cmd_add_point_line(self, p: int, i: int, j: int):
         """Add a point-on-line constraint: point p lies on the infinite line through points i-j."""
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if p not in self.points or i not in self.points or j not in self.points:
             return
         if i == j:
@@ -2286,6 +2346,8 @@ class SketchController:
 
     def cmd_add_point_spline(self, p: int, s: int):
         """Add a point-on-spline constraint: point p lies on spline s."""
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if p not in self.points or s not in self.splines:
             return
         if p in self.splines[s].get("points", []):
@@ -2315,6 +2377,8 @@ class SketchController:
         self.stack.push(AddPointSpline())
 
     def cmd_delete_point_line(self, plid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if plid not in self.point_lines:
             return
         ctrl = self
@@ -2330,6 +2394,8 @@ class SketchController:
         self.stack.push(DelPL())
 
     def cmd_delete_point_spline(self, psid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if psid not in self.point_splines:
             return
         ctrl = self
@@ -2345,6 +2411,8 @@ class SketchController:
         self.stack.push(DelPS())
 
     def cmd_set_point_line_hidden(self, plid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if plid not in self.point_lines:
             return
         ctrl = self
@@ -2360,6 +2428,8 @@ class SketchController:
         self.stack.push(SetPLH())
 
     def cmd_set_point_spline_hidden(self, psid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if psid not in self.point_splines:
             return
         ctrl = self
@@ -2375,6 +2445,8 @@ class SketchController:
         self.stack.push(SetPSH())
 
     def cmd_set_point_line_enabled(self, plid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if plid not in self.point_lines:
             return
         ctrl = self
@@ -2390,6 +2462,8 @@ class SketchController:
         self.stack.push(SetPLE())
 
     def cmd_set_point_spline_enabled(self, psid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if psid not in self.point_splines:
             return
         ctrl = self
@@ -2405,6 +2479,8 @@ class SketchController:
         self.stack.push(SetPSE())
 
     def cmd_set_point_fixed(self, pid: int, fixed: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points: return
         prev = bool(self.points[pid].get("fixed", False))
         fixed = bool(fixed)
@@ -2422,6 +2498,8 @@ class SketchController:
         self.stack.push(SetFixed())
 
     def cmd_set_point_hidden(self, pid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points: return
         prev = bool(self.points[pid].get("hidden", False))
         hidden = bool(hidden)
@@ -2442,6 +2520,8 @@ class SketchController:
         self.stack.push(SetHidden())
 
     def cmd_set_point_trajectory(self, pid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points:
             return
         prev = bool(self.points[pid].get("traj", False))
@@ -2466,6 +2546,8 @@ class SketchController:
         self.stack.push(SetTrajectory())
 
     def cmd_set_link_hidden(self, lid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if lid not in self.links: return
         prev = bool(self.links[lid].get("hidden", False))
         hidden = bool(hidden)
@@ -2490,6 +2572,8 @@ class SketchController:
         - Reference (is_ref=True): does NOT enforce; L is shown as a measurement.
           When switching back to Constraint, L is set to the current measured length.
         """
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if lid not in self.links:
             return
         is_ref = bool(is_ref)
@@ -2524,6 +2608,8 @@ class SketchController:
         self.stack.push(SetRef())
 
     def cmd_set_angle_hidden(self, aid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if aid not in self.angles: return
         prev = bool(self.angles[aid].get("hidden", False))
         hidden = bool(hidden)
@@ -2541,6 +2627,8 @@ class SketchController:
         self.stack.push(SetHiddenA())
 
     def cmd_set_link_length(self, lid: int, L: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if lid not in self.links: return
         L = float(L)
         if L <= 1e-9: return
@@ -2557,6 +2645,8 @@ class SketchController:
         self.stack.push(SetLen())
 
     def cmd_set_angle_deg(self, aid: int, deg: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if aid not in self.angles: return
         deg = float(deg)
         ctrl = self
@@ -2573,6 +2663,8 @@ class SketchController:
         self.stack.push(SetAng())
 
     def cmd_move_system(self, before: Dict[int, Tuple[float, float]], after: Dict[int, Tuple[float, float]]):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         ctrl = self
         class MoveSystem(Command):
             name = "Move"
@@ -2587,6 +2679,8 @@ class SketchController:
         self.stack.push(MoveSystem())
 
     def cmd_move_point_by_table(self, pid: int, x: float, y: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points: return
         before = self.snapshot_points()
         self.points[pid]["x"] = float(x); self.points[pid]["y"] = float(y)
@@ -2595,6 +2689,8 @@ class SketchController:
         self.cmd_move_system(before, after)
 
     def on_drag_update(self, pid: int, nx: float, ny: float):
+        if not self._confirm_stop_replay("modify the model"):
+            return
         if pid not in self.points: return
         if not self._drag_active:
             self._drag_active = True
@@ -3399,7 +3495,9 @@ class SketchController:
             },
         }
 
-    def load_dict(self, data: Dict[str, Any], clear_undo: bool = True):
+    def load_dict(self, data: Dict[str, Any], clear_undo: bool = True, action: str = "load a new model") -> bool:
+        if not self._confirm_stop_replay(action):
+            return False
         if hasattr(self.win, "sim_panel"):
             self.win.sim_panel.stop()
             if hasattr(self.win.sim_panel, "animation_tab"):
@@ -3757,6 +3855,7 @@ class SketchController:
         if self.panel: self.panel.defer_refresh_all()
         if clear_undo: self.stack.clear()
         self.update_status()
+        return True
 
 
     # -------------------- Linkage-style simulation API --------------------

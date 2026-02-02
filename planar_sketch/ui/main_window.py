@@ -354,7 +354,20 @@ class MainWindow(QMainWindow):
 
     def file_new(self):
         self.ctrl.commit_drag_if_any()
-        self.ctrl.load_dict({"points": [], "links": [], "angles": [], "splines": [], "point_splines": [], "bodies": [], "parameters": [], "version": "2.7.0"})
+        if not self.ctrl.load_dict(
+            {
+                "points": [],
+                "links": [],
+                "angles": [],
+                "splines": [],
+                "point_splines": [],
+                "bodies": [],
+                "parameters": [],
+                "version": "2.7.0",
+            },
+            action="start a new file",
+        ):
+            return
         self.ctrl.stack.clear()
         self.current_file = None
         if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
@@ -367,7 +380,8 @@ class MainWindow(QMainWindow):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            self.ctrl.load_dict(data)
+            if not self.ctrl.load_dict(data, action="open a new file"):
+                return
             self.current_file = path
             if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
                 self.sim_panel.animation_tab.refresh_cases()
