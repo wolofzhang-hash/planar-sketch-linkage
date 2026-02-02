@@ -123,6 +123,7 @@ class SimulationPanel(QWidget):
         self.lbl_max_nfev = QLabel()
         solver_row.addWidget(self.lbl_max_nfev)
         solver_row.addWidget(self.ed_nfev)
+        self.input_fields = [self.ed_step, self.ed_nfev]
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
 
@@ -215,6 +216,7 @@ class SimulationPanel(QWidget):
         self.optimization_tab = OptimizationTab(self.ctrl)
         self.tabs.addTab(self.animation_tab, "")
         self.tabs.addTab(self.optimization_tab, "")
+        self.input_fields.extend(getattr(self.optimization_tab, "input_fields", []))
 
         # Signals
         self.btn_clear_driver.clicked.connect(self._clear_driver)
