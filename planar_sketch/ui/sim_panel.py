@@ -805,10 +805,34 @@ class SimulationPanel(QWidget):
             QMessageBox.information(self, "Reset", "No start pose captured yet. Press Play once first.")
         self.refresh_labels()
 
+    def _sweep_reached_end(self) -> bool:
+        tol = max(float(getattr(self, "_theta_step_min", 1e-4)), 1e-6)
+        if self._driver_sweep:
+            for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
+                start = float(entry.get("start", last_ok))
+                end = float(entry.get("end", last_ok))
+                if abs(end - start) <= tol:
+                    if abs(end - last_ok) > tol:
+                        return False
+                elif end > start:
+                    if last_ok < end - tol:
+                        return False
+                else:
+                    if last_ok > end + tol:
+                        return False
+            return True
+        start = float(getattr(self, "_theta_start", 0.0))
+        end = float(getattr(self, "_theta_end", 0.0))
+        if abs(end - start) <= tol:
+            return abs(self._theta_last_ok - end) <= tol
+        if end > start:
+            return self._theta_last_ok >= end - tol
+        return self._theta_last_ok <= end + tol
+
 
 
     def _on_tick(self):
-        if self._sweep_steps_total is not None and self._sweep_step_index >= self._sweep_steps_total:
+        if self._sweep_reached_end():
             self._finalize_end_pose()
             self._complete_run(success=True, reason="completed")
             self.refresh_labels()
@@ -823,9 +847,6 @@ class SimulationPanel(QWidget):
         )
         iters = 200 if has_point_spline else 80
         base_step = self._theta_step
-        progress = 0.0
-        if self._sweep_steps_total:
-            progress = (self._sweep_step_index + 1) / float(self._sweep_steps_total)
         step_target = self._theta_step_cur
         theta_target = self._theta_last_ok + step_target
         driver_targets: List[float] = []
@@ -835,7 +856,12 @@ class SimulationPanel(QWidget):
             for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
                 start = float(entry.get("start", last_ok))
                 end = float(entry.get("end", last_ok))
-                desired = start + (end - start) * progress
+                base = float(entry.get("step", 0.0))
+                desired = last_ok + base
+                if end >= start:
+                    desired = min(desired, end)
+                else:
+                    desired = max(desired, end)
                 desired_targets.append(desired)
             step_target = 0.0
             for last_ok, desired in zip(self._driver_last_ok, desired_targets):
@@ -844,7 +870,10 @@ class SimulationPanel(QWidget):
                 scale = self._driver_step_scale
                 driver_targets.append(last_ok + (desired - last_ok) * scale)
         else:
-            theta_target = self._theta_start + (self._theta_end - self._theta_start) * progress
+            if self._theta_end >= self._theta_start:
+                theta_target = min(theta_target, self._theta_end)
+            else:
+                theta_target = max(theta_target, self._theta_end)
             step_target = theta_target - self._theta_last_ok
         while True:
             pose_before = self.ctrl.snapshot_points()
