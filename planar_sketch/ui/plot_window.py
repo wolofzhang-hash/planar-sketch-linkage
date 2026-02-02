@@ -202,7 +202,7 @@ class PlotWindow(QMainWindow):
 
     def plot(self):
         if not self._records:
-            QMessageBox.information(self, "Plot", "No sweep data yet. Run Play in the Simulation panel first.")
+            QMessageBox.information(self, "Plot", "No sweep data yet. Run in the Simulation panel first.")
             return
 
         x_key = self.cb_x.currentData()

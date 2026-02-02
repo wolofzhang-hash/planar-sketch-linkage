@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
 import math
 import os
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, QUrl, QTimer
-from PyQt6.QtGui import QDesktopServices
+import numpy as np
+from PyQt6.QtCore import Qt, QUrl, QTimer, QCoreApplication
+from PyQt6.QtGui import QDesktopServices, QImage
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -29,6 +31,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QDialog,
     QInputDialog,
+    QFileDialog,
 )
 
 from ..core.case_run_manager import CaseRunManager
@@ -56,7 +59,7 @@ class AnimationTab(QWidget):
         self.lbl_active = QLabel("")
         layout.addWidget(self.lbl_active)
 
-        self.table_case_runs = QTableWidget(0, 5)
+        self.table_case_runs = QTableWidget(0, 4)
         self.table_case_runs.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_case_runs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_case_runs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -105,25 +108,29 @@ class AnimationTab(QWidget):
         rows: List[Dict[str, Any]] = []
         for info in cases:
             runs = manager.list_runs(info.case_id)
-            if not runs:
-                rows.append({"case": info, "run": None})
-                continue
-            for run in runs:
-                rows.append({"case": info, "run": run})
+            rows.append({"case": info, "run": None, "kind": "case"})
+            for idx, run in enumerate(runs, start=1):
+                rows.append({"case": info, "run": run, "run_number": idx, "kind": "run"})
         self._row_cache = rows
         self.table_case_runs.setRowCount(len(rows))
         for row, payload in enumerate(rows):
             case_info = payload["case"]
             run_info = payload.get("run") or {}
+            is_case_row = payload.get("kind") == "case"
+            case_label = case_info.name if is_case_row else f"  \u21b3 {tr(getattr(self.ctrl, 'ui_language', 'en'), 'analysis.run')}"
+            run_number = payload.get("run_number", "")
             items = [
-                QTableWidgetItem(case_info.name),
-                QTableWidgetItem(case_info.case_id),
-                QTableWidgetItem(str(run_info.get("run_id", ""))),
+                QTableWidgetItem(case_label),
+                QTableWidgetItem("" if is_case_row else str(run_number)),
                 QTableWidgetItem(str(run_info.get("success", ""))),
                 QTableWidgetItem(str(run_info.get("n_steps", ""))),
             ]
             for col, item in enumerate(items):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if is_case_row and col == 0:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
                 self.table_case_runs.setItem(row, col, item)
         active = manager.get_active_case()
         self._set_active_label(active or "--")
@@ -132,9 +139,8 @@ class AnimationTab(QWidget):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.table_case_runs.setHorizontalHeaderLabels(
             [
-                tr(lang, "analysis.case_name"),
-                tr(lang, "analysis.case_id"),
-                tr(lang, "analysis.run_id"),
+                tr(lang, "analysis.case_run"),
+                tr(lang, "analysis.run_number"),
                 tr(lang, "analysis.success"),
                 tr(lang, "analysis.steps"),
             ]
@@ -146,8 +152,9 @@ class AnimationTab(QWidget):
         self.btn_replay_play.setText(tr(lang, "analysis.play"))
         self.btn_replay_pause.setText(tr(lang, "analysis.pause"))
         self.btn_replay_stop.setText(tr(lang, "analysis.stop"))
-        self.btn_replay_restart.setText(tr(lang, "analysis.replay"))
         self.btn_plot_run.setText(tr(lang, "analysis.plot"))
+        self.btn_capture_image.setText(tr(lang, "analysis.capture_image"))
+        self.btn_record_gif.setText(tr(lang, "analysis.record_gif"))
         self._set_active_label(self._manager().get_active_case() or "--")
         self._set_frame_label(self._frame_index, len(self._frames))
 
@@ -221,13 +228,15 @@ class AnimationTab(QWidget):
         self.btn_replay_play = QPushButton("")
         self.btn_replay_pause = QPushButton("")
         self.btn_replay_stop = QPushButton("")
-        self.btn_replay_restart = QPushButton("")
         self.btn_plot_run = QPushButton("")
+        self.btn_capture_image = QPushButton("")
+        self.btn_record_gif = QPushButton("")
         controls.addWidget(self.btn_replay_play)
         controls.addWidget(self.btn_replay_pause)
         controls.addWidget(self.btn_replay_stop)
-        controls.addWidget(self.btn_replay_restart)
         controls.addWidget(self.btn_plot_run)
+        controls.addWidget(self.btn_capture_image)
+        controls.addWidget(self.btn_record_gif)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -242,9 +251,10 @@ class AnimationTab(QWidget):
         self.btn_replay_play.clicked.connect(self.play_replay)
         self.btn_replay_pause.clicked.connect(self.pause_replay)
         self.btn_replay_stop.clicked.connect(self.stop_replay)
-        self.btn_replay_restart.clicked.connect(self.restart_replay)
         self.slider_frame.valueChanged.connect(self._on_slider_changed)
         self.btn_plot_run.clicked.connect(self.open_plot_window)
+        self.btn_capture_image.clicked.connect(self.capture_screenshot)
+        self.btn_record_gif.clicked.connect(self.record_gif)
         return group
 
     def rename_case(self) -> None:
@@ -290,6 +300,24 @@ class AnimationTab(QWidget):
         manager = self._manager()
         manager.delete_case_runs(case_id)
         self.refresh_cases()
+
+    def delete_case(self) -> None:
+        case_id = self._selected_case_id()
+        if not case_id:
+            QMessageBox.information(self, "Case", "Select a case first.")
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Delete Case",
+            f"Delete case {case_id} and all runs?",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        manager = self._manager()
+        if manager.delete_case(case_id):
+            self.refresh_cases()
+        else:
+            QMessageBox.warning(self, "Case", "Failed to delete case.")
 
     def load_run_data(self) -> None:
         run = self._selected_run()
@@ -371,6 +399,69 @@ class AnimationTab(QWidget):
         self._plot_window.raise_()
         self._plot_window.activateWindow()
 
+    def _view_widget(self):
+        win = getattr(self.ctrl, "win", None)
+        if win is None:
+            return None
+        return getattr(win, "view", None)
+
+    def capture_screenshot(self) -> None:
+        view = self._view_widget()
+        if view is None:
+            QMessageBox.warning(self, "Screenshot", "No view available to capture.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Screenshot",
+            "",
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp)",
+        )
+        if not path:
+            return
+        pixmap = view.grab()
+        if not pixmap.save(path):
+            QMessageBox.warning(self, "Screenshot", "Failed to save screenshot.")
+            return
+        QMessageBox.information(self, "Screenshot", "Screenshot saved.")
+
+    def record_gif(self) -> None:
+        if not self._frames:
+            QMessageBox.information(self, "GIF", "Load run data first.")
+            return
+        if importlib.util.find_spec("imageio") is None:
+            QMessageBox.warning(self, "GIF", "imageio is not available for GIF recording.")
+            return
+        view = self._view_widget()
+        if view is None:
+            QMessageBox.warning(self, "GIF", "No view available to capture.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save GIF",
+            "",
+            "GIF (*.gif)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".gif"):
+            path = f"{path}.gif"
+        import imageio.v2 as imageio
+
+        self.pause_replay()
+        original_index = self._frame_index
+        fps = 20
+        with imageio.get_writer(path, mode="I", duration=1.0 / fps) as writer:
+            for idx in range(len(self._frames)):
+                self._apply_frame(idx)
+                QCoreApplication.processEvents()
+                image = view.grab().toImage().convertToFormat(QImage.Format.Format_RGBA8888)
+                ptr = image.bits()
+                ptr.setsize(image.sizeInBytes())
+                frame = np.frombuffer(ptr, np.uint8).reshape((image.height(), image.width(), 4))
+                writer.append_data(frame)
+        self.slider_frame.setValue(original_index)
+        QMessageBox.information(self, "GIF", "GIF saved.")
+
     def _apply_frame(self, index: int) -> None:
         if not self._frames:
             return
@@ -395,8 +486,7 @@ class AnimationTab(QWidget):
             return
         next_idx = self._frame_index + 1
         if next_idx >= len(self._frames):
-            self._frame_timer.stop()
-            return
+            next_idx = 0
         self.slider_frame.setValue(next_idx)
 
     def _on_slider_changed(self, value: int) -> None:
@@ -419,11 +509,7 @@ class AnimationTab(QWidget):
             self._frame_timer.stop()
         self.slider_frame.setValue(0)
 
-    def restart_replay(self) -> None:
-        if not self._frames:
-            return
-        self.slider_frame.setValue(0)
-        self._frame_timer.start(50)
+
 
     def _open_case_run_context_menu(self, pos) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -437,6 +523,7 @@ class AnimationTab(QWidget):
         act_rename_case = menu.addAction(tr(lang, "analysis.rename_case"))
         act_rename_case_id = menu.addAction(tr(lang, "analysis.rename_case_id"))
         act_delete_case_results = menu.addAction(tr(lang, "analysis.delete_case_results"))
+        act_delete_case = menu.addAction(tr(lang, "analysis.delete_case"))
 
         selected = menu.exec(self.table_case_runs.viewport().mapToGlobal(pos))
         if selected == act_set_active:
@@ -453,6 +540,8 @@ class AnimationTab(QWidget):
             self.rename_case_id()
         elif selected == act_delete_case_results:
             self.delete_case_results()
+        elif selected == act_delete_case:
+            self.delete_case()
 
 
 class OptimizationTab(QWidget):
