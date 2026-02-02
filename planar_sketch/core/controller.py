@@ -2984,18 +2984,22 @@ class SketchController:
             pass
 
     def update_graphics(self):
-        driver_marker_pid = None
-        primary_driver = self._primary_driver()
-        if primary_driver and primary_driver.get("enabled"):
-            driver_type = str(primary_driver.get("type", "vector"))
+        driver_marker_map: Dict[int, str] = {}
+        active_drivers = self._active_drivers()
+        show_driver_index = len(active_drivers) > 1
+        for idx, drv in enumerate(active_drivers):
+            driver_type = str(drv.get("type", "vector"))
             if driver_type == "joint":
-                pid = primary_driver.get("j")
-                if pid is not None:
-                    driver_marker_pid = int(pid)
+                pid = drv.get("j")
             else:
-                pid = primary_driver.get("pivot")
-                if pid is not None:
-                    driver_marker_pid = int(pid)
+                pid = drv.get("pivot")
+            if pid is None:
+                continue
+            label = "↻" if not show_driver_index else f"↻{idx + 1}"
+            if int(pid) in driver_marker_map:
+                driver_marker_map[int(pid)] = f"{driver_marker_map[int(pid)]},{label}"
+            else:
+                driver_marker_map[int(pid)] = label
         output_marker_pid = None
         primary_output = self._primary_output()
         if primary_output and primary_output.get("enabled"):
@@ -3024,11 +3028,15 @@ class SketchController:
             )
             cmark.setVisible(show_constraint)
             dmark: TextMarker = p["driver_marker"]
+            if pid in driver_marker_map:
+                dmark.setText(driver_marker_map[pid])
+            else:
+                dmark.setText("↻")
             dmark_bounds = dmark.boundingRect()
             dmark.setPos(p["x"] + 8, p["y"] - dmark_bounds.height() - 4)
             show_driver = (
                 self.show_dim_markers
-                and driver_marker_pid == pid
+                and pid in driver_marker_map
                 and (not self.is_point_effectively_hidden(pid))
                 and self.show_points_geometry
             )
@@ -3764,7 +3772,6 @@ class SketchController:
             driver["rad"] = float(ang)
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
-        self._check_overconstraint_and_warn()
 
     def set_driver_joint(self, i_pid: int, j_pid: int, k_pid: int):
         """Set the input driver as a joint angle (i-j-k), signed and clamped to (-pi, pi]."""
@@ -3781,7 +3788,6 @@ class SketchController:
             driver["rad"] = float(ang)
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
-        self._check_overconstraint_and_warn()
 
     def clear_driver(self):
         self.drivers = []
@@ -3800,7 +3806,6 @@ class SketchController:
             output["rad"] = float(ang)
         self.outputs.insert(0, output)
         self._sync_primary_output()
-        self._check_overconstraint_and_warn()
 
     def clear_output(self):
         self.outputs = []
@@ -4695,6 +4700,15 @@ class SketchController:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
 
+    def _get_output_angle_abs_rad_for(self, output: Dict[str, Any]) -> Optional[float]:
+        if not output or not output.get("enabled"):
+            return None
+        piv = output.get("pivot")
+        tip = output.get("tip")
+        if piv is None or tip is None:
+            return None
+        return self.get_vector_angle_rad(int(piv), int(tip))
+
     def _get_driver_angle_abs_rad(self, driver: Dict[str, Any]) -> Optional[float]:
         if not driver or not driver.get("enabled"):
             return None
@@ -4723,6 +4737,26 @@ class SketchController:
         base_deg = math.degrees(self._sim_zero_input_rad)
         return self._rel_deg(abs_deg, base_deg)
 
+    def get_driver_angles_deg(self) -> List[Optional[float]]:
+        """Current driver angles in degrees (relative to Play-start if available)."""
+        result: List[Optional[float]] = []
+        drivers = self._active_drivers()
+        for idx, drv in enumerate(drivers):
+            ang = self._get_driver_angle_abs_rad(drv)
+            if ang is None:
+                result.append(None)
+                continue
+            abs_deg = math.degrees(ang)
+            base_rad: Optional[float] = None
+            if self._sim_zero_driver_rad and idx < len(self._sim_zero_driver_rad):
+                base_rad = self._sim_zero_driver_rad[idx]
+            elif idx == 0 and self._sim_zero_input_rad is not None:
+                base_rad = self._sim_zero_input_rad
+            if base_rad is None:
+                result.append(abs_deg)
+            else:
+                result.append(self._rel_deg(abs_deg, math.degrees(base_rad)))
+        return result
 
     def get_output_angle_deg(self) -> Optional[float]:
         """Current output angle in degrees (relative to Play-start if available)."""
@@ -4735,6 +4769,21 @@ class SketchController:
         base_deg = math.degrees(self._sim_zero_output_rad)
         return self._rel_deg(abs_deg, base_deg)
 
+    def get_output_angles_deg(self) -> List[Optional[float]]:
+        """Current output angles in degrees (relative to Play-start for the primary)."""
+        result: List[Optional[float]] = []
+        outputs = [o for o in self.outputs if o.get("enabled")]
+        for idx, out in enumerate(outputs):
+            ang = self._get_output_angle_abs_rad_for(out)
+            if ang is None:
+                result.append(None)
+                continue
+            abs_deg = math.degrees(ang)
+            if idx == 0 and self._sim_zero_output_rad is not None:
+                result.append(self._rel_deg(abs_deg, math.degrees(self._sim_zero_output_rad)))
+            else:
+                result.append(abs_deg)
+        return result
 
     def drive_to_deg(self, deg: float, iters: int = 80):
         """Drive the mechanism to a *relative* input angle (deg) and solve constraints.
