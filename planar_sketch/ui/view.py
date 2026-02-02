@@ -10,7 +10,16 @@ from PyQt6.QtGui import QPainter
 from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QRubberBand, QGraphicsPixmapItem
 
 from ..utils.qt_safe import safe_event
-from .items import PointItem, LinkItem, CoincideItem, PointLineItem, SplineItem, PointSplineItem
+from .items import (
+    PointItem,
+    LinkItem,
+    CoincideItem,
+    PointLineItem,
+    SplineItem,
+    PointSplineItem,
+    ForceArrowItem,
+    TorqueArrowItem,
+)
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -39,6 +48,23 @@ class SketchView(QGraphicsView):
         f = 1.25 if e.angleDelta().y() > 0 else 0.8
         self.scale(f, f)
 
+    def _is_load_arrow_item(self, item) -> bool:
+        cur = item
+        while cur is not None:
+            if isinstance(cur, (ForceArrowItem, TorqueArrowItem)):
+                return True
+            cur = cur.parentItem()
+        return False
+
+    def _item_at_pos(self, pos):
+        for item in self.items(pos):
+            if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
+                continue
+            if self._is_load_arrow_item(item):
+                continue
+            return item
+        return None
+
     @safe_event
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton and self.ctrl.mode == "BackgroundImagePick":
@@ -53,9 +79,7 @@ class SketchView(QGraphicsView):
             e.accept(); return
 
         if e.button() == Qt.MouseButton.LeftButton:
-            item = self.itemAt(e.position().toPoint())
-            if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
-                item = None
+            item = self._item_at_pos(e.position().toPoint())
             if item is None:
                 self.ctrl.commit_drag_if_any()
                 self._rb_active = True
@@ -119,10 +143,8 @@ class SketchView(QGraphicsView):
                 self.setCursor(Qt.CursorShape.ArrowCursor)
                 self.ctrl.update_status()
                 e.accept(); return
-            item = self.itemAt(e.position().toPoint())
+            item = self._item_at_pos(e.position().toPoint())
             sp = self.mapToScene(e.position().toPoint())
-            if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
-                item = None
             if item is None:
                 self.ctrl.show_empty_context_menu(e.globalPosition().toPoint(), sp)
             else:
