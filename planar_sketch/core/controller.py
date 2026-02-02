@@ -951,10 +951,6 @@ class SketchController:
                         stack.append(nb)
             components.append(comp)
 
-        active_drivers = self._active_drivers()
-        active_outputs = self._active_outputs()
-        use_outputs = not bool(active_drivers)
-
         details: List[str] = []
         over_any = False
         for idx, comp in enumerate(components, start=1):
@@ -999,28 +995,6 @@ class SketchController:
             for b in self.bodies.values():
                 rigid_edges += sum(1 for i, j, _L in b.get("rigid_edges", []) if i in comp and j in comp)
 
-            if use_outputs:
-                io_constraints = sum(
-                    1
-                    for out in active_outputs
-                    if out.get("pivot") in comp and out.get("tip") in comp
-                )
-            else:
-                io_constraints = 0
-                for drv in active_drivers:
-                    dtype = str(drv.get("type", "vector"))
-                    if dtype == "joint":
-                        i = drv.get("i")
-                        j = drv.get("j")
-                        k = drv.get("k")
-                        if i in comp and j in comp and k in comp:
-                            io_constraints += 1
-                    else:
-                        piv = drv.get("pivot")
-                        tip = drv.get("tip")
-                        if piv in comp and tip in comp:
-                            io_constraints += 1
-
             total = (
                 fixed * 2
                 + coincide * 2
@@ -1029,14 +1003,13 @@ class SketchController:
                 + links
                 + angles
                 + rigid_edges
-                + io_constraints
             )
             over = total > dof
             over_any = over_any or over
             details.append(
                 f"component#{idx}: constraints={total} > dof={dof} "
                 f"(fixed={fixed}, links={links}, angles={angles}, coincide={coincide}, "
-                f"line={point_lines}, spline={point_splines}, rigid={rigid_edges}, io={io_constraints})"
+                f"line={point_lines}, spline={point_splines}, rigid={rigid_edges})"
             )
 
         return over_any, " | ".join(details)

@@ -97,10 +97,6 @@ class SimulationPanel(QWidget):
         out_row.addWidget(self.btn_clear_output)
         main_layout.addLayout(out_row)
 
-        # Current
-        self.lbl_angles = QLabel()
-        main_layout.addWidget(self.lbl_angles)
-
         # Sweep controls
         sweep = QHBoxLayout()
         self.ed_start = QLineEdit("0")
@@ -113,8 +109,6 @@ class SimulationPanel(QWidget):
         sweep.addWidget(self.ed_start)
         sweep.addWidget(self.lbl_end)
         sweep.addWidget(self.ed_end)
-        sweep.addWidget(self.lbl_step)
-        sweep.addWidget(self.ed_step)
         main_layout.addLayout(sweep)
 
         # Solver backend
@@ -124,6 +118,8 @@ class SimulationPanel(QWidget):
         self.ed_nfev = QLineEdit("250")
         self.ed_nfev.setMaximumWidth(80)
         solver_row.addWidget(self.chk_scipy)
+        solver_row.addWidget(self.lbl_step)
+        solver_row.addWidget(self.ed_step)
         self.lbl_max_nfev = QLabel()
         solver_row.addWidget(self.lbl_max_nfev)
         solver_row.addWidget(self.ed_nfev)
@@ -398,11 +394,6 @@ class SimulationPanel(QWidget):
         else:
             self.lbl_output.setText(tr(lang, "sim.output_unset"))
 
-        a_in = self.ctrl.get_input_angle_deg()
-        a_out = self.ctrl.get_output_angle_deg()
-        s_in = "--" if a_in is None else self.ctrl.format_number(a_in)
-        s_out = "--" if a_out is None else self.ctrl.format_number(a_out)
-        self.lbl_angles.setText(tr(lang, "sim.input_output").format(input=s_in, output=s_out))
         self._refresh_driver_table(drivers)
         self._refresh_load_tables()
         if hasattr(self, "optimization_tab"):
