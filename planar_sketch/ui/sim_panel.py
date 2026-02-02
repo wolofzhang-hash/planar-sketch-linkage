@@ -230,6 +230,10 @@ class SimulationPanel(QWidget):
         self.tabs.setTabText(2, tr(lang, "tab.simulation"))
         self.tabs.setTabText(3, tr(lang, "tab.animation"))
         self.tabs.setTabText(4, tr(lang, "tab.optimization"))
+        if hasattr(self, "animation_tab"):
+            self.animation_tab.apply_language()
+        if hasattr(self, "optimization_tab"):
+            self.optimization_tab.apply_language()
 
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):

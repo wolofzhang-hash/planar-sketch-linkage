@@ -44,6 +44,7 @@ from ..core.optimization import (
 )
 from .expression_builder import ExpressionBuilderDialog
 from .plot_window import PlotWindow
+from .i18n import tr
 
 class AnimationTab(QWidget):
     def __init__(self, ctrl: Any, on_active_case_changed=None):
@@ -52,22 +53,22 @@ class AnimationTab(QWidget):
         self._on_active_case_changed = on_active_case_changed
         layout = QVBoxLayout(self)
 
-        self.lbl_active = QLabel("Active Case: --")
+        self.lbl_active = QLabel("")
         layout.addWidget(self.lbl_active)
 
         self.table_case_runs = QTableWidget(0, 5)
-        self.table_case_runs.setHorizontalHeaderLabels(["Case Name", "Case ID", "Run ID", "Success", "Steps"])
         self.table_case_runs.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_case_runs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_case_runs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table_case_runs.verticalHeader().setVisible(False)
         self.table_case_runs.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        layout.addWidget(QLabel("Cases + Runs"))
+        self.lbl_cases_runs = QLabel("")
+        layout.addWidget(self.lbl_cases_runs)
         layout.addWidget(self.table_case_runs)
 
         action_row = QHBoxLayout()
-        self.btn_set_active = QPushButton("Set Active Case")
-        self.btn_load_run_data = QPushButton("Load Run Data")
+        self.btn_set_active = QPushButton("")
+        self.btn_load_run_data = QPushButton("")
         action_row.addWidget(self.btn_set_active)
         action_row.addWidget(self.btn_load_run_data)
         action_row.addStretch(1)
@@ -86,6 +87,7 @@ class AnimationTab(QWidget):
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._advance_frame)
         self._plot_window: Optional[PlotWindow] = None
+        self.apply_language()
         self.refresh_cases()
 
     def _project_dir(self) -> str:
@@ -124,7 +126,41 @@ class AnimationTab(QWidget):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table_case_runs.setItem(row, col, item)
         active = manager.get_active_case()
-        self.lbl_active.setText(f"Active Case: {active or '--'}")
+        self._set_active_label(active or "--")
+
+    def apply_language(self) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.table_case_runs.setHorizontalHeaderLabels(
+            [
+                tr(lang, "analysis.case_name"),
+                tr(lang, "analysis.case_id"),
+                tr(lang, "analysis.run_id"),
+                tr(lang, "analysis.success"),
+                tr(lang, "analysis.steps"),
+            ]
+        )
+        self.lbl_cases_runs.setText(tr(lang, "analysis.cases_runs"))
+        self.btn_set_active.setText(tr(lang, "analysis.set_active_case"))
+        self.btn_load_run_data.setText(tr(lang, "analysis.load_run_data"))
+        self.group_replay.setTitle(tr(lang, "analysis.replay_plot"))
+        self.btn_replay_play.setText(tr(lang, "analysis.play"))
+        self.btn_replay_pause.setText(tr(lang, "analysis.pause"))
+        self.btn_replay_stop.setText(tr(lang, "analysis.stop"))
+        self.btn_replay_restart.setText(tr(lang, "analysis.replay"))
+        self.btn_plot_run.setText(tr(lang, "analysis.plot"))
+        self._set_active_label(self._manager().get_active_case() or "--")
+        self._set_frame_label(self._frame_index, len(self._frames))
+
+    def _set_active_label(self, case_id: str) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.lbl_active.setText(tr(lang, "analysis.active_case").format(case=case_id))
+
+    def _set_frame_label(self, index: int, total: int) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        if total <= 0:
+            self.lbl_frame.setText(tr(lang, "analysis.frame").format(current="--"))
+            return
+        self.lbl_frame.setText(tr(lang, "analysis.frame").format(current=f"{index + 1}/{total}"))
 
     def _selected_case_id(self) -> Optional[str]:
         row = self.table_case_runs.currentRow()
@@ -172,20 +208,21 @@ class AnimationTab(QWidget):
             return
         manager = self._manager()
         manager.set_active_case(case_id)
-        self.lbl_active.setText(f"Active Case: {case_id}")
+        self._set_active_label(case_id)
         if self._on_active_case_changed:
             self._on_active_case_changed()
 
     def _build_replay_group(self) -> QWidget:
-        group = QGroupBox("Replay + Plot")
+        group = QGroupBox("")
+        self.group_replay = group
         layout = QVBoxLayout(group)
 
         controls = QHBoxLayout()
-        self.btn_replay_play = QPushButton("Play")
-        self.btn_replay_pause = QPushButton("Pause")
-        self.btn_replay_stop = QPushButton("Stop")
-        self.btn_replay_restart = QPushButton("Replay")
-        self.btn_plot_run = QPushButton("Plot...")
+        self.btn_replay_play = QPushButton("")
+        self.btn_replay_pause = QPushButton("")
+        self.btn_replay_stop = QPushButton("")
+        self.btn_replay_restart = QPushButton("")
+        self.btn_plot_run = QPushButton("")
         controls.addWidget(self.btn_replay_play)
         controls.addWidget(self.btn_replay_pause)
         controls.addWidget(self.btn_replay_stop)
@@ -197,7 +234,7 @@ class AnimationTab(QWidget):
         slider_row = QHBoxLayout()
         self.slider_frame = QSlider(Qt.Orientation.Horizontal)
         self.slider_frame.setRange(0, 0)
-        self.lbl_frame = QLabel("Frame: --")
+        self.lbl_frame = QLabel("")
         slider_row.addWidget(self.slider_frame, 1)
         slider_row.addWidget(self.lbl_frame)
         layout.addLayout(slider_row)
@@ -346,7 +383,7 @@ class AnimationTab(QWidget):
             except Exception:
                 pass
         self._frame_index = idx
-        self.lbl_frame.setText(f"Frame: {idx + 1}/{len(self._frames)}")
+        self._set_frame_label(idx, len(self._frames))
         if self._plot_window is not None and self._plot_window.isVisible():
             self._plot_window.set_frame_index(idx)
             if self._frame_timer.isActive():
@@ -389,16 +426,17 @@ class AnimationTab(QWidget):
         self._frame_timer.start(50)
 
     def _open_case_run_context_menu(self, pos) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
-        act_set_active = menu.addAction("Set Active Case")
-        act_load_run_data = menu.addAction("Load Run Data")
+        act_set_active = menu.addAction(tr(lang, "analysis.set_active_case"))
+        act_load_run_data = menu.addAction(tr(lang, "analysis.load_run_data"))
         menu.addSeparator()
-        act_open_run = menu.addAction("Open Run Folder")
-        act_load_snapshot = menu.addAction("Load Run Snapshot")
+        act_open_run = menu.addAction(tr(lang, "analysis.open_run_folder"))
+        act_load_snapshot = menu.addAction(tr(lang, "analysis.load_run_snapshot"))
         menu.addSeparator()
-        act_rename_case = menu.addAction("Rename Case")
-        act_rename_case_id = menu.addAction("Rename Case ID")
-        act_delete_case_results = menu.addAction("Delete Case Results")
+        act_rename_case = menu.addAction(tr(lang, "analysis.rename_case"))
+        act_rename_case_id = menu.addAction(tr(lang, "analysis.rename_case_id"))
+        act_delete_case_results = menu.addAction(tr(lang, "analysis.delete_case_results"))
 
         selected = menu.exec(self.table_case_runs.viewport().mapToGlobal(pos))
         if selected == act_set_active:
@@ -423,9 +461,10 @@ class OptimizationTab(QWidget):
         self.ctrl = ctrl
         self._worker: Optional[OptimizationWorker] = None
         self._best_vars: Dict[str, float] = {}
+        self._progress_value = "--"
 
         layout = QVBoxLayout(self)
-        self.lbl_active = QLabel("Active Case: --")
+        self.lbl_active = QLabel("")
         layout.addWidget(self.lbl_active)
 
         layout.addWidget(self._build_variables_group())
@@ -434,22 +473,23 @@ class OptimizationTab(QWidget):
         layout.addWidget(self._build_run_group())
         layout.addStretch(1)
 
+        self.apply_language()
         self.refresh_active_case()
         self.ensure_defaults()
 
     def _build_variables_group(self) -> QWidget:
-        group = QGroupBox("Design Variables")
+        group = QGroupBox("")
+        self.group_vars = group
         layout = QVBoxLayout(group)
         btn_row = QHBoxLayout()
-        self.btn_add_var = QPushButton("Add")
-        self.btn_del_var = QPushButton("Remove")
+        self.btn_add_var = QPushButton("")
+        self.btn_del_var = QPushButton("")
         btn_row.addWidget(self.btn_add_var)
         btn_row.addWidget(self.btn_del_var)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         self.table_vars = QTableWidget(0, 6)
-        self.table_vars.setHorizontalHeaderLabels(["Enabled", "Type", "Variable", "Current", "Lower", "Upper"])
         self.table_vars.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_vars.verticalHeader().setVisible(False)
         self.table_vars.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -461,18 +501,18 @@ class OptimizationTab(QWidget):
         return group
 
     def _build_objectives_group(self) -> QWidget:
-        group = QGroupBox("Objectives")
+        group = QGroupBox("")
+        self.group_obj = group
         layout = QVBoxLayout(group)
         btn_row = QHBoxLayout()
-        self.btn_add_obj = QPushButton("Add")
-        self.btn_del_obj = QPushButton("Remove")
+        self.btn_add_obj = QPushButton("")
+        self.btn_del_obj = QPushButton("")
         btn_row.addWidget(self.btn_add_obj)
         btn_row.addWidget(self.btn_del_obj)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         self.table_obj = QTableWidget(0, 3)
-        self.table_obj.setHorizontalHeaderLabels(["Enabled", "Direction", "Expression"])
         self.table_obj.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_obj.verticalHeader().setVisible(False)
         self.table_obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -484,18 +524,18 @@ class OptimizationTab(QWidget):
         return group
 
     def _build_constraints_group(self) -> QWidget:
-        group = QGroupBox("Constraints")
+        group = QGroupBox("")
+        self.group_con = group
         layout = QVBoxLayout(group)
         btn_row = QHBoxLayout()
-        self.btn_add_con = QPushButton("Add")
-        self.btn_del_con = QPushButton("Remove")
+        self.btn_add_con = QPushButton("")
+        self.btn_del_con = QPushButton("")
         btn_row.addWidget(self.btn_add_con)
         btn_row.addWidget(self.btn_del_con)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
         self.table_con = QTableWidget(0, 4)
-        self.table_con.setHorizontalHeaderLabels(["Enabled", "Expression", "Comparator", "Limit"])
         self.table_con.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_con.verticalHeader().setVisible(False)
         self.table_con.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -507,14 +547,17 @@ class OptimizationTab(QWidget):
         return group
 
     def _build_run_group(self) -> QWidget:
-        group = QGroupBox("Optimization Run")
+        group = QGroupBox("")
+        self.group_run = group
         layout = QVBoxLayout(group)
         row = QHBoxLayout()
-        row.addWidget(QLabel("Evals"))
+        self.lbl_evals = QLabel("")
+        row.addWidget(self.lbl_evals)
         self.ed_evals = QLineEdit("50")
         self.ed_evals.setMaximumWidth(80)
         row.addWidget(self.ed_evals)
-        row.addWidget(QLabel("Seed"))
+        self.lbl_seed = QLabel("")
+        row.addWidget(self.lbl_seed)
         self.ed_seed = QLineEdit("")
         self.ed_seed.setMaximumWidth(120)
         row.addWidget(self.ed_seed)
@@ -522,20 +565,19 @@ class OptimizationTab(QWidget):
         layout.addLayout(row)
 
         btn_row = QHBoxLayout()
-        self.btn_run = QPushButton("Run")
-        self.btn_stop = QPushButton("Stop")
-        self.btn_apply_best = QPushButton("Apply Best to Model")
+        self.btn_run = QPushButton("")
+        self.btn_stop = QPushButton("")
+        self.btn_apply_best = QPushButton("")
         btn_row.addWidget(self.btn_run)
         btn_row.addWidget(self.btn_stop)
         btn_row.addWidget(self.btn_apply_best)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        self.lbl_progress = QLabel("Progress: --")
+        self.lbl_progress = QLabel("")
         layout.addWidget(self.lbl_progress)
 
         self.table_best = QTableWidget(0, 3)
-        self.table_best.setHorizontalHeaderLabels(["Best Objective", "P12.x", "P12.y"])
         self.table_best.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_best.verticalHeader().setVisible(False)
         layout.addWidget(self.table_best)
@@ -556,7 +598,62 @@ class OptimizationTab(QWidget):
 
     def refresh_active_case(self) -> None:
         active = self._manager().get_active_case()
-        self.lbl_active.setText(f"Active Case: {active or '--'}")
+        self._set_active_label(active or "--")
+
+    def apply_language(self) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self._set_active_label(self._manager().get_active_case() or "--")
+        self.group_vars.setTitle(tr(lang, "analysis.design_variables"))
+        self.group_obj.setTitle(tr(lang, "analysis.objectives"))
+        self.group_con.setTitle(tr(lang, "analysis.constraints"))
+        self.group_run.setTitle(tr(lang, "analysis.optimization_run"))
+        self.btn_add_var.setText(tr(lang, "analysis.add"))
+        self.btn_del_var.setText(tr(lang, "analysis.remove"))
+        self.btn_add_obj.setText(tr(lang, "analysis.add"))
+        self.btn_del_obj.setText(tr(lang, "analysis.remove"))
+        self.btn_add_con.setText(tr(lang, "analysis.add"))
+        self.btn_del_con.setText(tr(lang, "analysis.remove"))
+        self.lbl_evals.setText(tr(lang, "analysis.evals"))
+        self.lbl_seed.setText(tr(lang, "analysis.seed"))
+        self.btn_run.setText(tr(lang, "analysis.run"))
+        self.btn_stop.setText(tr(lang, "analysis.stop"))
+        self.btn_apply_best.setText(tr(lang, "analysis.apply_best"))
+        self._set_progress_label(self._progress_value)
+        self.table_vars.setHorizontalHeaderLabels(
+            [
+                tr(lang, "table.enabled"),
+                tr(lang, "analysis.variable_type"),
+                tr(lang, "analysis.variable_name"),
+                tr(lang, "analysis.variable_current"),
+                tr(lang, "analysis.variable_lower"),
+                tr(lang, "analysis.variable_upper"),
+            ]
+        )
+        self.table_obj.setHorizontalHeaderLabels(
+            [
+                tr(lang, "table.enabled"),
+                tr(lang, "analysis.direction"),
+                tr(lang, "analysis.expression"),
+            ]
+        )
+        self.table_con.setHorizontalHeaderLabels(
+            [
+                tr(lang, "table.enabled"),
+                tr(lang, "analysis.expression"),
+                tr(lang, "analysis.comparator"),
+                tr(lang, "analysis.limit"),
+            ]
+        )
+        self.table_best.setHorizontalHeaderLabels([tr(lang, "analysis.best_objective"), "P12.x", "P12.y"])
+
+    def _set_active_label(self, case_id: str) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self.lbl_active.setText(tr(lang, "analysis.active_case").format(case=case_id))
+
+    def _set_progress_label(self, value: str) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self._progress_value = value
+        self.lbl_progress.setText(tr(lang, "analysis.progress").format(value=value))
 
     def ensure_defaults(self) -> None:
         if self.table_vars.rowCount() == 0:
@@ -801,8 +898,9 @@ class OptimizationTab(QWidget):
         col = item.column()
         if col != 2:
             return
+        lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
-        act_builder = menu.addAction("Expression Builder...")
+        act_builder = menu.addAction(tr(lang, "analysis.expression_builder"))
         selected = menu.exec(self.table_obj.viewport().mapToGlobal(pos))
         if selected == act_builder:
             self._open_expression_builder_for_objective(row)
@@ -815,8 +913,9 @@ class OptimizationTab(QWidget):
         col = item.column()
         if col != 1:
             return
+        lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
-        act_builder = menu.addAction("Expression Builder...")
+        act_builder = menu.addAction(tr(lang, "analysis.expression_builder"))
         selected = menu.exec(self.table_con.viewport().mapToGlobal(pos))
         if selected == act_builder:
             self._open_expression_builder_for_constraint(row)
@@ -968,7 +1067,7 @@ class OptimizationTab(QWidget):
         self._worker.failed.connect(self._on_failed)
         self.btn_run.setEnabled(False)
         self.btn_stop.setEnabled(True)
-        self.lbl_progress.setText("Progress: 0")
+        self._set_progress_label("0")
         self._worker.start()
 
     def stop_optimization(self) -> None:
@@ -980,7 +1079,7 @@ class OptimizationTab(QWidget):
     def _on_progress(self, payload: Dict[str, Any]) -> None:
         idx = payload.get("index", 0)
         best = payload.get("best", {})
-        self.lbl_progress.setText(f"Progress: {idx}")
+        self._set_progress_label(str(idx))
         if best and best.get("vars"):
             self._best_vars = dict(best.get("vars", {}))
             self._update_best_table(best)
@@ -991,7 +1090,7 @@ class OptimizationTab(QWidget):
         if payload and payload.get("vars"):
             self._best_vars = dict(payload.get("vars", {}))
             self._update_best_table(payload)
-        self.lbl_progress.setText("Progress: done")
+        self._set_progress_label(tr(getattr(self.ctrl, "ui_language", "en"), "analysis.done"))
 
     def _on_failed(self, msg: str) -> None:
         self.btn_run.setEnabled(True)
