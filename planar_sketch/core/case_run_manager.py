@@ -7,6 +7,7 @@ import csv
 import hashlib
 import json
 import math
+import numbers
 import os
 import shutil
 import uuid
@@ -341,11 +342,14 @@ class CaseRunManager:
                     continue
                 if val is None:
                     continue
-                signals.setdefault(key, {"min": float(val), "max": float(val), "sum": 0.0, "sum_sq": 0.0, "count": 0.0})
-                signals[key]["min"] = min(signals[key]["min"], float(val))
-                signals[key]["max"] = max(signals[key]["max"], float(val))
-                signals[key]["sum"] += float(val)
-                signals[key]["sum_sq"] += float(val) * float(val)
+                if not isinstance(val, numbers.Real):
+                    continue
+                val_f = float(val)
+                signals.setdefault(key, {"min": val_f, "max": val_f, "sum": 0.0, "sum_sq": 0.0, "count": 0.0})
+                signals[key]["min"] = min(signals[key]["min"], val_f)
+                signals[key]["max"] = max(signals[key]["max"], val_f)
+                signals[key]["sum"] += val_f
+                signals[key]["sum_sq"] += val_f * val_f
                 signals[key]["count"] += 1.0
 
         signal_stats = {}
