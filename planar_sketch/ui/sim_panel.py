@@ -68,22 +68,22 @@ class SimulationPanel(QWidget):
 
         # Driver
         row = QHBoxLayout()
-        self.lbl_driver = QLabel("Driver: (not set)")
-        self.btn_clear_driver = QPushButton("Clear")
+        self.lbl_driver = QLabel()
+        self.btn_clear_driver = QPushButton()
         row.addWidget(self.lbl_driver, 1)
         row.addWidget(self.btn_clear_driver)
         main_layout.addLayout(row)
 
         # Output
         out_row = QHBoxLayout()
-        self.lbl_output = QLabel("Output: (not set)")
-        self.btn_clear_output = QPushButton("Clear")
+        self.lbl_output = QLabel()
+        self.btn_clear_output = QPushButton()
         out_row.addWidget(self.lbl_output, 1)
         out_row.addWidget(self.btn_clear_output)
         main_layout.addLayout(out_row)
 
         # Current
-        self.lbl_angles = QLabel("Input: --")
+        self.lbl_angles = QLabel()
         main_layout.addWidget(self.lbl_angles)
 
         # Sweep controls
@@ -91,34 +91,38 @@ class SimulationPanel(QWidget):
         self.ed_start = QLineEdit("0")
         self.ed_end = QLineEdit("360")
         self.ed_step = QLineEdit("2")
-        sweep.addWidget(QLabel("Start°"))
+        self.lbl_start = QLabel()
+        self.lbl_end = QLabel()
+        self.lbl_step = QLabel()
+        sweep.addWidget(self.lbl_start)
         sweep.addWidget(self.ed_start)
-        sweep.addWidget(QLabel("End°"))
+        sweep.addWidget(self.lbl_end)
         sweep.addWidget(self.ed_end)
-        sweep.addWidget(QLabel("Step°"))
+        sweep.addWidget(self.lbl_step)
         sweep.addWidget(self.ed_step)
         main_layout.addLayout(sweep)
 
         # Solver backend
         solver_row = QHBoxLayout()
-        self.chk_scipy = QCheckBox("Use SciPy (accurate)")
+        self.chk_scipy = QCheckBox()
         self.chk_scipy.setChecked(True)
         self.ed_nfev = QLineEdit("250")
         self.ed_nfev.setMaximumWidth(80)
         solver_row.addWidget(self.chk_scipy)
-        solver_row.addWidget(QLabel("MaxNfev"))
+        self.lbl_max_nfev = QLabel()
+        solver_row.addWidget(self.lbl_max_nfev)
         solver_row.addWidget(self.ed_nfev)
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
 
         # Buttons
         btns = QHBoxLayout()
-        self.btn_play = QPushButton("Play")
-        self.btn_stop = QPushButton("Stop")
-        self.btn_reset_pose = QPushButton("Reset Pose")
-        self.btn_export = QPushButton("Export CSV (full sweep)")
-        self.btn_save_run = QPushButton("Save Run")
-        self.btn_open_last_run = QPushButton("Open Last Run")
+        self.btn_play = QPushButton()
+        self.btn_stop = QPushButton()
+        self.btn_reset_pose = QPushButton()
+        self.btn_export = QPushButton()
+        self.btn_save_run = QPushButton()
+        self.btn_open_last_run = QPushButton()
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
@@ -132,7 +136,7 @@ class SimulationPanel(QWidget):
         measurements_tab = QWidget()
         measurements_layout = QVBoxLayout(measurements_tab)
         self.table_meas = QTableWidget(0, 3)
-        self.table_meas.setHorizontalHeaderLabels(["Type", "Measurement", "Value"])
+        self.table_meas.setHorizontalHeaderLabels([])
         self.table_meas.verticalHeader().setVisible(False)
         self.table_meas.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_meas.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -142,8 +146,8 @@ class SimulationPanel(QWidget):
         self._measure_row_map: List[Dict[str, Any]] = []
 
         meas_buttons = QHBoxLayout()
-        self.btn_clear_meas = QPushButton("Clear")
-        self.btn_delete_meas = QPushButton("Delete")
+        self.btn_clear_meas = QPushButton()
+        self.btn_delete_meas = QPushButton()
         meas_buttons.addWidget(self.btn_clear_meas)
         meas_buttons.addWidget(self.btn_delete_meas)
         measurements_layout.addLayout(meas_buttons)
@@ -153,27 +157,28 @@ class SimulationPanel(QWidget):
         loads_layout = QVBoxLayout(loads_tab)
 
         self.table_loads = QTableWidget(0, 5)
-        self.table_loads.setHorizontalHeaderLabels(["Point", "Type", "Fx", "Fy", "Mz"])
+        self.table_loads.setHorizontalHeaderLabels([])
         self.table_loads.verticalHeader().setVisible(False)
         self.table_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_loads.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_loads.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        loads_layout.addWidget(QLabel("Applied Loads"))
+        self.lbl_applied_loads = QLabel()
+        loads_layout.addWidget(self.lbl_applied_loads)
         loads_layout.addWidget(self.table_loads)
 
         load_buttons = QHBoxLayout()
-        self.btn_remove_load = QPushButton("Remove Selected")
-        self.btn_clear_loads = QPushButton("Clear")
+        self.btn_remove_load = QPushButton()
+        self.btn_clear_loads = QPushButton()
         load_buttons.addWidget(self.btn_remove_load)
         load_buttons.addWidget(self.btn_clear_loads)
         loads_layout.addLayout(load_buttons)
 
         # Quasi-static summary (torques)
         qs_info = QHBoxLayout()
-        self.lbl_qs_mode = QLabel("Quasi-static: --")
-        self.lbl_tau_in = QLabel("Input τ: --")
-        self.lbl_tau_out = QLabel("Output τ: --")
+        self.lbl_qs_mode = QLabel()
+        self.lbl_tau_in = QLabel()
+        self.lbl_tau_out = QLabel()
         qs_info.addWidget(self.lbl_qs_mode)
         qs_info.addWidget(self.lbl_tau_in)
         qs_info.addWidget(self.lbl_tau_out)
@@ -181,12 +186,13 @@ class SimulationPanel(QWidget):
 
         # Quasi-static joint loads (passive constraints only; actuator/closure torque reported separately)
         self.table_joint_loads = QTableWidget(0, 4)
-        self.table_joint_loads.setHorizontalHeaderLabels(["Point", "Fx", "Fy", "Mag"])
+        self.table_joint_loads.setHorizontalHeaderLabels([])
         self.table_joint_loads.verticalHeader().setVisible(False)
         self.table_joint_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table_joint_loads.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.table_joint_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        loads_layout.addWidget(QLabel("Joint Loads (Quasi-static)"))
+        self.lbl_joint_loads = QLabel()
+        loads_layout.addWidget(self.lbl_joint_loads)
         loads_layout.addWidget(self.table_joint_loads)
 
         loads_layout.addStretch(1)
@@ -230,10 +236,48 @@ class SimulationPanel(QWidget):
         self.tabs.setTabText(2, tr(lang, "tab.simulation"))
         self.tabs.setTabText(3, tr(lang, "tab.animation"))
         self.tabs.setTabText(4, tr(lang, "tab.optimization"))
+        self.lbl_start.setText(tr(lang, "sim.start_deg"))
+        self.lbl_end.setText(tr(lang, "sim.end_deg"))
+        self.lbl_step.setText(tr(lang, "sim.step_deg"))
+        self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
+        self.chk_scipy.setText(tr(lang, "sim.use_scipy"))
+        self.btn_clear_driver.setText(tr(lang, "sim.clear"))
+        self.btn_clear_output.setText(tr(lang, "sim.clear"))
+        self.btn_play.setText(tr(lang, "sim.play"))
+        self.btn_stop.setText(tr(lang, "sim.stop"))
+        self.btn_reset_pose.setText(tr(lang, "sim.reset_pose"))
+        self.btn_export.setText(tr(lang, "sim.export_csv"))
+        self.btn_save_run.setText(tr(lang, "sim.save_run"))
+        self.btn_open_last_run.setText(tr(lang, "sim.open_last_run"))
+        self.btn_clear_meas.setText(tr(lang, "sim.clear"))
+        self.btn_delete_meas.setText(tr(lang, "sim.delete"))
+        self.lbl_applied_loads.setText(tr(lang, "sim.applied_loads"))
+        self.btn_remove_load.setText(tr(lang, "sim.remove_selected"))
+        self.btn_clear_loads.setText(tr(lang, "sim.clear"))
+        self.lbl_joint_loads.setText(tr(lang, "sim.joint_loads"))
+        self.table_meas.setHorizontalHeaderLabels([
+            tr(lang, "sim.table.type"),
+            tr(lang, "sim.table.measurement"),
+            tr(lang, "sim.table.value"),
+        ])
+        self.table_loads.setHorizontalHeaderLabels([
+            tr(lang, "sim.table.point"),
+            tr(lang, "sim.table.type"),
+            tr(lang, "sim.table.fx"),
+            tr(lang, "sim.table.fy"),
+            tr(lang, "sim.table.mz"),
+        ])
+        self.table_joint_loads.setHorizontalHeaderLabels([
+            tr(lang, "sim.table.point"),
+            tr(lang, "sim.table.fx"),
+            tr(lang, "sim.table.fy"),
+            tr(lang, "sim.table.mag"),
+        ])
         if hasattr(self, "animation_tab"):
             self.animation_tab.apply_language()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.apply_language()
+        self.refresh_labels()
 
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
@@ -291,37 +335,38 @@ class SimulationPanel(QWidget):
 
     # ---- UI actions ----
     def refresh_labels(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
         d = self.ctrl.driver
         if d.get("enabled"):
             if d.get("type") == "joint" and d.get("i") is not None and d.get("j") is not None and d.get("k") is not None:
-                self.lbl_driver.setText(f"Driver: joint P{d['i']}-P{d['j']}-P{d['k']}")
+                self.lbl_driver.setText(tr(lang, "sim.driver_joint").format(i=d["i"], j=d["j"], k=d["k"]))
             elif d.get("pivot") is not None and d.get("tip") is not None:
-                self.lbl_driver.setText(f"Driver: vector P{d['pivot']} -> P{d['tip']}")
+                self.lbl_driver.setText(tr(lang, "sim.driver_vector").format(pivot=d["pivot"], tip=d["tip"]))
             else:
-                self.lbl_driver.setText("Driver: (invalid)")
+                self.lbl_driver.setText(tr(lang, "sim.driver_invalid"))
         else:
             if self.ctrl.output.get("enabled"):
-                self.lbl_driver.setText("Driver: (using Output)")
+                self.lbl_driver.setText(tr(lang, "sim.driver_using_output"))
             else:
-                self.lbl_driver.setText("Driver: (not set)")
+                self.lbl_driver.setText(tr(lang, "sim.driver_unset"))
 
         o = self.ctrl.output
         if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
-            self.lbl_output.setText(f"Output: vector P{o['pivot']} -> P{o['tip']}")
+            self.lbl_output.setText(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
         else:
-            self.lbl_output.setText("Output: (not set)")
+            self.lbl_output.setText(tr(lang, "sim.output_unset"))
 
         o = self.ctrl.output
         if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
-            self.lbl_output.setText(f"Output: vector P{o['pivot']} -> P{o['tip']}")
+            self.lbl_output.setText(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
         else:
-            self.lbl_output.setText("Output: (not set)")
+            self.lbl_output.setText(tr(lang, "sim.output_unset"))
 
         a_in = self.ctrl.get_input_angle_deg()
         a_out = self.ctrl.get_output_angle_deg()
         s_in = "--" if a_in is None else self.ctrl.format_number(a_in)
         s_out = "--" if a_out is None else self.ctrl.format_number(a_out)
-        self.lbl_angles.setText(f"Input: {s_in}° | Output: {s_out}°")
+        self.lbl_angles.setText(tr(lang, "sim.input_output").format(input=s_in, output=s_out))
         self._refresh_load_tables()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.refresh_active_case()
@@ -394,6 +439,7 @@ class SimulationPanel(QWidget):
         self.refresh_labels()
 
     def _refresh_measure_table(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
         mv = self.ctrl.get_measure_values_deg()
         load_mv = self.ctrl.get_load_measure_values()
         self._measure_row_map = []
@@ -401,7 +447,7 @@ class SimulationPanel(QWidget):
         self.table_meas.setRowCount(total_rows)
         row = 0
         for index, (nm, val) in enumerate(mv):
-            type_item = QTableWidgetItem("Measurement")
+            type_item = QTableWidgetItem(tr(lang, "sim.measurement"))
             name_item = QTableWidgetItem(str(nm))
             value_item = QTableWidgetItem("--" if val is None else f"{self.ctrl.format_number(val)}°")
             for item in (type_item, name_item, value_item):
@@ -412,7 +458,7 @@ class SimulationPanel(QWidget):
             self._measure_row_map.append({"kind": "measure", "index": index})
             row += 1
         for index, (nm, val) in enumerate(load_mv):
-            type_item = QTableWidgetItem("Load")
+            type_item = QTableWidgetItem(tr(lang, "sim.load"))
             name_item = QTableWidgetItem(str(nm))
             value_item = QTableWidgetItem("--" if val is None else self.ctrl.format_number(val))
             for item in (type_item, name_item, value_item):
@@ -477,6 +523,7 @@ class SimulationPanel(QWidget):
         self.refresh_labels()
 
     def _refresh_load_tables(self):
+        lang = getattr(self.ctrl, "ui_language", "en")
         loads = list(self.ctrl.loads)
         self.table_loads.setRowCount(len(loads))
         for row, ld in enumerate(loads):
@@ -499,12 +546,18 @@ class SimulationPanel(QWidget):
         joint_loads, qs = self.ctrl.compute_quasistatic_report()
 
         mode = qs.get("mode", "--")
-        self.lbl_qs_mode.setText(f"Quasi-static: {mode}")
+        self.lbl_qs_mode.setText(tr(lang, "sim.quasi_static").format(mode=mode))
 
         tau_in = qs.get("tau_input", None)
         tau_out = qs.get("tau_output", None)
-        self.lbl_tau_in.setText("Input τ: --" if tau_in is None else f"Input τ: {self.ctrl.format_number(tau_in)}")
-        self.lbl_tau_out.setText("Output τ: --" if tau_out is None else f"Output τ: {self.ctrl.format_number(tau_out)}")
+        if tau_in is None:
+            self.lbl_tau_in.setText(tr(lang, "sim.input_tau_none"))
+        else:
+            self.lbl_tau_in.setText(tr(lang, "sim.input_tau").format(value=self.ctrl.format_number(tau_in)))
+        if tau_out is None:
+            self.lbl_tau_out.setText(tr(lang, "sim.output_tau_none"))
+        else:
+            self.lbl_tau_out.setText(tr(lang, "sim.output_tau").format(value=self.ctrl.format_number(tau_out)))
 
         self.table_joint_loads.setRowCount(len(joint_loads))
         for row, jl in enumerate(joint_loads):
