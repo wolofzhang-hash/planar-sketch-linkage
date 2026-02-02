@@ -49,6 +49,9 @@ class SimulationPanel(QWidget):
         self._theta_step_min = 1e-4
         self._theta_last_ok = 0.0
         self._frame = 0
+        self._driver_sweep: Optional[List[Dict[str, float]]] = None
+        self._driver_last_ok: List[float] = []
+        self._driver_step_cur: float = 0.0
 
         self._records: List[Dict[str, Any]] = []
         self._pending_sim_start_capture = False
@@ -73,6 +76,18 @@ class SimulationPanel(QWidget):
         row.addWidget(self.lbl_driver, 1)
         row.addWidget(self.btn_clear_driver)
         main_layout.addLayout(row)
+
+        self.lbl_driver_sweep = QLabel()
+        main_layout.addWidget(self.lbl_driver_sweep)
+
+        self.table_drivers = QTableWidget(0, 3)
+        self.table_drivers.setHorizontalHeaderLabels([])
+        self.table_drivers.verticalHeader().setVisible(False)
+        self.table_drivers.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
+        self.table_drivers.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_drivers.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table_drivers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        main_layout.addWidget(self.table_drivers)
 
         # Output
         out_row = QHBoxLayout()
@@ -219,6 +234,7 @@ class SimulationPanel(QWidget):
         self.btn_save_run.clicked.connect(self.save_last_run)
         self.btn_open_last_run.clicked.connect(self.open_last_run)
 
+        self.table_drivers.cellChanged.connect(self._on_driver_table_changed)
         self.ed_start.editingFinished.connect(self._on_sweep_field_changed)
         self.ed_end.editingFinished.connect(self._on_sweep_field_changed)
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
@@ -241,6 +257,7 @@ class SimulationPanel(QWidget):
         self.lbl_step.setText(tr(lang, "sim.step_deg"))
         self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
         self.chk_scipy.setText(tr(lang, "sim.use_scipy"))
+        self.lbl_driver_sweep.setText(tr(lang, "sim.driver_sweep"))
         self.btn_clear_driver.setText(tr(lang, "sim.clear"))
         self.btn_clear_output.setText(tr(lang, "sim.clear"))
         self.btn_play.setText(tr(lang, "sim.play"))
@@ -266,6 +283,11 @@ class SimulationPanel(QWidget):
             tr(lang, "sim.table.fx"),
             tr(lang, "sim.table.fy"),
             tr(lang, "sim.table.mz"),
+        ])
+        self.table_drivers.setHorizontalHeaderLabels([
+            tr(lang, "sim.table.driver"),
+            tr(lang, "sim.start_deg"),
+            tr(lang, "sim.end_deg"),
         ])
         self.table_joint_loads.setHorizontalHeaderLabels([
             tr(lang, "sim.table.point"),
@@ -329,6 +351,11 @@ class SimulationPanel(QWidget):
             step = float(self.ctrl.sweep_settings.get("step", 2.0)) or 2.0
         self.ctrl.sweep_settings = {"start": start, "end": end, "step": step}
         self.ed_step.setText(f"{step}")
+        active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
+        if len(active_drivers) == 1:
+            active_drivers[0]["sweep_start"] = start
+            active_drivers[0]["sweep_end"] = end
+            self._refresh_driver_table(active_drivers)
 
     def _on_sweep_field_changed(self) -> None:
         self._sync_sweep_settings_from_fields()
@@ -376,9 +403,56 @@ class SimulationPanel(QWidget):
         s_in = "--" if a_in is None else self.ctrl.format_number(a_in)
         s_out = "--" if a_out is None else self.ctrl.format_number(a_out)
         self.lbl_angles.setText(tr(lang, "sim.input_output").format(input=s_in, output=s_out))
+        self._refresh_driver_table(drivers)
         self._refresh_load_tables()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.refresh_active_case()
+
+    def _driver_label(self, driver: Dict[str, Any]) -> str:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        if driver.get("type") == "joint" and driver.get("i") is not None and driver.get("j") is not None and driver.get("k") is not None:
+            return tr(lang, "sim.driver_joint").format(i=driver["i"], j=driver["j"], k=driver["k"])
+        if driver.get("pivot") is not None and driver.get("tip") is not None:
+            return tr(lang, "sim.driver_vector").format(pivot=driver["pivot"], tip=driver["tip"])
+        return tr(lang, "sim.driver_invalid")
+
+    def _refresh_driver_table(self, drivers: List[Dict[str, Any]]) -> None:
+        self.table_drivers.blockSignals(True)
+        try:
+            self.table_drivers.setRowCount(len(drivers))
+            for row, drv in enumerate(drivers):
+                label = f"{row + 1}. {self._driver_label(drv)}"
+                start_val = drv.get("sweep_start", self.ctrl.sweep_settings.get("start", 0.0))
+                end_val = drv.get("sweep_end", self.ctrl.sweep_settings.get("end", 360.0))
+                items = [
+                    QTableWidgetItem(label),
+                    QTableWidgetItem(f"{float(start_val)}"),
+                    QTableWidgetItem(f"{float(end_val)}"),
+                ]
+                items[0].setFlags(items[0].flags() & ~Qt.ItemFlag.ItemIsEditable)
+                for col, item in enumerate(items):
+                    self.table_drivers.setItem(row, col, item)
+        finally:
+            self.table_drivers.blockSignals(False)
+
+    def _on_driver_table_changed(self, row: int, col: int) -> None:
+        active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
+        if row < 0 or row >= len(active_drivers):
+            return
+        if col not in (1, 2):
+            return
+        item = self.table_drivers.item(row, col)
+        if item is None:
+            return
+        try:
+            value = float(item.text())
+        except Exception:
+            QMessageBox.warning(self, "Sweep", "Start/End must be numbers.")
+            self._refresh_driver_table(active_drivers)
+            return
+        key = "sweep_start" if col == 1 else "sweep_end"
+        active_drivers[row][key] = value
+        self.refresh_labels()
 
     def _set_driver_from_selection(self):
         pair = self._selected_two_points()
@@ -611,12 +685,45 @@ class SimulationPanel(QWidget):
         self._frame = 0
         self._last_run_data = None
         self._run_start_snapshot = self.ctrl.snapshot_model()
-        self._theta_last_ok = start
-        self._theta_deg = start
-        self._theta_end = end
-        self._theta_step = step
-        self._theta_step_cur = step
-        self._theta_step_min = max(abs(step) / 128.0, 1e-4)
+        active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
+        if len(active_drivers) > 1:
+            step_abs = abs(step)
+            driver_sweep = []
+            for drv in active_drivers:
+                s = drv.get("sweep_start", start)
+                e = drv.get("sweep_end", end)
+                try:
+                    s = float(s)
+                except Exception:
+                    s = start
+                try:
+                    e = float(e)
+                except Exception:
+                    e = end
+                if e == s:
+                    direction = 0.0
+                else:
+                    direction = -1.0 if e < s else 1.0
+                driver_sweep.append({"start": s, "end": e, "direction": direction})
+            self._driver_sweep = driver_sweep
+            self._driver_last_ok = [entry["start"] for entry in driver_sweep]
+            self._driver_step_cur = float(step_abs)
+            self._theta_last_ok = start
+            self._theta_deg = start
+            self._theta_end = end
+            self._theta_step = step_abs
+            self._theta_step_cur = step_abs
+            self._theta_step_min = max(step_abs / 128.0, 1e-4)
+        else:
+            self._driver_sweep = None
+            self._driver_last_ok = []
+            self._driver_step_cur = float(step)
+            self._theta_last_ok = start
+            self._theta_deg = start
+            self._theta_end = end
+            self._theta_step = step
+            self._theta_step_cur = step
+            self._theta_step_min = max(abs(step) / 128.0, 1e-4)
 
         case_spec = self._build_case_spec()
         self._run_context = {
@@ -646,12 +753,30 @@ class SimulationPanel(QWidget):
 
 
     def _on_tick(self):
-        # stop condition based on direction
-        if ((self._theta_step_cur > 0 and self._theta_last_ok > self._theta_end)
-                or (self._theta_step_cur < 0 and self._theta_last_ok < self._theta_end)):
-            self._complete_run(success=True, reason="completed")
-            self.refresh_labels()
-            return
+        if self._driver_sweep:
+            all_done = True
+            for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
+                direction = entry.get("direction", 1.0)
+                end = entry.get("end", last_ok)
+                if direction == 0:
+                    continue
+                if direction > 0:
+                    if last_ok < end:
+                        all_done = False
+                else:
+                    if last_ok > end:
+                        all_done = False
+            if all_done:
+                self._complete_run(success=True, reason="completed")
+                self.refresh_labels()
+                return
+        else:
+            # stop condition based on direction
+            if ((self._theta_step_cur > 0 and self._theta_last_ok > self._theta_end)
+                    or (self._theta_step_cur < 0 and self._theta_last_ok < self._theta_end)):
+                self._complete_run(success=True, reason="completed")
+                self.refresh_labels()
+                return
 
         ok = True
         step_applied = False
@@ -664,6 +789,20 @@ class SimulationPanel(QWidget):
         base_step = self._theta_step
         step_target = self._theta_step_cur
         theta_target = self._theta_last_ok + step_target
+        driver_targets: List[float] = []
+        if self._driver_sweep:
+            driver_targets = []
+            for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
+                direction = float(entry.get("direction", 1.0) or 1.0)
+                end = float(entry.get("end", last_ok))
+                if direction == 0:
+                    driver_targets.append(end)
+                elif direction > 0 and last_ok >= end:
+                    driver_targets.append(end)
+                elif direction < 0 and last_ok <= end:
+                    driver_targets.append(end)
+                else:
+                    driver_targets.append(last_ok + direction * abs(step_target))
         while True:
             pose_before = self.ctrl.snapshot_points()
             if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
@@ -671,12 +810,21 @@ class SimulationPanel(QWidget):
                     nfev = int(float(self.ed_nfev.text() or "250"))
                 except Exception:
                     nfev = 250
-                ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
+                if self._driver_sweep:
+                    ok, msg = self.ctrl.drive_to_multi_deg_scipy(driver_targets, max_nfev=nfev)
+                else:
+                    ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
                 if not ok:
                     # Fallback to PBD so the UI stays responsive
-                    self.ctrl.drive_to_deg(theta_target, iters=iters)
+                    if self._driver_sweep:
+                        self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
+                    else:
+                        self.ctrl.drive_to_deg(theta_target, iters=iters)
             else:
-                self.ctrl.drive_to_deg(theta_target, iters=iters)
+                if self._driver_sweep:
+                    self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
+                else:
+                    self.ctrl.drive_to_deg(theta_target, iters=iters)
 
             # Feasibility check: do not "stretch" links across dead points.
             # If the requested step is infeasible, rollback and reduce the step.
@@ -703,7 +851,21 @@ class SimulationPanel(QWidget):
                         step_applied = False
                         break
                     step_target *= 0.5
-                    theta_target = self._theta_last_ok + step_target
+                    if self._driver_sweep:
+                        driver_targets = []
+                        for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
+                            direction = float(entry.get("direction", 1.0) or 1.0)
+                            end = float(entry.get("end", last_ok))
+                            if direction == 0:
+                                driver_targets.append(end)
+                            elif direction > 0 and last_ok >= end:
+                                driver_targets.append(end)
+                            elif direction < 0 and last_ok <= end:
+                                driver_targets.append(end)
+                            else:
+                                driver_targets.append(last_ok + direction * abs(step_target))
+                    else:
+                        theta_target = self._theta_last_ok + step_target
                     continue
             step_applied = True
             break
@@ -742,14 +904,23 @@ class SimulationPanel(QWidget):
 
         self._frame += 1
         if step_applied:
-            self._theta_last_ok = theta_target
-            self._theta_deg = self._theta_last_ok + step_target
-            self._theta_step_cur = step_target
-            if abs(self._theta_step_cur) < abs(base_step):
-                grow = abs(self._theta_step_cur) * 1.25
-                grow = min(abs(base_step), grow)
-                self._theta_step_cur = math.copysign(grow, base_step)
-                self._theta_deg = self._theta_last_ok + self._theta_step_cur
+            if self._driver_sweep:
+                self._driver_last_ok = list(driver_targets)
+                self._driver_step_cur = step_target
+                if abs(self._driver_step_cur) < abs(base_step):
+                    grow = abs(self._driver_step_cur) * 1.25
+                    grow = min(abs(base_step), grow)
+                    self._driver_step_cur = math.copysign(grow, base_step)
+                self._theta_step_cur = self._driver_step_cur
+            else:
+                self._theta_last_ok = theta_target
+                self._theta_deg = self._theta_last_ok + step_target
+                self._theta_step_cur = step_target
+                if abs(self._theta_step_cur) < abs(base_step):
+                    grow = abs(self._theta_step_cur) * 1.25
+                    grow = min(abs(base_step), grow)
+                    self._theta_step_cur = math.copysign(grow, base_step)
+                    self._theta_deg = self._theta_last_ok + self._theta_step_cur
 
     def _build_case_spec(self) -> Dict[str, Any]:
         has_point_spline = any(

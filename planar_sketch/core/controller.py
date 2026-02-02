@@ -146,6 +146,7 @@ class SketchController:
         # Simulation "relative zero" (0° == pose at Play-start)
         self._sim_zero_input_rad: Optional[float] = None
         self._sim_zero_output_rad: Optional[float] = None
+        self._sim_zero_driver_rad: List[Optional[float]] = []
         self._sim_zero_meas_deg: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 2.0}
 
@@ -157,6 +158,8 @@ class SketchController:
             "pivot": None, "tip": None,
             "i": None, "j": None, "k": None,
             "rad": 0.0,
+            "sweep_start": None,
+            "sweep_end": None,
         }
 
     @staticmethod
@@ -164,6 +167,14 @@ class SketchController:
         return {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
 
     def _normalize_driver(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            sweep_start = float(data.get("sweep_start", self.sweep_settings.get("start", 0.0)))
+        except Exception:
+            sweep_start = float(self.sweep_settings.get("start", 0.0))
+        try:
+            sweep_end = float(data.get("sweep_end", self.sweep_settings.get("end", 360.0)))
+        except Exception:
+            sweep_end = float(self.sweep_settings.get("end", 360.0))
         return {
             "enabled": bool(data.get("enabled", True)),
             "type": str(data.get("type", "vector")),
@@ -173,6 +184,8 @@ class SketchController:
             "j": data.get("j"),
             "k": data.get("k"),
             "rad": float(data.get("rad", 0.0) or 0.0),
+            "sweep_start": sweep_start,
+            "sweep_end": sweep_end,
         }
 
     def _normalize_output(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -869,38 +882,164 @@ class SketchController:
     def check_overconstraint(self) -> Tuple[bool, str]:
         """Check for structural over-constraint (constraint count > DOF)."""
         n_points = len(self.points)
-        dof = 2 * n_points
         if n_points == 0:
             return False, "No points"
 
-        fixed = sum(1 for p in self.points.values() if bool(p.get("fixed", False)))
-        coincide = sum(1 for c in self.coincides.values() if bool(c.get("enabled", True)))
-        point_lines = sum(1 for pl in self.point_lines.values() if bool(pl.get("enabled", True)))
-        point_splines = sum(1 for ps in self.point_splines.values() if bool(ps.get("enabled", True)))
-        links = sum(1 for l in self.links.values() if not bool(l.get("ref", False)))
-        angles = sum(1 for a in self.angles.values() if bool(a.get("enabled", True)))
-        rigid_edges = sum(len(b.get("rigid_edges", [])) for b in self.bodies.values())
+        adjacency: Dict[int, set[int]] = {pid: set() for pid in self.points.keys()}
+
+        def _link(a: Optional[int], b: Optional[int]) -> None:
+            if a is None or b is None:
+                return
+            if a not in adjacency or b not in adjacency:
+                return
+            adjacency[a].add(b)
+            adjacency[b].add(a)
+
+        for l in self.links.values():
+            if l.get("ref", False):
+                continue
+            _link(l.get("i"), l.get("j"))
+
+        for a in self.angles.values():
+            if not bool(a.get("enabled", True)):
+                continue
+            i, j, k = a.get("i"), a.get("j"), a.get("k")
+            _link(i, j)
+            _link(j, k)
+            _link(i, k)
+
+        for c in self.coincides.values():
+            if not bool(c.get("enabled", True)):
+                continue
+            _link(c.get("a"), c.get("b"))
+
+        for pl in self.point_lines.values():
+            if not bool(pl.get("enabled", True)):
+                continue
+            p, i, j = pl.get("p"), pl.get("i"), pl.get("j")
+            _link(p, i)
+            _link(p, j)
+
+        for ps in self.point_splines.values():
+            if not bool(ps.get("enabled", True)):
+                continue
+            p_id = ps.get("p")
+            s_id = ps.get("s")
+            if p_id is None or s_id not in self.splines:
+                continue
+            for cid in self.splines[s_id].get("points", []) or []:
+                _link(p_id, cid)
+
+        for b in self.bodies.values():
+            for (i, j, _L) in b.get("rigid_edges", []) or []:
+                _link(i, j)
+
+        visited: set[int] = set()
+        components: List[set[int]] = []
+        for pid in adjacency:
+            if pid in visited:
+                continue
+            stack = [pid]
+            comp: set[int] = set()
+            visited.add(pid)
+            while stack:
+                cur = stack.pop()
+                comp.add(cur)
+                for nb in adjacency[cur]:
+                    if nb not in visited:
+                        visited.add(nb)
+                        stack.append(nb)
+            components.append(comp)
+
         active_drivers = self._active_drivers()
         active_outputs = self._active_outputs()
-        io_constraints = len(active_drivers) if active_drivers else len(active_outputs)
+        use_outputs = not bool(active_drivers)
 
-        total = (
-            fixed * 2
-            + coincide * 2
-            + point_lines
-            + point_splines
-            + links
-            + angles
-            + rigid_edges
-            + io_constraints
-        )
-        over = total > dof
-        detail = (
-            f"constraints={total} > dof={dof} "
-            f"(fixed={fixed}, links={links}, angles={angles}, coincide={coincide}, "
-            f"line={point_lines}, spline={point_splines}, rigid={rigid_edges}, io={io_constraints})"
-        )
-        return over, detail
+        details: List[str] = []
+        over_any = False
+        for idx, comp in enumerate(components, start=1):
+            dof = 2 * len(comp)
+            fixed = sum(1 for pid in comp if bool(self.points.get(pid, {}).get("fixed", False)))
+            coincide = sum(
+                1
+                for c in self.coincides.values()
+                if bool(c.get("enabled", True)) and int(c.get("a", -1)) in comp and int(c.get("b", -1)) in comp
+            )
+            point_lines = sum(
+                1
+                for pl in self.point_lines.values()
+                if bool(pl.get("enabled", True))
+                and int(pl.get("p", -1)) in comp
+                and int(pl.get("i", -1)) in comp
+                and int(pl.get("j", -1)) in comp
+            )
+            point_splines = sum(
+                1
+                for ps in self.point_splines.values()
+                if bool(ps.get("enabled", True))
+                and int(ps.get("p", -1)) in comp
+                and all(int(cid) in comp for cid in self.splines.get(int(ps.get("s", -1)), {}).get("points", []) or [])
+            )
+            links = sum(
+                1
+                for l in self.links.values()
+                if not bool(l.get("ref", False))
+                and int(l.get("i", -1)) in comp
+                and int(l.get("j", -1)) in comp
+            )
+            angles = sum(
+                1
+                for a in self.angles.values()
+                if bool(a.get("enabled", True))
+                and int(a.get("i", -1)) in comp
+                and int(a.get("j", -1)) in comp
+                and int(a.get("k", -1)) in comp
+            )
+            rigid_edges = 0
+            for b in self.bodies.values():
+                rigid_edges += sum(1 for i, j, _L in b.get("rigid_edges", []) if i in comp and j in comp)
+
+            if use_outputs:
+                io_constraints = sum(
+                    1
+                    for out in active_outputs
+                    if out.get("pivot") in comp and out.get("tip") in comp
+                )
+            else:
+                io_constraints = 0
+                for drv in active_drivers:
+                    dtype = str(drv.get("type", "vector"))
+                    if dtype == "joint":
+                        i = drv.get("i")
+                        j = drv.get("j")
+                        k = drv.get("k")
+                        if i in comp and j in comp and k in comp:
+                            io_constraints += 1
+                    else:
+                        piv = drv.get("pivot")
+                        tip = drv.get("tip")
+                        if piv in comp and tip in comp:
+                            io_constraints += 1
+
+            total = (
+                fixed * 2
+                + coincide * 2
+                + point_lines
+                + point_splines
+                + links
+                + angles
+                + rigid_edges
+                + io_constraints
+            )
+            over = total > dof
+            over_any = over_any or over
+            details.append(
+                f"component#{idx}: constraints={total} > dof={dof} "
+                f"(fixed={fixed}, links={links}, angles={angles}, coincide={coincide}, "
+                f"line={point_lines}, spline={point_splines}, rigid={rigid_edges}, io={io_constraints})"
+            )
+
+        return over_any, " | ".join(details)
 
     def recompute_from_parameters(self):
         """Recompute all numeric fields that are backed by expressions.
@@ -1287,6 +1426,26 @@ class SketchController:
             primary_output["rad"] = float(target)
             self.outputs[0] = primary_output
             self._sync_primary_output()
+        return self.solve_constraints_scipy(max_nfev=max_nfev)
+
+    def drive_to_multi_deg_scipy(self, deg_list: List[float], max_nfev: int = 250) -> tuple[bool, str]:
+        """Drive multiple active drivers to relative angles (deg) and solve with SciPy."""
+        active_drivers = self._active_drivers()
+        if not active_drivers:
+            return False, "Driver not set"
+        for idx, drv in enumerate(active_drivers):
+            if idx >= len(deg_list):
+                break
+            base_rad = None
+            if idx < len(self._sim_zero_driver_rad):
+                base_rad = self._sim_zero_driver_rad[idx]
+            if base_rad is None:
+                base_rad = self._get_driver_angle_abs_rad(drv)
+            target = math.radians(float(deg_list[idx]))
+            if base_rad is not None:
+                target = float(base_rad) + target
+            drv["rad"] = float(target)
+        self._sync_primary_driver()
         return self.solve_constraints_scipy(max_nfev=max_nfev)
 
     def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = False):
@@ -3188,6 +3347,8 @@ class SketchController:
                 "j": self.driver.get("j"),
                 "k": self.driver.get("k"),
                 "rad": float(self.driver.get("rad", 0.0)),
+                "sweep_start": self.driver.get("sweep_start"),
+                "sweep_end": self.driver.get("sweep_end"),
             },
             "drivers": [
                 {
@@ -3199,6 +3360,8 @@ class SketchController:
                     "j": d.get("j"),
                     "k": d.get("k"),
                     "rad": float(d.get("rad", 0.0)),
+                    "sweep_start": d.get("sweep_start"),
+                    "sweep_end": d.get("sweep_end"),
                 }
                 for d in self.drivers
             ],
@@ -3620,6 +3783,8 @@ class SketchController:
             "pivot": int(pivot_pid),
             "tip": int(tip_pid),
             "i": None, "j": None, "k": None,
+            "sweep_start": self.sweep_settings.get("start", 0.0),
+            "sweep_end": self.sweep_settings.get("end", 360.0),
         })
         ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
@@ -3635,6 +3800,8 @@ class SketchController:
             "type": "joint",
             "pivot": None, "tip": None,
             "i": int(i_pid), "j": int(j_pid), "k": int(k_pid),
+            "sweep_start": self.sweep_settings.get("start", 0.0),
+            "sweep_end": self.sweep_settings.get("end", 360.0),
         })
         ang = self.get_joint_angle_rad(int(i_pid), int(j_pid), int(k_pid))
         if ang is not None:
@@ -3645,6 +3812,7 @@ class SketchController:
 
     def clear_driver(self):
         self.drivers = []
+        self._sim_zero_driver_rad = []
         self._sync_primary_driver()
 
     def set_output(self, pivot_pid: int, tip_pid: int):
@@ -4554,6 +4722,20 @@ class SketchController:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
 
+    def _get_driver_angle_abs_rad(self, driver: Dict[str, Any]) -> Optional[float]:
+        if not driver or not driver.get("enabled"):
+            return None
+        if driver.get("type") == "joint":
+            i, j, k = driver.get("i"), driver.get("j"), driver.get("k")
+            if i is None or j is None or k is None:
+                return None
+            return self.get_joint_angle_rad(int(i), int(j), int(k))
+        piv = driver.get("pivot")
+        tip = driver.get("tip")
+        if piv is None or tip is None:
+            return None
+        return self.get_vector_angle_rad(int(piv), int(tip))
+
     def get_input_angle_deg(self) -> Optional[float]:
         """Current input angle in degrees.
 
@@ -4614,6 +4796,30 @@ class SketchController:
         if self.panel:
             self.panel.defer_refresh_all()
 
+    def drive_to_multi_deg(self, deg_list: List[float], iters: int = 80):
+        """Drive multiple active drivers to relative angles (deg) and solve constraints."""
+        active_drivers = self._active_drivers()
+        if not active_drivers:
+            return
+        for idx, drv in enumerate(active_drivers):
+            if idx >= len(deg_list):
+                break
+            base_rad = None
+            if idx < len(self._sim_zero_driver_rad):
+                base_rad = self._sim_zero_driver_rad[idx]
+            if base_rad is None:
+                base_rad = self._get_driver_angle_abs_rad(drv)
+            target = math.radians(float(deg_list[idx]))
+            if base_rad is not None:
+                target = float(base_rad) + target
+            drv["rad"] = float(target)
+        self._sync_primary_driver()
+        self.solve_constraints(iters=iters)
+        self.update_graphics()
+        self.append_trajectories()
+        if self.panel:
+            self.panel.defer_refresh_all()
+
     # ---- Pose snapshots ----
     def capture_initial_pose_if_needed(self):
         if self._pose_initial is None:
@@ -4627,6 +4833,9 @@ class SketchController:
         # Set relative-zero angles based on the current pose.
         self._sim_zero_input_rad = self._get_input_angle_abs_rad()
         self._sim_zero_output_rad = self._get_output_angle_abs_rad()
+        self._sim_zero_driver_rad = []
+        for drv in self._active_drivers():
+            self._sim_zero_driver_rad.append(self._get_driver_angle_abs_rad(drv))
         if self._sim_zero_output_rad is not None and self.outputs:
             self.outputs[0]["rad"] = float(self._sim_zero_output_rad)
             self._sync_primary_output()
@@ -4649,6 +4858,12 @@ class SketchController:
         if self.drivers and self._sim_zero_input_rad is not None:
             self.drivers[0]["rad"] = float(self._sim_zero_input_rad)
             self._sync_primary_driver()
+        if self._sim_zero_driver_rad:
+            for idx, drv in enumerate(self._active_drivers()):
+                if idx >= len(self._sim_zero_driver_rad):
+                    break
+                if self._sim_zero_driver_rad[idx] is not None:
+                    drv["rad"] = float(self._sim_zero_driver_rad[idx])
         if self.outputs and self._sim_zero_output_rad is not None:
             self.outputs[0]["rad"] = float(self._sim_zero_output_rad)
             self._sync_primary_output()
