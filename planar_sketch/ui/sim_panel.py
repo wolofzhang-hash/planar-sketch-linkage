@@ -47,11 +47,15 @@ class SimulationPanel(QWidget):
         self._theta_step = 1.0
         self._theta_step_cur = 1.0
         self._theta_step_min = 1e-4
+        self._theta_step_max = 1.0
         self._theta_last_ok = 0.0
         self._frame = 0
         self._driver_sweep: Optional[List[Dict[str, float]]] = None
         self._driver_last_ok: List[float] = []
-        self._driver_step_cur: float = 0.0
+        self._driver_step_scale: float = 1.0
+        self._sweep_steps_total: Optional[int] = None
+        self._sweep_step_index: int = 0
+        self._theta_start = 0.0
 
         self._records: List[Dict[str, Any]] = []
         self._pending_sim_start_capture = False
@@ -332,16 +336,23 @@ class SimulationPanel(QWidget):
         return pids[0]
 
     def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
-        self.ed_step.setText(f"{float(settings.get('step', 2.0))}")
+        step = settings.get("step", 2.0)
+        try:
+            step_val = int(round(float(step)))
+        except Exception:
+            step_val = 2
+        step_val = max(step_val, 1)
+        self.ed_step.setText(f"{step_val}")
 
     def _sync_sweep_settings_from_fields(self) -> None:
         try:
             step = float(self.ed_step.text())
         except Exception:
             return
-        step = abs(step)
-        if step == 0:
-            step = float(self.ctrl.sweep_settings.get("step", 2.0)) or 2.0
+        step = int(round(abs(step)))
+        if step <= 0:
+            step = int(round(float(self.ctrl.sweep_settings.get("step", 2.0)) or 2.0))
+            step = max(step, 1)
         self.ctrl.sweep_settings = {
             "start": self.ctrl.sweep_settings.get("start", 0.0),
             "end": self.ctrl.sweep_settings.get("end", 360.0),
@@ -695,8 +706,8 @@ class SimulationPanel(QWidget):
         except ValueError:
             QMessageBox.warning(self, "Sweep", "Step must be numbers.")
             return
-        step = abs(step)
-        if step == 0:
+        step = int(round(abs(step)))
+        if step <= 0:
             QMessageBox.warning(self, "Sweep", "Step must be greater than 0.")
             return
         active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
@@ -713,10 +724,8 @@ class SimulationPanel(QWidget):
             end = float(end)
         except Exception:
             end = 360.0
-        if end < start:
-            step = -step
-        self.ctrl.sweep_settings = {"start": start, "end": end, "step": abs(step)}
-        self.ed_step.setText(f"{abs(step)}")
+        self.ctrl.sweep_settings = {"start": start, "end": end, "step": step}
+        self.ed_step.setText(f"{step}")
 
         self.stop()
         self.ctrl.mark_sim_start_pose()
@@ -727,9 +736,12 @@ class SimulationPanel(QWidget):
         self._frame = 0
         self._last_run_data = None
         self._run_start_snapshot = self.ctrl.snapshot_model()
+        self._sweep_steps_total = int(step)
+        self._sweep_step_index = 0
+        self._theta_start = start
         if len(active_drivers) > 1:
-            step_abs = abs(step)
             driver_sweep = []
+            base_steps = []
             for drv in active_drivers:
                 s = drv.get("sweep_start", start)
                 e = drv.get("sweep_end", end)
@@ -741,30 +753,32 @@ class SimulationPanel(QWidget):
                     e = float(e)
                 except Exception:
                     e = end
-                if e == s:
-                    direction = 0.0
-                else:
-                    direction = -1.0 if e < s else 1.0
-                driver_sweep.append({"start": s, "end": e, "direction": direction})
+                base_step = (e - s) / self._sweep_steps_total if self._sweep_steps_total else 0.0
+                driver_sweep.append({"start": s, "end": e, "step": base_step})
+                base_steps.append(abs(base_step))
             self._driver_sweep = driver_sweep
             self._driver_last_ok = [entry["start"] for entry in driver_sweep]
-            self._driver_step_cur = float(step_abs)
+            self._driver_step_scale = 1.0
             self._theta_last_ok = start
             self._theta_deg = start
             self._theta_end = end
-            self._theta_step = step_abs
-            self._theta_step_cur = step_abs
-            self._theta_step_min = max(step_abs / 128.0, 1e-4)
+            max_step = max(base_steps) if base_steps else 0.0
+            self._theta_step = max_step
+            self._theta_step_cur = max_step
+            self._theta_step_max = max_step
+            self._theta_step_min = max(max_step / 128.0, 1e-4)
         else:
             self._driver_sweep = None
             self._driver_last_ok = []
-            self._driver_step_cur = float(step)
+            self._driver_step_scale = 1.0
             self._theta_last_ok = start
             self._theta_deg = start
             self._theta_end = end
-            self._theta_step = step
-            self._theta_step_cur = step
-            self._theta_step_min = max(abs(step) / 128.0, 1e-4)
+            base_step = (end - start) / self._sweep_steps_total if self._sweep_steps_total else 0.0
+            self._theta_step = base_step
+            self._theta_step_cur = base_step
+            self._theta_step_max = abs(base_step)
+            self._theta_step_min = max(abs(base_step) / 128.0, 1e-4)
 
         case_spec = self._build_case_spec()
         self._run_context = {
@@ -794,30 +808,11 @@ class SimulationPanel(QWidget):
 
 
     def _on_tick(self):
-        if self._driver_sweep:
-            all_done = True
-            for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
-                direction = entry.get("direction", 1.0)
-                end = entry.get("end", last_ok)
-                if direction == 0:
-                    continue
-                if direction > 0:
-                    if last_ok < end:
-                        all_done = False
-                else:
-                    if last_ok > end:
-                        all_done = False
-            if all_done:
-                self._complete_run(success=True, reason="completed")
-                self.refresh_labels()
-                return
-        else:
-            # stop condition based on direction
-            if ((self._theta_step_cur > 0 and self._theta_last_ok > self._theta_end)
-                    or (self._theta_step_cur < 0 and self._theta_last_ok < self._theta_end)):
-                self._complete_run(success=True, reason="completed")
-                self.refresh_labels()
-                return
+        if self._sweep_steps_total is not None and self._sweep_step_index >= self._sweep_steps_total:
+            self._finalize_end_pose()
+            self._complete_run(success=True, reason="completed")
+            self.refresh_labels()
+            return
 
         ok = True
         step_applied = False
@@ -828,22 +823,29 @@ class SimulationPanel(QWidget):
         )
         iters = 200 if has_point_spline else 80
         base_step = self._theta_step
+        progress = 0.0
+        if self._sweep_steps_total:
+            progress = (self._sweep_step_index + 1) / float(self._sweep_steps_total)
         step_target = self._theta_step_cur
         theta_target = self._theta_last_ok + step_target
         driver_targets: List[float] = []
         if self._driver_sweep:
             driver_targets = []
+            desired_targets = []
             for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
-                direction = float(entry.get("direction", 1.0) or 1.0)
+                start = float(entry.get("start", last_ok))
                 end = float(entry.get("end", last_ok))
-                if direction == 0:
-                    driver_targets.append(end)
-                elif direction > 0 and last_ok >= end:
-                    driver_targets.append(end)
-                elif direction < 0 and last_ok <= end:
-                    driver_targets.append(end)
-                else:
-                    driver_targets.append(last_ok + direction * abs(step_target))
+                desired = start + (end - start) * progress
+                desired_targets.append(desired)
+            step_target = 0.0
+            for last_ok, desired in zip(self._driver_last_ok, desired_targets):
+                step_target = max(step_target, abs(desired - last_ok))
+            for last_ok, desired in zip(self._driver_last_ok, desired_targets):
+                scale = self._driver_step_scale
+                driver_targets.append(last_ok + (desired - last_ok) * scale)
+        else:
+            theta_target = self._theta_start + (self._theta_end - self._theta_start) * progress
+            step_target = theta_target - self._theta_last_ok
         while True:
             pose_before = self.ctrl.snapshot_points()
             if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
@@ -893,18 +895,10 @@ class SimulationPanel(QWidget):
                         break
                     step_target *= 0.5
                     if self._driver_sweep:
+                        self._driver_step_scale *= 0.5
                         driver_targets = []
-                        for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep):
-                            direction = float(entry.get("direction", 1.0) or 1.0)
-                            end = float(entry.get("end", last_ok))
-                            if direction == 0:
-                                driver_targets.append(end)
-                            elif direction > 0 and last_ok >= end:
-                                driver_targets.append(end)
-                            elif direction < 0 and last_ok <= end:
-                                driver_targets.append(end)
-                            else:
-                                driver_targets.append(last_ok + direction * abs(step_target))
+                        for last_ok, desired in zip(self._driver_last_ok, desired_targets):
+                            driver_targets.append(last_ok + (desired - last_ok) * self._driver_step_scale)
                     else:
                         theta_target = self._theta_last_ok + step_target
                     continue
@@ -947,12 +941,9 @@ class SimulationPanel(QWidget):
         if step_applied:
             if self._driver_sweep:
                 self._driver_last_ok = list(driver_targets)
-                self._driver_step_cur = step_target
-                if abs(self._driver_step_cur) < abs(base_step):
-                    grow = abs(self._driver_step_cur) * 1.25
-                    grow = min(abs(base_step), grow)
-                    self._driver_step_cur = math.copysign(grow, base_step)
-                self._theta_step_cur = self._driver_step_cur
+                if self._driver_step_scale < 1.0:
+                    self._driver_step_scale = min(1.0, self._driver_step_scale * 1.25)
+                self._theta_step_cur = base_step
             else:
                 self._theta_last_ok = theta_target
                 self._theta_deg = self._theta_last_ok + step_target
@@ -962,6 +953,42 @@ class SimulationPanel(QWidget):
                     grow = min(abs(base_step), grow)
                     self._theta_step_cur = math.copysign(grow, base_step)
                     self._theta_deg = self._theta_last_ok + self._theta_step_cur
+            self._sweep_step_index += 1
+
+    def _finalize_end_pose(self) -> None:
+        has_point_spline = any(
+            ps.get("enabled", True)
+            for ps in getattr(self.ctrl, "point_splines", {}).values()
+        )
+        iters = 200 if has_point_spline else 80
+        if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
+            try:
+                nfev = int(float(self.ed_nfev.text() or "250"))
+            except Exception:
+                nfev = 250
+        else:
+            nfev = None
+
+        if self._driver_sweep:
+            targets = [float(entry.get("end", last_ok)) for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep)]
+            if nfev is not None:
+                ok, _msg = self.ctrl.drive_to_multi_deg_scipy(targets, max_nfev=nfev)
+                if not ok:
+                    self.ctrl.drive_to_multi_deg(targets, iters=iters)
+            else:
+                self.ctrl.drive_to_multi_deg(targets, iters=iters)
+            self._driver_last_ok = list(targets)
+        else:
+            target = float(self._theta_end)
+            if nfev is not None:
+                ok, _msg = self.ctrl.drive_to_deg_scipy(target, max_nfev=nfev)
+                if not ok:
+                    self.ctrl.drive_to_deg(target, iters=iters)
+            else:
+                self.ctrl.drive_to_deg(target, iters=iters)
+            self._theta_last_ok = target
+            self._theta_deg = target
+        self.ctrl.append_trajectories()
 
     def _build_case_spec(self) -> Dict[str, Any]:
         has_point_spline = any(
@@ -986,10 +1013,10 @@ class SimulationPanel(QWidget):
             "sweep": {
                 "start_deg": float(self.ctrl.sweep_settings.get("start", 0.0)),
                 "end_deg": float(self.ctrl.sweep_settings.get("end", 360.0)),
-                "step_deg": float(self.ctrl.sweep_settings.get("step", 2.0)),
+                "step_count": int(self.ctrl.sweep_settings.get("step", 2.0)),
                 "adaptive": False,
                 "min_step_deg": float(self._theta_step_min),
-                "max_step_deg": float(abs(self._theta_step)),
+                "max_step_deg": float(abs(self._theta_step_max)),
             },
             "solver": {
                 "use_scipy": bool(self.chk_scipy.isChecked()),

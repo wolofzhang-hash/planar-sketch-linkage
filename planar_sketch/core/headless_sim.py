@@ -996,10 +996,20 @@ def simulate_case(
     sweep = case_spec.get("sweep", {}) or {}
     start = float(sweep.get("start_deg", sweep.get("start", 0.0)))
     end = float(sweep.get("end_deg", sweep.get("end", 0.0)))
-    step = float(sweep.get("step_deg", sweep.get("step", 1.0)))
-    step = abs(step) if step != 0 else 1.0
-    if end < start:
-        step = -step
+    step_count = sweep.get("step_count", None)
+    if step_count is None:
+        step = float(sweep.get("step_deg", sweep.get("step", 1.0)))
+        step = abs(step) if step != 0 else 1.0
+        if end < start:
+            step = -step
+        step_count = None
+    else:
+        step = None
+        try:
+            step_count = int(round(float(step_count)))
+        except Exception:
+            step_count = 1
+        step_count = max(step_count, 1)
 
     solver = case_spec.get("solver", {}) or {}
     use_scipy = bool(solver.get("use_scipy", False))
@@ -1013,15 +1023,20 @@ def simulate_case(
     success = True
 
     degrees: List[float] = []
-    cur = start
-    if step > 0:
-        while cur <= end + 1e-9:
-            degrees.append(cur)
-            cur += step
+    if step_count is None:
+        cur = start
+        if step > 0:
+            while cur <= end + 1e-9:
+                degrees.append(cur)
+                cur += step
+        else:
+            while cur >= end - 1e-9:
+                degrees.append(cur)
+                cur += step
     else:
-        while cur >= end - 1e-9:
-            degrees.append(cur)
-            cur += step
+        for idx in range(step_count):
+            progress = (idx + 1) / float(step_count)
+            degrees.append(start + (end - start) * progress)
 
     for frame_idx, deg in enumerate(degrees):
         ok = True
