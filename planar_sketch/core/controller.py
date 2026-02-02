@@ -41,6 +41,7 @@ from ..ui.items import (
     ForceArrowItem,
     TorqueArrowItem,
 )
+from ..ui.i18n import tr
 from ..utils.constants import BODY_COLORS
 
 
@@ -2470,10 +2471,11 @@ class SketchController:
         self.update_status()
 
     def show_empty_context_menu(self, global_pos, scene_pos: QPointF):
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Create Point", lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
-        m.addAction("Create Line", self.begin_create_line)
-        m.addAction("Create Spline (from selected points)", self._add_spline_from_selection)
+        m.addAction(tr(lang, "context.create_point"), lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
+        m.addAction(tr(lang, "context.create_line"), self.begin_create_line)
+        m.addAction(tr(lang, "context.create_spline_from_selection"), self._add_spline_from_selection)
         m.exec(global_pos)
 
     def _delete_selected_points_multi(self):
@@ -2491,13 +2493,18 @@ class SketchController:
         self.commit_drag_if_any()
         self.select_point_single(pid, keep_others=False)
         p = self.points[pid]
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Fix" if not p.get("fixed", False) else "Unfix",
-                    lambda: self.cmd_set_point_fixed(pid, not p.get("fixed", False)))
-        m.addAction("Hide" if not p.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_point_hidden(pid, not p.get("hidden", False)))
+        m.addAction(
+            tr(lang, "context.fix") if not p.get("fixed", False) else tr(lang, "context.unfix"),
+            lambda: self.cmd_set_point_fixed(pid, not p.get("fixed", False)),
+        )
+        m.addAction(
+            tr(lang, "context.hide") if not p.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_point_hidden(pid, not p.get("hidden", False)),
+        )
         m.addSeparator()
-        m.addAction("Coincide With (point/line/spline)...", lambda: self.begin_coincide(pid))
+        m.addAction(tr(lang, "context.coincide_with"), lambda: self.begin_coincide(pid))
 
         # --- Simulation helpers (driver / measurement) ---
         nbrs = []
@@ -2513,15 +2520,18 @@ class SketchController:
 
         if nbrs:
             m.addSeparator()
-            sub_drv = m.addMenu("Set Driver")
+            sub_drv = m.addMenu(tr(lang, "context.set_driver"))
 
             # Vector driver: choose a neighbor as tip
-            sub_vec = sub_drv.addMenu("Vector (pivot->tip)")
+            sub_vec = sub_drv.addMenu(tr(lang, "context.vector_pivot_tip"))
             for nb in nbrs:
-                sub_vec.addAction(f"pivot P{pid} -> tip P{nb}", lambda nb=nb: self.set_driver(pid, nb))
+                sub_vec.addAction(
+                    tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
+                    lambda nb=nb: self.set_driver(pid, nb),
+                )
 
             # Joint driver: choose two neighbors as i and k
-            sub_joint = sub_drv.addMenu("Joint angle (i-j-k)")
+            sub_joint = sub_drv.addMenu(tr(lang, "context.joint_angle"))
             if len(nbrs) >= 2:
                 for i in nbrs:
                     for k in nbrs:
@@ -2530,15 +2540,15 @@ class SketchController:
                         sub_joint.addAction(f"P{i}-P{pid}-P{k}", lambda i=i, k=k: self.set_driver_joint(i, pid, k))
 
             sub_drv.addSeparator()
-            sub_drv.addAction("Clear Driver", self.clear_driver)
+            sub_drv.addAction(tr(lang, "context.clear_driver"), self.clear_driver)
 
-            sub_meas = m.addMenu("Add Measurement")
+            sub_meas = m.addMenu(tr(lang, "context.add_measurement"))
 
-            sub_mvec = sub_meas.addMenu("Vector (world)")
+            sub_mvec = sub_meas.addMenu(tr(lang, "context.vector_world"))
             for nb in nbrs:
                 sub_mvec.addAction(f"V(P{pid}->P{nb})", lambda nb=nb: self.add_measure_vector(pid, nb))
 
-            sub_mjoint = sub_meas.addMenu("Joint angle")
+            sub_mjoint = sub_meas.addMenu(tr(lang, "context.joint_angle"))
             if len(nbrs) >= 2:
                 for i in nbrs:
                     for k in nbrs:
@@ -2546,28 +2556,31 @@ class SketchController:
                             continue
                         sub_mjoint.addAction(f"A(P{i}-P{pid}-P{k})", lambda i=i, k=k: self.add_measure_joint(i, pid, k))
 
-            sub_load_meas = sub_meas.addMenu("Load")
-            sub_load_meas.addAction("Joint Load Fx", lambda: self.add_load_measure_joint(pid, "fx"))
-            sub_load_meas.addAction("Joint Load Fy", lambda: self.add_load_measure_joint(pid, "fy"))
-            sub_load_meas.addAction("Joint Load Mag", lambda: self.add_load_measure_joint(pid, "mag"))
+            sub_load_meas = sub_meas.addMenu(tr(lang, "context.load"))
+            sub_load_meas.addAction(tr(lang, "context.joint_load_fx"), lambda: self.add_load_measure_joint(pid, "fx"))
+            sub_load_meas.addAction(tr(lang, "context.joint_load_fy"), lambda: self.add_load_measure_joint(pid, "fy"))
+            sub_load_meas.addAction(tr(lang, "context.joint_load_mag"), lambda: self.add_load_measure_joint(pid, "mag"))
 
             sub_meas.addSeparator()
-            sub_meas.addAction("Clear Measurements", self.clear_measures)
+            sub_meas.addAction(tr(lang, "context.clear_measurements"), self.clear_measures)
 
-            sub_out = m.addMenu("Set Output")
+            sub_out = m.addMenu(tr(lang, "context.set_output"))
             for nb in nbrs:
-                sub_out.addAction(f"pivot P{pid} -> tip P{nb}", lambda nb=nb: self.set_output(pid, nb))
+                sub_out.addAction(
+                    tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
+                    lambda nb=nb: self.set_output(pid, nb),
+                )
             sub_out.addSeparator()
-            sub_out.addAction("Clear Output", self.clear_output)
+            sub_out.addAction(tr(lang, "context.clear_output"), self.clear_output)
 
-            sub_load = m.addMenu("Loads")
-            sub_load.addAction("Add Force (Fx,Fy)", lambda: self._prompt_add_force(pid))
-            sub_load.addAction("Add Torque (Mz)", lambda: self._prompt_add_torque(pid))
+            sub_load = m.addMenu(tr(lang, "context.loads"))
+            sub_load.addAction(tr(lang, "context.add_force"), lambda: self._prompt_add_force(pid))
+            sub_load.addAction(tr(lang, "context.add_torque"), lambda: self._prompt_add_torque(pid))
             sub_load.addSeparator()
-            sub_load.addAction("Clear Loads", self.clear_loads)
+            sub_load.addAction(tr(lang, "context.clear_loads"), self.clear_loads)
 
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_point(pid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point(pid))
         m.exec(global_pos)
         self.update_status()
 
@@ -2581,14 +2594,19 @@ class SketchController:
     def show_link_context_menu(self, lid: int, global_pos):
         self.commit_drag_if_any()
         self.select_link_single(lid)
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
         l = self.links[lid]
-        m.addAction("Hide" if not l.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_link_hidden(lid, not l.get("hidden", False)))
-        m.addAction("Set as Constraint" if l.get("ref", False) else "Set as Reference",
-                    lambda: self.cmd_set_link_reference(lid, not l.get("ref", False)))
+        m.addAction(
+            tr(lang, "context.hide") if not l.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_link_hidden(lid, not l.get("hidden", False)),
+        )
+        m.addAction(
+            tr(lang, "context.set_as_constraint") if l.get("ref", False) else tr(lang, "context.set_as_reference"),
+            lambda: self.cmd_set_link_reference(lid, not l.get("ref", False)),
+        )
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_link(lid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_link(lid))
         m.exec(global_pos)
         self.update_status()
 
@@ -2599,13 +2617,18 @@ class SketchController:
             return
         self.select_coincide_single(cid)
         c = self.coincides[cid]
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Hide" if not c.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_coincide_hidden(cid, not c.get("hidden", False)))
-        m.addAction("Disable" if c.get("enabled", True) else "Enable",
-                    lambda: self.cmd_set_coincide_enabled(cid, not c.get("enabled", True)))
+        m.addAction(
+            tr(lang, "context.hide") if not c.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_coincide_hidden(cid, not c.get("hidden", False)),
+        )
+        m.addAction(
+            tr(lang, "context.disable") if c.get("enabled", True) else tr(lang, "context.enable"),
+            lambda: self.cmd_set_coincide_enabled(cid, not c.get("enabled", True)),
+        )
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_coincide(cid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_coincide(cid))
         m.exec(global_pos)
         self.update_status()
         try:
@@ -2619,13 +2642,18 @@ class SketchController:
             return
         self.select_point_line_single(plid)
         pl = self.point_lines[plid]
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Hide" if not pl.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_point_line_hidden(plid, not pl.get("hidden", False)))
-        m.addAction("Disable" if pl.get("enabled", True) else "Enable",
-                    lambda: self.cmd_set_point_line_enabled(plid, not pl.get("enabled", True)))
+        m.addAction(
+            tr(lang, "context.hide") if not pl.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_point_line_hidden(plid, not pl.get("hidden", False)),
+        )
+        m.addAction(
+            tr(lang, "context.disable") if pl.get("enabled", True) else tr(lang, "context.enable"),
+            lambda: self.cmd_set_point_line_enabled(plid, not pl.get("enabled", True)),
+        )
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_point_line(plid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_line(plid))
         m.exec(global_pos)
         self.update_status()
         try:
@@ -2639,13 +2667,18 @@ class SketchController:
             return
         self.select_point_spline_single(psid)
         ps = self.point_splines[psid]
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Hide" if not ps.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_point_spline_hidden(psid, not ps.get("hidden", False)))
-        m.addAction("Disable" if ps.get("enabled", True) else "Enable",
-                    lambda: self.cmd_set_point_spline_enabled(psid, not ps.get("enabled", True)))
+        m.addAction(
+            tr(lang, "context.hide") if not ps.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_point_spline_hidden(psid, not ps.get("hidden", False)),
+        )
+        m.addAction(
+            tr(lang, "context.disable") if ps.get("enabled", True) else tr(lang, "context.enable"),
+            lambda: self.cmd_set_point_spline_enabled(psid, not ps.get("enabled", True)),
+        )
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_point_spline(psid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_spline(psid))
         m.exec(global_pos)
         self.update_status()
         try:
@@ -2659,11 +2692,14 @@ class SketchController:
             return
         self.select_spline_single(sid)
         s = self.splines[sid]
+        lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
-        m.addAction("Hide" if not s.get("hidden", False) else "Show",
-                    lambda: self.cmd_set_spline_hidden(sid, not s.get("hidden", False)))
+        m.addAction(
+            tr(lang, "context.hide") if not s.get("hidden", False) else tr(lang, "context.show"),
+            lambda: self.cmd_set_spline_hidden(sid, not s.get("hidden", False)),
+        )
         m.addSeparator()
-        m.addAction("Delete", lambda: self.cmd_delete_spline(sid))
+        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_spline(sid))
         m.exec(global_pos)
         self.update_status()
         try:
