@@ -336,29 +336,38 @@ class SimulationPanel(QWidget):
     # ---- UI actions ----
     def refresh_labels(self):
         lang = getattr(self.ctrl, "ui_language", "en")
-        d = self.ctrl.driver
-        if d.get("enabled"):
-            if d.get("type") == "joint" and d.get("i") is not None and d.get("j") is not None and d.get("k") is not None:
-                self.lbl_driver.setText(tr(lang, "sim.driver_joint").format(i=d["i"], j=d["j"], k=d["k"]))
-            elif d.get("pivot") is not None and d.get("tip") is not None:
-                self.lbl_driver.setText(tr(lang, "sim.driver_vector").format(pivot=d["pivot"], tip=d["tip"]))
+        drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
+        outputs = [o for o in self.ctrl.outputs if o.get("enabled")]
+        if drivers:
+            labels = []
+            for d in drivers:
+                if d.get("type") == "joint" and d.get("i") is not None and d.get("j") is not None and d.get("k") is not None:
+                    labels.append(tr(lang, "sim.driver_joint").format(i=d["i"], j=d["j"], k=d["k"]))
+                elif d.get("pivot") is not None and d.get("tip") is not None:
+                    labels.append(tr(lang, "sim.driver_vector").format(pivot=d["pivot"], tip=d["tip"]))
+                else:
+                    labels.append(tr(lang, "sim.driver_invalid"))
+            if len(labels) == 1:
+                self.lbl_driver.setText(labels[0])
             else:
-                self.lbl_driver.setText(tr(lang, "sim.driver_invalid"))
+                self.lbl_driver.setText(tr(lang, "sim.driver_multi").format(drivers="; ".join(labels)))
         else:
-            if self.ctrl.output.get("enabled"):
+            if outputs:
                 self.lbl_driver.setText(tr(lang, "sim.driver_using_output"))
             else:
                 self.lbl_driver.setText(tr(lang, "sim.driver_unset"))
 
-        o = self.ctrl.output
-        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
-            self.lbl_output.setText(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
-        else:
-            self.lbl_output.setText(tr(lang, "sim.output_unset"))
-
-        o = self.ctrl.output
-        if o.get("enabled") and o.get("pivot") is not None and o.get("tip") is not None:
-            self.lbl_output.setText(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
+        if outputs:
+            labels = []
+            for o in outputs:
+                if o.get("pivot") is not None and o.get("tip") is not None:
+                    labels.append(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
+                else:
+                    labels.append(tr(lang, "sim.output_unset"))
+            if len(labels) == 1:
+                self.lbl_output.setText(labels[0])
+            else:
+                self.lbl_output.setText(tr(lang, "sim.output_multi").format(outputs="; ".join(labels)))
         else:
             self.lbl_output.setText(tr(lang, "sim.output_unset"))
 
@@ -574,7 +583,7 @@ class SimulationPanel(QWidget):
         self._refresh_measure_table()
     # ---- sweep ----
     def play(self):
-        if not self.ctrl.driver.get("enabled") and not self.ctrl.output.get("enabled"):
+        if not self.ctrl.drivers and not self.ctrl.outputs:
             QMessageBox.information(self, "Driver", "Set a driver or output first.")
             return
         try:
@@ -759,7 +768,9 @@ class SimulationPanel(QWidget):
             "schema_version": "1.0",
             "analysis_mode": "quasi_static",
             "driver": dict(self.ctrl.driver),
+            "drivers": [dict(d) for d in self.ctrl.drivers],
             "output": dict(self.ctrl.output),
+            "outputs": [dict(o) for o in self.ctrl.outputs],
             "sweep": {
                 "start_deg": float(self.ctrl.sweep_settings.get("start", 0.0)),
                 "end_deg": float(self.ctrl.sweep_settings.get("end", 360.0)),
