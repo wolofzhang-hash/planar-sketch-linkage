@@ -561,6 +561,7 @@ class OptimizationTab(QWidget):
         self.ed_seed = QLineEdit("")
         self.ed_seed.setMaximumWidth(120)
         row.addWidget(self.ed_seed)
+        self.input_fields = [self.ed_evals, self.ed_seed]
         row.addStretch(1)
         layout.addLayout(row)
 
