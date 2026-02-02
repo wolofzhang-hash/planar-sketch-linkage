@@ -121,15 +121,13 @@ class SketchController:
         # --- Linkage-style simulation configuration ---
         # Driver: either a world-angle of a vector (pivot->tip) or a joint angle (i-j-k).
         # type: "vector" or "joint"
-        self.driver: Dict[str, Any] = {
-            "enabled": False,
-            "type": "vector",
-            "pivot": None, "tip": None,  # for vector
-            "i": None, "j": None, "k": None,  # for joint
-            "rad": 0.0,
-        }
+        self.driver: Dict[str, Any] = self._default_driver()
+        # Multiple drivers (primary driver is drivers[0] when present)
+        self.drivers: List[Dict[str, Any]] = []
         # Output: measured angle of (pivot -> tip) relative to world +X.
-        self.output: Dict[str, Any] = {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
+        self.output: Dict[str, Any] = self._default_output()
+        # Multiple outputs (primary output is outputs[0] when present)
+        self.outputs: List[Dict[str, Any]] = []
         # Extra measurements: a list of {type,name,...} items.
         self.measures: List[Dict[str, Any]] = []
         # Load measurements: a list of {type,name,...} items.
@@ -150,6 +148,77 @@ class SketchController:
         self._sim_zero_output_rad: Optional[float] = None
         self._sim_zero_meas_deg: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 2.0}
+
+    @staticmethod
+    def _default_driver() -> Dict[str, Any]:
+        return {
+            "enabled": False,
+            "type": "vector",
+            "pivot": None, "tip": None,
+            "i": None, "j": None, "k": None,
+            "rad": 0.0,
+        }
+
+    @staticmethod
+    def _default_output() -> Dict[str, Any]:
+        return {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
+
+    def _normalize_driver(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "enabled": bool(data.get("enabled", True)),
+            "type": str(data.get("type", "vector")),
+            "pivot": data.get("pivot"),
+            "tip": data.get("tip"),
+            "i": data.get("i"),
+            "j": data.get("j"),
+            "k": data.get("k"),
+            "rad": float(data.get("rad", 0.0) or 0.0),
+        }
+
+    def _normalize_output(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "enabled": bool(data.get("enabled", True)),
+            "pivot": data.get("pivot"),
+            "tip": data.get("tip"),
+            "rad": float(data.get("rad", 0.0) or 0.0),
+        }
+
+    def _active_drivers(self) -> List[Dict[str, Any]]:
+        return [d for d in self.drivers if d.get("enabled", False)]
+
+    def _active_outputs(self) -> List[Dict[str, Any]]:
+        return [o for o in self.outputs if o.get("enabled", False)]
+
+    def _sync_primary_driver(self) -> None:
+        if self.drivers:
+            self.driver = dict(self.drivers[0])
+        else:
+            self.driver = self._default_driver()
+
+    def _sync_primary_output(self) -> None:
+        if self.outputs:
+            self.output = dict(self.outputs[0])
+        else:
+            self.output = self._default_output()
+
+    def _primary_driver(self) -> Optional[Dict[str, Any]]:
+        return self.drivers[0] if self.drivers else None
+
+    def _primary_output(self) -> Optional[Dict[str, Any]]:
+        return self.outputs[0] if self.outputs else None
+
+    def _check_overconstraint_and_warn(self) -> None:
+        if not hasattr(self.win, "statusBar"):
+            return
+        over, detail = self.check_overconstraint()
+        if not over:
+            return
+        lang = getattr(self, "ui_language", "en")
+        QMessageBox.warning(
+            self.win,
+            tr(lang, "sim.overconstrained_title"),
+            tr(lang, "sim.overconstrained_body").format(detail=detail),
+        )
 
     def status_text(self) -> str:
         if self.mode == "CreateLine":
@@ -422,36 +491,56 @@ class SketchController:
             body_edges.extend(b.get("rigid_edges", []))
 
         driven_pids: set[int] = set()
-        driver_type: Optional[str] = None
-        driver_pivot: Optional[int] = None
-        driver_tip: Optional[int] = None
-        driver_i: Optional[int] = None
-        driver_j: Optional[int] = None
-        driver_k: Optional[int] = None
-        if self.driver.get("enabled"):
-            driver_type = str(self.driver.get("type", "vector"))
-            if driver_type == "joint" and self.driver.get("i") is not None and self.driver.get("j") is not None and self.driver.get("k") is not None:
-                driver_i = int(self.driver["i"])
-                driver_j = int(self.driver["j"])
-                driver_k = int(self.driver["k"])
-                driven_pids = {driver_i, driver_k}
-            elif self.driver.get("pivot") is not None and self.driver.get("tip") is not None:
-                driver_pivot = int(self.driver["pivot"])
-                driver_tip = int(self.driver["tip"])
-                driven_pids = {driver_tip}
-        elif self.output.get("enabled") and self.output.get("pivot") is not None and self.output.get("tip") is not None:
-            driver_type = "output"
-            driver_pivot = int(self.output["pivot"])
-            driver_tip = int(self.output["tip"])
-            driven_pids = {driver_tip}
+        active_drivers = self._active_drivers()
+        active_outputs = self._active_outputs()
+        drive_sources: List[Dict[str, Any]] = []
+        if active_drivers:
+            for drv in active_drivers:
+                entry = dict(drv)
+                entry["mode"] = "driver"
+                drive_sources.append(entry)
+        elif active_outputs:
+            for out in active_outputs:
+                entry = {
+                    "mode": "output",
+                    "type": "vector",
+                    "pivot": out.get("pivot"),
+                    "tip": out.get("tip"),
+                    "rad": out.get("rad", 0.0),
+                }
+                drive_sources.append(entry)
 
-        # Allow editing lengths that belong to the active driver (avoid false OVER).
+        for drv in drive_sources:
+            dtype = str(drv.get("type", "vector"))
+            if dtype == "joint":
+                i = drv.get("i")
+                k = drv.get("k")
+                if i is not None:
+                    driven_pids.add(int(i))
+                if k is not None:
+                    driven_pids.add(int(k))
+            else:
+                tip = drv.get("tip")
+                if tip is not None:
+                    driven_pids.add(int(tip))
+
+        # Allow editing lengths that belong to the active drivers (avoid false OVER).
         driver_length_pairs: set[frozenset[int]] = set()
-        if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
-            driver_length_pairs.add(frozenset({driver_i, driver_j}))
-            driver_length_pairs.add(frozenset({driver_j, driver_k}))
-        elif driver_type in ("vector", "output") and driver_pivot is not None and driver_tip is not None:
-            driver_length_pairs.add(frozenset({driver_pivot, driver_tip}))
+        for drv in drive_sources:
+            dtype = str(drv.get("type", "vector"))
+            if dtype == "joint":
+                i = drv.get("i")
+                j = drv.get("j")
+                k = drv.get("k")
+                if i is not None and j is not None:
+                    driver_length_pairs.add(frozenset({int(i), int(j)}))
+                if j is not None and k is not None:
+                    driver_length_pairs.add(frozenset({int(j), int(k)}))
+            else:
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is not None and tip is not None:
+                    driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
         # PBD-style iterations
         for _ in range(max(1, int(iters))):
@@ -467,37 +556,49 @@ class SketchController:
                     a = max(0.0, min(1.0, float(drag_alpha)))
                     tp["x"] = float(tp["x"]) + a * (tx - float(tp["x"]))
                     tp["y"] = float(tp["y"]) + a * (ty - float(tp["y"]))
-            # (1) Hard driver first
-            if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
-                if drag_pid in (driver_i, driver_j, driver_k):
-                    pass
-                elif driver_i in self.points and driver_j in self.points and driver_k in self.points:
-                    pi = self.points[driver_i]
-                    pj = self.points[driver_j]
-                    pk = self.points[driver_k]
-                    lock_i = bool(pi.get("fixed", False)) or (drag_pid == driver_i)
-                    lock_j = bool(pj.get("fixed", False)) or (drag_pid == driver_j)
-                    lock_k = bool(pk.get("fixed", False)) or (drag_pid == driver_k)
-                    ConstraintSolver.enforce_driver_joint_angle(
-                        pi, pj, pk,
-                        float(self.driver.get("rad", 0.0)),
-                        lock_i, lock_j, lock_k,
-                    )
-            elif driver_pivot is not None and driver_tip is not None:
-                if drag_pid in (driver_pivot, driver_tip):
-                    pass
-                elif driver_pivot in self.points and driver_tip in self.points:
-                    piv = self.points[driver_pivot]
-                    tip = self.points[driver_tip]
-                    lock_piv = bool(piv.get("fixed", False)) or (drag_pid == driver_pivot)
-                    lock_tip = bool(tip.get("fixed", False)) or (drag_pid == driver_tip)
-                    target = self.driver.get("rad", 0.0) if driver_type == "vector" else self.output.get("rad", 0.0)
-                    ConstraintSolver.enforce_driver_angle(
-                        piv, tip,
-                        float(target),
-                        lock_piv,
-                        lock_tip=lock_tip,
-                    )
+            # (1) Hard drivers first
+            for drv in drive_sources:
+                dtype = str(drv.get("type", "vector"))
+                if dtype == "joint":
+                    i = drv.get("i")
+                    j = drv.get("j")
+                    k = drv.get("k")
+                    if i is None or j is None or k is None:
+                        continue
+                    i = int(i); j = int(j); k = int(k)
+                    if drag_pid in (i, j, k):
+                        continue
+                    if i in self.points and j in self.points and k in self.points:
+                        pi = self.points[i]
+                        pj = self.points[j]
+                        pk = self.points[k]
+                        lock_i = bool(pi.get("fixed", False)) or (drag_pid == i)
+                        lock_j = bool(pj.get("fixed", False)) or (drag_pid == j)
+                        lock_k = bool(pk.get("fixed", False)) or (drag_pid == k)
+                        ConstraintSolver.enforce_driver_joint_angle(
+                            pi, pj, pk,
+                            float(drv.get("rad", 0.0)),
+                            lock_i, lock_j, lock_k,
+                        )
+                else:
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv is None or tip is None:
+                        continue
+                    piv = int(piv); tip = int(tip)
+                    if drag_pid in (piv, tip):
+                        continue
+                    if piv in self.points and tip in self.points:
+                        piv_pt = self.points[piv]
+                        tip_pt = self.points[tip]
+                        lock_piv = bool(piv_pt.get("fixed", False)) or (drag_pid == piv)
+                        lock_tip = bool(tip_pt.get("fixed", False)) or (drag_pid == tip)
+                        ConstraintSolver.enforce_driver_angle(
+                            piv_pt, tip_pt,
+                            float(drv.get("rad", 0.0)),
+                            lock_piv,
+                            lock_tip=lock_tip,
+                        )
 
             # (2) Coincide constraints
             for c in self.coincides.values():
@@ -764,6 +865,43 @@ class SketchController:
 
         max_err = max(max_len, max_ang, max_coin, max_pl, max_ps)
         return max_err, {'length': max_len, 'angle': max_ang, 'coincide': max_coin, 'point_line': max_pl, 'point_spline': max_ps}
+
+    def check_overconstraint(self) -> Tuple[bool, str]:
+        """Check for structural over-constraint (constraint count > DOF)."""
+        n_points = len(self.points)
+        dof = 2 * n_points
+        if n_points == 0:
+            return False, "No points"
+
+        fixed = sum(1 for p in self.points.values() if bool(p.get("fixed", False)))
+        coincide = sum(1 for c in self.coincides.values() if bool(c.get("enabled", True)))
+        point_lines = sum(1 for pl in self.point_lines.values() if bool(pl.get("enabled", True)))
+        point_splines = sum(1 for ps in self.point_splines.values() if bool(ps.get("enabled", True)))
+        links = sum(1 for l in self.links.values() if not bool(l.get("ref", False)))
+        angles = sum(1 for a in self.angles.values() if bool(a.get("enabled", True)))
+        rigid_edges = sum(len(b.get("rigid_edges", [])) for b in self.bodies.values())
+        active_drivers = self._active_drivers()
+        active_outputs = self._active_outputs()
+        io_constraints = len(active_drivers) if active_drivers else len(active_outputs)
+
+        total = (
+            fixed * 2
+            + coincide * 2
+            + point_lines
+            + point_splines
+            + links
+            + angles
+            + rigid_edges
+            + io_constraints
+        )
+        over = total > dof
+        detail = (
+            f"constraints={total} > dof={dof} "
+            f"(fixed={fixed}, links={links}, angles={angles}, coincide={coincide}, "
+            f"line={point_lines}, spline={point_splines}, rigid={rigid_edges}, io={io_constraints})"
+        )
+        return over, detail
+
     def recompute_from_parameters(self):
         """Recompute all numeric fields that are backed by expressions.
 
@@ -1129,20 +1267,26 @@ class SketchController:
 
         Returns (ok, message).
         """
-        if not self.driver.get("enabled") and not self.output.get("enabled"):
+        if not self._active_drivers() and not self._active_outputs():
             return False, "Driver or output not set"
-        if self.driver.get("enabled"):
+        primary_driver = self._primary_driver()
+        primary_output = self._primary_output()
+        if primary_driver and primary_driver.get("enabled"):
             if self._sim_zero_input_rad is not None:
                 target = float(self._sim_zero_input_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.driver["rad"] = float(target)
-        else:
+            primary_driver["rad"] = float(target)
+            self.drivers[0] = primary_driver
+            self._sync_primary_driver()
+        elif primary_output and primary_output.get("enabled"):
             if self._sim_zero_output_rad is not None:
                 target = float(self._sim_zero_output_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.output["rad"] = float(target)
+            primary_output["rad"] = float(target)
+            self.outputs[0] = primary_output
+            self._sync_primary_output()
         return self.solve_constraints_scipy(max_nfev=max_nfev)
 
     def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = False):
@@ -2709,19 +2853,21 @@ class SketchController:
 
     def update_graphics(self):
         driver_marker_pid = None
-        if self.driver.get("enabled"):
-            driver_type = str(self.driver.get("type", "vector"))
+        primary_driver = self._primary_driver()
+        if primary_driver and primary_driver.get("enabled"):
+            driver_type = str(primary_driver.get("type", "vector"))
             if driver_type == "joint":
-                pid = self.driver.get("j")
+                pid = primary_driver.get("j")
                 if pid is not None:
                     driver_marker_pid = int(pid)
             else:
-                pid = self.driver.get("pivot")
+                pid = primary_driver.get("pivot")
                 if pid is not None:
                     driver_marker_pid = int(pid)
         output_marker_pid = None
-        if self.output.get("enabled"):
-            pid = self.output.get("pivot")
+        primary_output = self._primary_output()
+        if primary_output and primary_output.get("enabled"):
+            pid = primary_output.get("pivot")
             if pid is not None:
                 output_marker_pid = int(pid)
         tau_out = self._last_quasistatic_summary.get("tau_output")
@@ -3043,12 +3189,34 @@ class SketchController:
                 "k": self.driver.get("k"),
                 "rad": float(self.driver.get("rad", 0.0)),
             },
+            "drivers": [
+                {
+                    "enabled": bool(d.get("enabled", False)),
+                    "type": str(d.get("type", "vector")),
+                    "pivot": d.get("pivot"),
+                    "tip": d.get("tip"),
+                    "i": d.get("i"),
+                    "j": d.get("j"),
+                    "k": d.get("k"),
+                    "rad": float(d.get("rad", 0.0)),
+                }
+                for d in self.drivers
+            ],
             "output": {
                 "enabled": bool(self.output.get("enabled", False)),
                 "pivot": self.output.get("pivot"),
                 "tip": self.output.get("tip"),
                 "rad": float(self.output.get("rad", 0.0)),
             },
+            "outputs": [
+                {
+                    "enabled": bool(o.get("enabled", False)),
+                    "pivot": o.get("pivot"),
+                    "tip": o.get("tip"),
+                    "rad": float(o.get("rad", 0.0)),
+                }
+                for o in self.outputs
+            ],
             "measures": [
                 {
                     "type": str(m.get("type", "")),
@@ -3185,6 +3353,8 @@ class SketchController:
         bods = data.get("bodies", [])
         driver = data.get("driver", {}) or {}
         output = data.get("output", {}) or {}
+        drivers_list = data.get("drivers", None)
+        outputs_list = data.get("outputs", None)
         measures = data.get("measures", []) or []
         self.display_precision = int(data.get("display_precision", getattr(self, "display_precision", 3)))
         self.load_arrow_width = float(data.get("load_arrow_width", getattr(self, "load_arrow_width", 1.6)))
@@ -3254,46 +3424,69 @@ class SketchController:
             if "rigid_edges" in b and b["rigid_edges"]:
                 self.bodies[bid]["rigid_edges"] = [tuple(x) for x in b["rigid_edges"]]
 
-        self.driver = {
-            "enabled": bool(driver.get("enabled", False)),
-            "type": str(driver.get("type", "vector")),
-            "pivot": driver.get("pivot"),
-            "tip": driver.get("tip"),
-            "i": driver.get("i"),
-            "j": driver.get("j"),
-            "k": driver.get("k"),
-            "rad": float(driver.get("rad", 0.0) or 0.0),
-        }
-        if self.driver.get("enabled") and "rad" not in driver:
-            dtype = str(self.driver.get("type", "vector"))
+        self.drivers = []
+        if isinstance(drivers_list, list) and drivers_list:
+            for drv in drivers_list:
+                if not isinstance(drv, dict):
+                    continue
+                normalized = self._normalize_driver(drv)
+                if "rad" not in drv:
+                    normalized["_needs_rad"] = True
+                self.drivers.append(normalized)
+        elif isinstance(driver, dict):
+            legacy_driver = self._normalize_driver(driver)
+            if legacy_driver.get("enabled"):
+                if "rad" not in driver:
+                    legacy_driver["_needs_rad"] = True
+                self.drivers.append(legacy_driver)
+
+        for drv in self.drivers:
+            if not drv.pop("_needs_rad", False):
+                continue
+            dtype = str(drv.get("type", "vector"))
             if dtype == "joint":
-                i = self.driver.get("i")
-                j = self.driver.get("j")
-                k = self.driver.get("k")
+                i = drv.get("i")
+                j = drv.get("j")
+                k = drv.get("k")
                 if i is not None and j is not None and k is not None:
                     ang = self.get_joint_angle_rad(int(i), int(j), int(k))
                     if ang is not None:
-                        self.driver["rad"] = float(ang)
+                        drv["rad"] = float(ang)
             else:
-                piv = self.driver.get("pivot")
-                tip = self.driver.get("tip")
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
                 if piv is not None and tip is not None:
                     ang = self.get_vector_angle_rad(int(piv), int(tip))
                     if ang is not None:
-                        self.driver["rad"] = float(ang)
-        self.output = {
-            "enabled": bool(output.get("enabled", False)),
-            "pivot": output.get("pivot"),
-            "tip": output.get("tip"),
-            "rad": float(output.get("rad", 0.0) or 0.0),
-        }
-        if self.output.get("enabled") and "rad" not in output:
-            piv = self.output.get("pivot")
-            tip = self.output.get("tip")
+                        drv["rad"] = float(ang)
+        self._sync_primary_driver()
+
+        self.outputs = []
+        if isinstance(outputs_list, list) and outputs_list:
+            for out in outputs_list:
+                if not isinstance(out, dict):
+                    continue
+                normalized = self._normalize_output(out)
+                if "rad" not in out:
+                    normalized["_needs_rad"] = True
+                self.outputs.append(normalized)
+        elif isinstance(output, dict):
+            legacy_output = self._normalize_output(output)
+            if legacy_output.get("enabled"):
+                if "rad" not in output:
+                    legacy_output["_needs_rad"] = True
+                self.outputs.append(legacy_output)
+
+        for out in self.outputs:
+            if not out.pop("_needs_rad", False):
+                continue
+            piv = out.get("pivot")
+            tip = out.get("tip")
             if piv is not None and tip is not None:
                 ang = self.get_vector_angle_rad(int(piv), int(tip))
                 if ang is not None:
-                    self.output["rad"] = float(ang)
+                    out["rad"] = float(ang)
+        self._sync_primary_output()
         self.measures = []
         for m in measures:
             mtype = str(m.get("type", "")).lower()
@@ -3421,7 +3614,7 @@ class SketchController:
     # -------------------- Linkage-style simulation API --------------------
     def set_driver(self, pivot_pid: int, tip_pid: int):
         """Set the input driver as a world-angle vector (pivot -> tip)."""
-        self.driver.update({
+        driver = self._normalize_driver({
             "enabled": True,
             "type": "vector",
             "pivot": int(pivot_pid),
@@ -3430,11 +3623,14 @@ class SketchController:
         })
         ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
-            self.driver["rad"] = float(ang)
+            driver["rad"] = float(ang)
+        self.drivers.insert(0, driver)
+        self._sync_primary_driver()
+        self._check_overconstraint_and_warn()
 
     def set_driver_joint(self, i_pid: int, j_pid: int, k_pid: int):
         """Set the input driver as a joint angle (i-j-k), signed and clamped to (-pi, pi]."""
-        self.driver.update({
+        driver = self._normalize_driver({
             "enabled": True,
             "type": "joint",
             "pivot": None, "tip": None,
@@ -3442,28 +3638,32 @@ class SketchController:
         })
         ang = self.get_joint_angle_rad(int(i_pid), int(j_pid), int(k_pid))
         if ang is not None:
-            self.driver["rad"] = float(ang)
+            driver["rad"] = float(ang)
+        self.drivers.insert(0, driver)
+        self._sync_primary_driver()
+        self._check_overconstraint_and_warn()
 
     def clear_driver(self):
-        self.driver = {
-            "enabled": False,
-            "type": "vector",
-            "pivot": None, "tip": None,
-            "i": None, "j": None, "k": None,
-            "rad": 0.0,
-        }
+        self.drivers = []
+        self._sync_primary_driver()
 
     def set_output(self, pivot_pid: int, tip_pid: int):
         """Set the output measurement vector (pivot -> tip)."""
-        self.output["enabled"] = True
-        self.output["pivot"] = int(pivot_pid)
-        self.output["tip"] = int(tip_pid)
+        output = self._normalize_output({
+            "enabled": True,
+            "pivot": int(pivot_pid),
+            "tip": int(tip_pid),
+        })
         ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
-            self.output["rad"] = float(ang)
+            output["rad"] = float(ang)
+        self.outputs.insert(0, output)
+        self._sync_primary_output()
+        self._check_overconstraint_and_warn()
 
     def clear_output(self):
-        self.output = {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
+        self.outputs = []
+        self._sync_primary_output()
 
     # ---- Quasi-static loads ----
     def add_load_force(self, pid: int, fx: float, fy: float):
@@ -3622,33 +3822,52 @@ class SketchController:
             funcs.append(_ang)
 
         # Driver constraint (if enabled)
-        if self.driver.get("enabled"):
-            if self.driver.get("type") == "joint":
-                i = self.driver.get("i")
-                j = self.driver.get("j")
-                k = self.driver.get("k")
-                if i in idx_map and j in idx_map and k in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
+        active_drivers = self._active_drivers()
+        active_outputs = self._active_outputs()
+        if active_drivers:
+            for drv in active_drivers:
+                if drv.get("type") == "joint":
+                    i = drv.get("i")
+                    j = drv.get("j")
+                    k = drv.get("k")
+                    if i in idx_map and j in idx_map and k in idx_map:
+                        target = float(drv.get("rad", 0.0))
 
-                    def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                        xi, yi = _xy(q, int(i))
-                        xj, yj = _xy(q, int(j))
-                        xk, yk = _xy(q, int(k))
-                        v1x, v1y = xi - xj, yi - yj
-                        v2x, v2y = xk - xj, yk - yj
-                        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                            return 0.0
-                        cur = angle_between(v1x, v1y, v2x, v2y)
-                        return clamp_angle_rad(cur - target)
+                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                            xi, yi = _xy(q, int(i))
+                            xj, yj = _xy(q, int(j))
+                            xk, yk = _xy(q, int(k))
+                            v1x, v1y = xi - xj, yi - yj
+                            v2x, v2y = xk - xj, yk - yj
+                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                                return 0.0
+                            cur = angle_between(v1x, v1y, v2x, v2y)
+                            return clamp_angle_rad(cur - target)
 
-                    funcs.append(_drv)
-            else:
-                piv = self.driver.get("pivot")
-                tip = self.driver.get("tip")
+                        funcs.append(_drv)
+                else:
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv in idx_map and tip in idx_map:
+                        target = float(drv.get("rad", 0.0))
+
+                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                            px, py = _xy(q, int(piv))
+                            tx, ty = _xy(q, int(tip))
+                            dx, dy = tx - px, ty - py
+                            if abs(dx) + abs(dy) < 1e-12:
+                                return 0.0
+                            return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                        funcs.append(_drv)
+        elif active_outputs:
+            for out in active_outputs:
+                piv = out.get("pivot")
+                tip = out.get("tip")
                 if piv in idx_map and tip in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
+                    target = float(out.get("rad", 0.0))
 
-                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                    def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
                         px, py = _xy(q, int(piv))
                         tx, ty = _xy(q, int(tip))
                         dx, dy = tx - px, ty - py
@@ -3656,22 +3875,7 @@ class SketchController:
                             return 0.0
                         return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                    funcs.append(_drv)
-        elif self.output.get("enabled"):
-            piv = self.output.get("pivot")
-            tip = self.output.get("tip")
-            if piv in idx_map and tip in idx_map:
-                target = float(self.output.get("rad", 0.0))
-
-                def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                    px, py = _xy(q, int(piv))
-                    tx, ty = _xy(q, int(tip))
-                    dx, dy = tx - px, ty - py
-                    if abs(dx) + abs(dy) < 1e-12:
-                        return 0.0
-                    return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                funcs.append(_odrv)
+                    funcs.append(_odrv)
 
         return funcs
 
@@ -3894,48 +4098,14 @@ class SketchController:
         #   - Kinematics uses self.driver (motion input).
         #   - Quasi-static closure uses output constraint if enabled; otherwise uses driver.
         #   - The closure constraint is NOT counted into "Joint Loads" (it is reported separately as a torque).
-        if include_output and self.output.get("enabled"):
-            piv = self.output.get("pivot")
-            tip = self.output.get("tip")
-            if piv in idx_map and tip in idx_map:
-                target = float(self.output.get("rad", 0.0))
-
-                def _out(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                    px, py = _xy(q, int(piv))
-                    tx, ty = _xy(q, int(tip))
-                    dx, dy = tx - px, ty - py
-                    if abs(dx) + abs(dy) < 1e-12:
-                        return 0.0
-                    return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                _add(_out, "output", {"type": "output_angle", "pivot": int(piv), "tip": int(tip)})
-        elif include_driver and self.driver.get("enabled"):
-            if self.driver.get("type") == "joint":
-                i = self.driver.get("i")
-                j = self.driver.get("j")
-                k = self.driver.get("k")
-                if i in idx_map and j in idx_map and k in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
-
-                    def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                        xi, yi = _xy(q, int(i))
-                        xj, yj = _xy(q, int(j))
-                        xk, yk = _xy(q, int(k))
-                        v1x, v1y = xi - xj, yi - yj
-                        v2x, v2y = xk - xj, yk - yj
-                        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                            return 0.0
-                        cur = angle_between(v1x, v1y, v2x, v2y)
-                        return clamp_angle_rad(cur - target)
-
-                    _add(_drv, "actuator", {"type": "driver_joint", "i": int(i), "j": int(j), "k": int(k)})
-            else:
-                piv = self.driver.get("pivot")
-                tip = self.driver.get("tip")
+        if include_output:
+            for out in self._active_outputs():
+                piv = out.get("pivot")
+                tip = out.get("tip")
                 if piv in idx_map and tip in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
+                    target = float(out.get("rad", 0.0))
 
-                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                    def _out(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
                         px, py = _xy(q, int(piv))
                         tx, ty = _xy(q, int(tip))
                         dx, dy = tx - px, ty - py
@@ -3943,7 +4113,43 @@ class SketchController:
                             return 0.0
                         return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                    _add(_drv, "actuator", {"type": "driver_angle", "pivot": int(piv), "tip": int(tip)})
+                    _add(_out, "output", {"type": "output_angle", "pivot": int(piv), "tip": int(tip)})
+        elif include_driver:
+            for drv in self._active_drivers():
+                if drv.get("type") == "joint":
+                    i = drv.get("i")
+                    j = drv.get("j")
+                    k = drv.get("k")
+                    if i in idx_map and j in idx_map and k in idx_map:
+                        target = float(drv.get("rad", 0.0))
+
+                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                            xi, yi = _xy(q, int(i))
+                            xj, yj = _xy(q, int(j))
+                            xk, yk = _xy(q, int(k))
+                            v1x, v1y = xi - xj, yi - yj
+                            v2x, v2y = xk - xj, yk - yj
+                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                                return 0.0
+                            cur = angle_between(v1x, v1y, v2x, v2y)
+                            return clamp_angle_rad(cur - target)
+
+                        _add(_drv, "actuator", {"type": "driver_joint", "i": int(i), "j": int(j), "k": int(k)})
+                else:
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv in idx_map and tip in idx_map:
+                        target = float(drv.get("rad", 0.0))
+
+                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                            px, py = _xy(q, int(piv))
+                            tx, ty = _xy(q, int(tip))
+                            dx, dy = tx - px, ty - py
+                            if abs(dx) + abs(dy) < 1e-12:
+                                return 0.0
+                            return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                        _add(_drv, "actuator", {"type": "driver_angle", "pivot": int(piv), "tip": int(tip)})
 
         return funcs, roles, meta
 
@@ -4036,10 +4242,10 @@ class SketchController:
             f_ext[2 * i + 1] -= Fy
 
         # Build constraints for quasi-static
-        use_output = bool(self.output.get("enabled"))
+        use_output = bool(self._active_outputs())
         funcs, roles, meta = self._build_quasistatic_constraints(
             point_ids,
-            include_driver=bool(self.driver.get("enabled")) and (not use_output),
+            include_driver=bool(self._active_drivers()) and (not use_output),
             include_output=use_output,
         )
 
@@ -4070,7 +4276,7 @@ class SketchController:
             fm = eval_constraints(q - dq)
             J[:, i] = (fp - fm) / (2.0 * eps)
 
-        summary: Dict[str, Any] = {"mode": "output" if use_output else ("driver" if self.driver.get("enabled") else "none")}
+        summary: Dict[str, Any] = {"mode": "output" if use_output else ("driver" if self._active_drivers() else "none")}
         summary["tau_input"] = None
         summary["tau_output"] = None
 
@@ -4324,24 +4530,26 @@ class SketchController:
         return (abs_deg - base_deg) % 360.0
 
     def _get_input_angle_abs_rad(self) -> Optional[float]:
-        if not self.driver.get("enabled"):
+        primary = self._primary_driver()
+        if not primary or not primary.get("enabled"):
             return None
-        if self.driver.get("type") == "joint":
-            i, j, k = self.driver.get("i"), self.driver.get("j"), self.driver.get("k")
+        if primary.get("type") == "joint":
+            i, j, k = primary.get("i"), primary.get("j"), primary.get("k")
             if i is None or j is None or k is None:
                 return None
             return self.get_joint_angle_rad(int(i), int(j), int(k))
-        piv = self.driver.get("pivot")
-        tip = self.driver.get("tip")
+        piv = primary.get("pivot")
+        tip = primary.get("tip")
         if piv is None or tip is None:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
 
     def _get_output_angle_abs_rad(self) -> Optional[float]:
-        if not self.output.get("enabled"):
+        primary = self._primary_output()
+        if not primary or not primary.get("enabled"):
             return None
-        piv = self.output.get("pivot")
-        tip = self.output.get("tip")
+        piv = primary.get("pivot")
+        tip = primary.get("tip")
         if piv is None or tip is None:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
@@ -4378,22 +4586,28 @@ class SketchController:
 
         If Play has started, 0° corresponds to the Play-start pose.
         """
-        if not self.driver.get("enabled") and not self.output.get("enabled"):
+        if not self._active_drivers() and not self._active_outputs():
             return
 
         # Target = (Play-start absolute angle) + delta
-        if self.driver.get("enabled"):
+        primary_driver = self._primary_driver()
+        primary_output = self._primary_output()
+        if primary_driver and primary_driver.get("enabled"):
             if self._sim_zero_input_rad is not None:
                 target = float(self._sim_zero_input_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.driver["rad"] = float(target)
-        else:
+            primary_driver["rad"] = float(target)
+            self.drivers[0] = primary_driver
+            self._sync_primary_driver()
+        elif primary_output and primary_output.get("enabled"):
             if self._sim_zero_output_rad is not None:
                 target = float(self._sim_zero_output_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.output["rad"] = float(target)
+            primary_output["rad"] = float(target)
+            self.outputs[0] = primary_output
+            self._sync_primary_output()
         self.solve_constraints(iters=iters)
         self.update_graphics()
         self.append_trajectories()
@@ -4413,8 +4627,9 @@ class SketchController:
         # Set relative-zero angles based on the current pose.
         self._sim_zero_input_rad = self._get_input_angle_abs_rad()
         self._sim_zero_output_rad = self._get_output_angle_abs_rad()
-        if self._sim_zero_output_rad is not None:
-            self.output["rad"] = float(self._sim_zero_output_rad)
+        if self._sim_zero_output_rad is not None and self.outputs:
+            self.outputs[0]["rad"] = float(self._sim_zero_output_rad)
+            self._sync_primary_output()
 
         self._sim_zero_meas_deg = {}
         for (nm, val) in self.get_measure_values_deg():
@@ -4431,10 +4646,12 @@ class SketchController:
         if not self._pose_last_sim_start:
             return False
         self.apply_points_snapshot(self._pose_last_sim_start)
-        if self.driver.get("enabled") and self._sim_zero_input_rad is not None:
-            self.driver["rad"] = float(self._sim_zero_input_rad)
-        if self.output.get("enabled") and self._sim_zero_output_rad is not None:
-            self.output["rad"] = float(self._sim_zero_output_rad)
+        if self.drivers and self._sim_zero_input_rad is not None:
+            self.drivers[0]["rad"] = float(self._sim_zero_input_rad)
+            self._sync_primary_driver()
+        if self.outputs and self._sim_zero_output_rad is not None:
+            self.outputs[0]["rad"] = float(self._sim_zero_output_rad)
+            self._sync_primary_output()
         self.solve_constraints()
         self.update_graphics()
         if self.panel:
