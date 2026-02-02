@@ -71,7 +71,9 @@ class CaseRunManager:
     def _case_hash(case_spec: Dict[str, Any]) -> str:
         keys = {
             "driver": case_spec.get("driver"),
+            "drivers": case_spec.get("drivers"),
             "output": case_spec.get("output"),
+            "outputs": case_spec.get("outputs"),
             "sweep": case_spec.get("sweep"),
             "solver": case_spec.get("solver"),
             "loads": case_spec.get("loads"),

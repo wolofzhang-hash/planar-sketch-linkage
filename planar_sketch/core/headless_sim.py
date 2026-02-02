@@ -34,8 +34,10 @@ class HeadlessModel:
         self.point_lines: Dict[int, Dict[str, Any]] = {}
         self.point_splines: Dict[int, Dict[str, Any]] = {}
 
-        self.driver: Dict[str, Any] = {}
-        self.output: Dict[str, Any] = {}
+        self.driver: Dict[str, Any] = self._default_driver()
+        self.drivers: List[Dict[str, Any]] = []
+        self.output: Dict[str, Any] = self._default_output()
+        self.outputs: List[Dict[str, Any]] = []
         self.measures: List[Dict[str, Any]] = []
         self.loads: List[Dict[str, Any]] = []
         self.load_measures: List[Dict[str, Any]] = []
@@ -47,6 +49,69 @@ class HeadlessModel:
         self._load_snapshot(snapshot)
         self._apply_case_spec(case_spec)
         self.mark_sim_start_pose()
+
+    @staticmethod
+    def _default_driver() -> Dict[str, Any]:
+        return {
+            "enabled": False,
+            "type": "vector",
+            "pivot": None,
+            "tip": None,
+            "i": None,
+            "j": None,
+            "k": None,
+            "rad": 0.0,
+        }
+
+    @staticmethod
+    def _default_output() -> Dict[str, Any]:
+        return {"enabled": False, "pivot": None, "tip": None, "rad": 0.0}
+
+    @staticmethod
+    def _normalize_driver(data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "enabled": bool(data.get("enabled", True)),
+            "type": str(data.get("type", "vector")),
+            "pivot": data.get("pivot"),
+            "tip": data.get("tip"),
+            "i": data.get("i"),
+            "j": data.get("j"),
+            "k": data.get("k"),
+            "rad": float(data.get("rad", 0.0) or 0.0),
+        }
+
+    @staticmethod
+    def _normalize_output(data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "enabled": bool(data.get("enabled", True)),
+            "pivot": data.get("pivot"),
+            "tip": data.get("tip"),
+            "rad": float(data.get("rad", 0.0) or 0.0),
+        }
+
+    def _active_drivers(self) -> List[Dict[str, Any]]:
+        return [d for d in self.drivers if d.get("enabled", False)]
+
+    def _active_outputs(self) -> List[Dict[str, Any]]:
+        return [o for o in self.outputs if o.get("enabled", False)]
+
+    def _sync_primary_driver(self) -> None:
+        if self.drivers:
+            self.driver = dict(self.drivers[0])
+        else:
+            self.driver = self._default_driver()
+
+    def _sync_primary_output(self) -> None:
+        if self.outputs:
+            self.output = dict(self.outputs[0])
+        else:
+            self.output = self._default_output()
+
+    def _primary_driver(self) -> Optional[Dict[str, Any]]:
+        return self.drivers[0] if self.drivers else None
+
+    def _primary_output(self) -> Optional[Dict[str, Any]]:
+        return self.outputs[0] if self.outputs else None
 
     def _load_snapshot(self, data: Dict[str, Any]) -> None:
         self.points = {
@@ -135,19 +200,91 @@ class HeadlessModel:
             for b in data.get("bodies", []) or []
         }
 
-        self.driver = dict(data.get("driver", {}) or {})
-        self.output = dict(data.get("output", {}) or {})
+        driver = data.get("driver", {}) or {}
+        output = data.get("output", {}) or {}
+        drivers_list = data.get("drivers", None)
+        outputs_list = data.get("outputs", None)
+        self.drivers = []
+        if isinstance(drivers_list, list) and drivers_list:
+            for drv in drivers_list:
+                if isinstance(drv, dict):
+                    normalized = self._normalize_driver(drv)
+                    if "rad" not in drv:
+                        normalized["_needs_rad"] = True
+                    self.drivers.append(normalized)
+        elif isinstance(driver, dict):
+            legacy_driver = self._normalize_driver(driver)
+            if legacy_driver.get("enabled"):
+                if "rad" not in driver:
+                    legacy_driver["_needs_rad"] = True
+                self.drivers.append(legacy_driver)
+
+        for drv in self.drivers:
+            if not drv.pop("_needs_rad", False):
+                continue
+            if drv.get("type") == "joint":
+                i = drv.get("i")
+                j = drv.get("j")
+                k = drv.get("k")
+                if i is not None and j is not None and k is not None:
+                    ang = self.get_joint_angle_rad(int(i), int(j), int(k))
+                    if ang is not None:
+                        drv["rad"] = float(ang)
+            else:
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is not None and tip is not None:
+                    ang = self.get_vector_angle_rad(int(piv), int(tip))
+                    if ang is not None:
+                        drv["rad"] = float(ang)
+        self._sync_primary_driver()
+
+        self.outputs = []
+        if isinstance(outputs_list, list) and outputs_list:
+            for out in outputs_list:
+                if isinstance(out, dict):
+                    normalized = self._normalize_output(out)
+                    if "rad" not in out:
+                        normalized["_needs_rad"] = True
+                    self.outputs.append(normalized)
+        elif isinstance(output, dict):
+            legacy_output = self._normalize_output(output)
+            if legacy_output.get("enabled"):
+                if "rad" not in output:
+                    legacy_output["_needs_rad"] = True
+                self.outputs.append(legacy_output)
+
+        for out in self.outputs:
+            if not out.pop("_needs_rad", False):
+                continue
+            piv = out.get("pivot")
+            tip = out.get("tip")
+            if piv is not None and tip is not None:
+                ang = self.get_vector_angle_rad(int(piv), int(tip))
+                if ang is not None:
+                    out["rad"] = float(ang)
+        self._sync_primary_output()
         self.measures = list(data.get("measures", []) or [])
         self.loads = list(data.get("loads", []) or [])
         self.load_measures = list(data.get("load_measures", []) or [])
 
     def _apply_case_spec(self, case_spec: Dict[str, Any]) -> None:
         driver = case_spec.get("driver")
-        if isinstance(driver, dict):
-            self.driver = dict(driver)
+        drivers_list = case_spec.get("drivers")
         output = case_spec.get("output")
-        if isinstance(output, dict):
-            self.output = dict(output)
+        outputs_list = case_spec.get("outputs")
+        if isinstance(drivers_list, list):
+            self.drivers = [self._normalize_driver(d) for d in drivers_list if isinstance(d, dict)]
+            self._sync_primary_driver()
+        elif isinstance(driver, dict):
+            self.drivers = [self._normalize_driver(driver)]
+            self._sync_primary_driver()
+        if isinstance(outputs_list, list):
+            self.outputs = [self._normalize_output(o) for o in outputs_list if isinstance(o, dict)]
+            self._sync_primary_output()
+        elif isinstance(output, dict):
+            self.outputs = [self._normalize_output(output)]
+            self._sync_primary_output()
         loads = case_spec.get("loads")
         if isinstance(loads, list):
             self.loads = [dict(ld) for ld in loads]
@@ -193,24 +330,26 @@ class HeadlessModel:
         return angle_between(v1x, v1y, v2x, v2y)
 
     def _get_input_angle_abs_rad(self) -> Optional[float]:
-        if not self.driver.get("enabled"):
+        primary = self._primary_driver()
+        if not primary or not primary.get("enabled"):
             return None
-        if self.driver.get("type") == "joint":
-            i, j, k = self.driver.get("i"), self.driver.get("j"), self.driver.get("k")
+        if primary.get("type") == "joint":
+            i, j, k = primary.get("i"), primary.get("j"), primary.get("k")
             if i is None or j is None or k is None:
                 return None
             return self.get_joint_angle_rad(int(i), int(j), int(k))
-        piv = self.driver.get("pivot")
-        tip = self.driver.get("tip")
+        piv = primary.get("pivot")
+        tip = primary.get("tip")
         if piv is None or tip is None:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
 
     def _get_output_angle_abs_rad(self) -> Optional[float]:
-        if not self.output.get("enabled"):
+        primary = self._primary_output()
+        if not primary or not primary.get("enabled"):
             return None
-        piv = self.output.get("pivot")
-        tip = self.output.get("tip")
+        piv = primary.get("pivot")
+        tip = primary.get("tip")
         if piv is None or tip is None:
             return None
         return self.get_vector_angle_rad(int(piv), int(tip))
@@ -374,33 +513,52 @@ class HeadlessModel:
 
             funcs.append(_ang)
 
-        if self.driver.get("enabled"):
-            if self.driver.get("type") == "joint":
-                i = self.driver.get("i")
-                j = self.driver.get("j")
-                k = self.driver.get("k")
-                if i in idx_map and j in idx_map and k in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
+        active_drivers = self._active_drivers()
+        active_outputs = self._active_outputs()
+        if active_drivers:
+            for drv in active_drivers:
+                if drv.get("type") == "joint":
+                    i = drv.get("i")
+                    j = drv.get("j")
+                    k = drv.get("k")
+                    if i in idx_map and j in idx_map and k in idx_map:
+                        target = float(drv.get("rad", 0.0))
 
-                    def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                        xi, yi = _xy(q, int(i))
-                        xj, yj = _xy(q, int(j))
-                        xk, yk = _xy(q, int(k))
-                        v1x, v1y = xi - xj, yi - yj
-                        v2x, v2y = xk - xj, yk - yj
-                        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                            return 0.0
-                        cur = angle_between(v1x, v1y, v2x, v2y)
-                        return clamp_angle_rad(cur - target)
+                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
+                            xi, yi = _xy(q, int(i))
+                            xj, yj = _xy(q, int(j))
+                            xk, yk = _xy(q, int(k))
+                            v1x, v1y = xi - xj, yi - yj
+                            v2x, v2y = xk - xj, yk - yj
+                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
+                                return 0.0
+                            cur = angle_between(v1x, v1y, v2x, v2y)
+                            return clamp_angle_rad(cur - target)
 
-                    funcs.append(_drv)
-            else:
-                piv = self.driver.get("pivot")
-                tip = self.driver.get("tip")
+                        funcs.append(_drv)
+                else:
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv in idx_map and tip in idx_map:
+                        target = float(drv.get("rad", 0.0))
+
+                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                            px, py = _xy(q, int(piv))
+                            tx, ty = _xy(q, int(tip))
+                            dx, dy = tx - px, ty - py
+                            if abs(dx) + abs(dy) < 1e-12:
+                                return 0.0
+                            return clamp_angle_rad(math.atan2(dy, dx) - target)
+
+                        funcs.append(_drv)
+        elif active_outputs:
+            for out in active_outputs:
+                piv = out.get("pivot")
+                tip = out.get("tip")
                 if piv in idx_map and tip in idx_map:
-                    target = float(self.driver.get("rad", 0.0))
+                    target = float(out.get("rad", 0.0))
 
-                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                    def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
                         px, py = _xy(q, int(piv))
                         tx, ty = _xy(q, int(tip))
                         dx, dy = tx - px, ty - py
@@ -408,22 +566,7 @@ class HeadlessModel:
                             return 0.0
                         return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                    funcs.append(_drv)
-        elif self.output.get("enabled"):
-            piv = self.output.get("pivot")
-            tip = self.output.get("tip")
-            if piv in idx_map and tip in idx_map:
-                target = float(self.output.get("rad", 0.0))
-
-                def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                    px, py = _xy(q, int(piv))
-                    tx, ty = _xy(q, int(tip))
-                    dx, dy = tx - px, ty - py
-                    if abs(dx) + abs(dy) < 1e-12:
-                        return 0.0
-                    return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                funcs.append(_odrv)
+                    funcs.append(_odrv)
 
         return funcs
 
@@ -512,20 +655,26 @@ class HeadlessModel:
         return out
 
     def drive_to_deg(self, deg: float, iters: int = 80) -> None:
-        if not self.driver.get("enabled") and not self.output.get("enabled"):
+        if not self._active_drivers() and not self._active_outputs():
             return
-        if self.driver.get("enabled"):
+        primary_driver = self._primary_driver()
+        primary_output = self._primary_output()
+        if primary_driver and primary_driver.get("enabled"):
             if self._sim_zero_input_rad is not None:
                 target = float(self._sim_zero_input_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.driver["rad"] = float(target)
-        else:
+            primary_driver["rad"] = float(target)
+            self.drivers[0] = primary_driver
+            self._sync_primary_driver()
+        elif primary_output and primary_output.get("enabled"):
             if self._sim_zero_output_rad is not None:
                 target = float(self._sim_zero_output_rad) + math.radians(float(deg))
             else:
                 target = math.radians(float(deg))
-            self.output["rad"] = float(target)
+            primary_output["rad"] = float(target)
+            self.outputs[0] = primary_output
+            self._sync_primary_output()
         self.solve_constraints(iters=iters)
 
     def solve_constraints(self, iters: int = 60) -> None:
@@ -545,60 +694,94 @@ class HeadlessModel:
             body_edges.extend(b.get("rigid_edges", []))
 
         driven_pids: set[int] = set()
-        driver_type: Optional[str] = None
-        driver_pivot: Optional[int] = None
-        driver_tip: Optional[int] = None
-        driver_i: Optional[int] = None
-        driver_j: Optional[int] = None
-        driver_k: Optional[int] = None
-        if self.driver.get("enabled"):
-            driver_type = str(self.driver.get("type", "vector"))
-            if driver_type == "joint" and self.driver.get("i") is not None and self.driver.get("j") is not None and self.driver.get("k") is not None:
-                driver_i = int(self.driver["i"])
-                driver_j = int(self.driver["j"])
-                driver_k = int(self.driver["k"])
-                driven_pids = {driver_i, driver_k}
-            elif self.driver.get("pivot") is not None and self.driver.get("tip") is not None:
-                driver_pivot = int(self.driver["pivot"])
-                driver_tip = int(self.driver["tip"])
-                driven_pids = {driver_tip}
-        elif self.output.get("enabled") and self.output.get("pivot") is not None and self.output.get("tip") is not None:
-            driver_type = "output"
-            driver_pivot = int(self.output["pivot"])
-            driver_tip = int(self.output["tip"])
-            driven_pids = {driver_tip}
+        active_drivers = self._active_drivers()
+        active_outputs = self._active_outputs()
+        drive_sources: List[Dict[str, Any]] = []
+        if active_drivers:
+            for drv in active_drivers:
+                entry = dict(drv)
+                entry["mode"] = "driver"
+                drive_sources.append(entry)
+        elif active_outputs:
+            for out in active_outputs:
+                entry = {
+                    "mode": "output",
+                    "type": "vector",
+                    "pivot": out.get("pivot"),
+                    "tip": out.get("tip"),
+                    "rad": out.get("rad", 0.0),
+                }
+                drive_sources.append(entry)
+
+        for drv in drive_sources:
+            dtype = str(drv.get("type", "vector"))
+            if dtype == "joint":
+                i = drv.get("i")
+                k = drv.get("k")
+                if i is not None:
+                    driven_pids.add(int(i))
+                if k is not None:
+                    driven_pids.add(int(k))
+            else:
+                tip = drv.get("tip")
+                if tip is not None:
+                    driven_pids.add(int(tip))
 
         driver_length_pairs: set[frozenset[int]] = set()
-        if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
-            driver_length_pairs.add(frozenset({driver_i, driver_j}))
-            driver_length_pairs.add(frozenset({driver_j, driver_k}))
+        for drv in drive_sources:
+            dtype = str(drv.get("type", "vector"))
+            if dtype == "joint":
+                i = drv.get("i")
+                j = drv.get("j")
+                k = drv.get("k")
+                if i is not None and j is not None:
+                    driver_length_pairs.add(frozenset({int(i), int(j)}))
+                if j is not None and k is not None:
+                    driver_length_pairs.add(frozenset({int(j), int(k)}))
+            else:
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is not None and tip is not None:
+                    driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
         for _ in range(int(iters)):
-            if driver_type == "joint" and driver_i is not None and driver_j is not None and driver_k is not None:
-                if driver_i in self.points and driver_j in self.points and driver_k in self.points:
-                    pi, pj, pk = self.points[driver_i], self.points[driver_j], self.points[driver_k]
-                    lock_i = bool(pi.get("fixed", False))
-                    lock_j = bool(pj.get("fixed", False))
-                    lock_k = bool(pk.get("fixed", False))
-                    ConstraintSolver.enforce_driver_joint_angle(
-                        pi, pj, pk,
-                        float(self.driver.get("rad", 0.0)),
-                        lock_i, lock_j, lock_k,
-                    )
-            elif driver_pivot is not None and driver_tip is not None:
-                if driver_pivot in self.points and driver_tip in self.points:
-                    piv = self.points[driver_pivot]
-                    tip = self.points[driver_tip]
-                    lock_piv = bool(piv.get("fixed", False))
-                    lock_tip = bool(tip.get("fixed", False))
-                    target = self.driver.get("rad", 0.0) if driver_type == "vector" else self.output.get("rad", 0.0)
-                    ConstraintSolver.enforce_driver_angle(
-                        piv,
-                        tip,
-                        float(target),
-                        lock_piv,
-                        lock_tip=lock_tip,
-                    )
+            for drv in drive_sources:
+                dtype = str(drv.get("type", "vector"))
+                if dtype == "joint":
+                    i = drv.get("i")
+                    j = drv.get("j")
+                    k = drv.get("k")
+                    if i is None or j is None or k is None:
+                        continue
+                    i = int(i); j = int(j); k = int(k)
+                    if i in self.points and j in self.points and k in self.points:
+                        pi, pj, pk = self.points[i], self.points[j], self.points[k]
+                        lock_i = bool(pi.get("fixed", False))
+                        lock_j = bool(pj.get("fixed", False))
+                        lock_k = bool(pk.get("fixed", False))
+                        ConstraintSolver.enforce_driver_joint_angle(
+                            pi, pj, pk,
+                            float(drv.get("rad", 0.0)),
+                            lock_i, lock_j, lock_k,
+                        )
+                else:
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv is None or tip is None:
+                        continue
+                    piv = int(piv); tip = int(tip)
+                    if piv in self.points and tip in self.points:
+                        piv_pt = self.points[piv]
+                        tip_pt = self.points[tip]
+                        lock_piv = bool(piv_pt.get("fixed", False))
+                        lock_tip = bool(tip_pt.get("fixed", False))
+                        ConstraintSolver.enforce_driver_angle(
+                            piv_pt,
+                            tip_pt,
+                            float(drv.get("rad", 0.0)),
+                            lock_piv,
+                            lock_tip=lock_tip,
+                        )
 
             for c in self.coincides.values():
                 if not bool(c.get("enabled", True)):
