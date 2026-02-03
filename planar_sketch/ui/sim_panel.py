@@ -53,6 +53,7 @@ class SimulationPanel(QWidget):
         self._driver_sweep: Optional[List[Dict[str, float]]] = None
         self._driver_last_ok: List[float] = []
         self._driver_step_scale: float = 1.0
+        self._driver_step_scale_max: float = 1.0
         self._sweep_steps_total: Optional[int] = None
         self._sweep_step_index: int = 0
         self._theta_start = 0.0
@@ -82,6 +83,7 @@ class SimulationPanel(QWidget):
         main_layout.addLayout(row)
 
         self.lbl_driver_sweep = QLabel()
+        self.lbl_driver_sweep.setVisible(False)
         main_layout.addWidget(self.lbl_driver_sweep)
 
         self.table_drivers = QTableWidget(0, 4)
@@ -793,10 +795,15 @@ class SimulationPanel(QWidget):
             self._theta_deg = start
             self._theta_end = end
             max_step = max(base_steps) if base_steps else 0.0
+            max_range = max(abs(entry["end"] - entry["start"]) for entry in driver_sweep) if driver_sweep else 0.0
+            adaptive_max = max(max_step * 4.0, max_range / 60.0, max_step)
+            if max_range > 0.0:
+                adaptive_max = min(adaptive_max, max_range)
             self._theta_step = max_step
             self._theta_step_cur = max_step
-            self._theta_step_max = max_step
+            self._theta_step_max = adaptive_max
             self._theta_step_min = max(max_step / 128.0, 1e-4)
+            self._driver_step_scale_max = adaptive_max / max_step if max_step else 1.0
         else:
             self._driver_sweep = None
             self._driver_last_ok = []
@@ -805,10 +812,15 @@ class SimulationPanel(QWidget):
             self._theta_deg = start
             self._theta_end = end
             base_step = (end - start) / self._sweep_steps_total if self._sweep_steps_total else 0.0
+            sweep_range = abs(end - start)
+            adaptive_max = max(abs(base_step) * 4.0, sweep_range / 60.0, abs(base_step))
+            if sweep_range > 0.0:
+                adaptive_max = min(adaptive_max, sweep_range)
             self._theta_step = base_step
             self._theta_step_cur = base_step
-            self._theta_step_max = abs(base_step)
+            self._theta_step_max = adaptive_max
             self._theta_step_min = max(abs(base_step) / 128.0, 1e-4)
+            self._driver_step_scale_max = 1.0
 
         case_spec = self._build_case_spec()
         self._run_context = {
@@ -894,18 +906,26 @@ class SimulationPanel(QWidget):
                 else:
                     desired = max(desired, end)
                 desired_targets.append(desired)
-            step_target = 0.0
-            for last_ok, desired in zip(self._driver_last_ok, desired_targets):
-                step_target = max(step_target, abs(desired - last_ok))
-            for last_ok, desired in zip(self._driver_last_ok, desired_targets):
+            for last_ok, desired, entry in zip(self._driver_last_ok, desired_targets, self._driver_sweep):
                 scale = self._driver_step_scale
-                driver_targets.append(last_ok + (desired - last_ok) * scale)
+                start = float(entry.get("start", last_ok))
+                end = float(entry.get("end", last_ok))
+                target = last_ok + (desired - last_ok) * scale
+                if end >= start:
+                    target = min(target, end)
+                else:
+                    target = max(target, end)
+                driver_targets.append(target)
+            step_target = 0.0
+            for last_ok, target in zip(self._driver_last_ok, driver_targets):
+                step_target = max(step_target, abs(target - last_ok))
         else:
             if self._theta_end >= self._theta_start:
                 theta_target = min(theta_target, self._theta_end)
             else:
                 theta_target = max(theta_target, self._theta_end)
             step_target = theta_target - self._theta_last_ok
+        tol = 1e-3
         while True:
             pose_before = self.ctrl.snapshot_points()
             if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
@@ -931,7 +951,6 @@ class SimulationPanel(QWidget):
 
             # Feasibility check: do not "stretch" links across dead points.
             # If the requested step is infeasible, rollback and reduce the step.
-            tol = 1e-3
             if hasattr(self.ctrl, "max_constraint_error"):
                 max_err, detail = self.ctrl.max_constraint_error()
                 hard_err = max(
@@ -957,8 +976,15 @@ class SimulationPanel(QWidget):
                     if self._driver_sweep:
                         self._driver_step_scale *= 0.5
                         driver_targets = []
-                        for last_ok, desired in zip(self._driver_last_ok, desired_targets):
-                            driver_targets.append(last_ok + (desired - last_ok) * self._driver_step_scale)
+                        for last_ok, desired, entry in zip(self._driver_last_ok, desired_targets, self._driver_sweep):
+                            start = float(entry.get("start", last_ok))
+                            end = float(entry.get("end", last_ok))
+                            target = last_ok + (desired - last_ok) * self._driver_step_scale
+                            if end >= start:
+                                target = min(target, end)
+                            else:
+                                target = max(target, end)
+                            driver_targets.append(target)
                     else:
                         theta_target = self._theta_last_ok + step_target
                     continue
@@ -973,6 +999,19 @@ class SimulationPanel(QWidget):
             self.ctrl.append_trajectories()
         self.refresh_labels()
 
+        hard_err_value = None
+        try:
+            _max_err, detail = self.ctrl.max_constraint_error()
+            hard_err_value = max(
+                detail.get("length", 0.0),
+                detail.get("angle", 0.0),
+                detail.get("coincide", 0.0),
+                detail.get("point_line", 0.0),
+                detail.get("point_spline", 0.0),
+            )
+        except Exception:
+            hard_err_value = None
+
         rec: Dict[str, Any] = {
             "time": self._frame,
             "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
@@ -981,17 +1020,7 @@ class SimulationPanel(QWidget):
             "output_deg": self.ctrl.get_output_angle_deg(),
             "driver_deg": list(self.ctrl.get_driver_angles_deg()),
         }
-        try:
-            _max_err, detail = self.ctrl.max_constraint_error()
-            rec["hard_err"] = max(
-                detail.get("length", 0.0),
-                detail.get("angle", 0.0),
-                detail.get("coincide", 0.0),
-                detail.get("point_line", 0.0),
-                detail.get("point_spline", 0.0),
-            )
-        except Exception:
-            rec["hard_err"] = None
+        rec["hard_err"] = hard_err_value
         for nm, val in self.ctrl.get_measure_values_deg():
             rec[nm] = val
         for nm, val in self.ctrl.get_load_measure_values():
@@ -1004,7 +1033,12 @@ class SimulationPanel(QWidget):
                 self._driver_last_ok = list(driver_targets)
                 if self._driver_step_scale < 1.0:
                     self._driver_step_scale = min(1.0, self._driver_step_scale * 1.25)
-                self._theta_step_cur = base_step
+                if hard_err_value is not None and ok and hard_err_value < tol * 0.25:
+                    self._driver_step_scale = min(self._driver_step_scale_max, self._driver_step_scale * 1.25)
+                self._theta_step_cur = math.copysign(
+                    min(abs(base_step) * self._driver_step_scale, self._theta_step_max),
+                    base_step if base_step else 1.0,
+                )
             else:
                 self._theta_last_ok = theta_target
                 self._theta_deg = self._theta_last_ok + step_target
@@ -1013,6 +1047,10 @@ class SimulationPanel(QWidget):
                     grow = abs(self._theta_step_cur) * 1.25
                     grow = min(abs(base_step), grow)
                     self._theta_step_cur = math.copysign(grow, base_step)
+                    self._theta_deg = self._theta_last_ok + self._theta_step_cur
+                if hard_err_value is not None and ok and hard_err_value < tol * 0.25:
+                    grow = min(abs(self._theta_step_cur) * 1.25, self._theta_step_max)
+                    self._theta_step_cur = math.copysign(grow, base_step if base_step else step_target or 1.0)
                     self._theta_deg = self._theta_last_ok + self._theta_step_cur
             self._sweep_step_index += 1
 
@@ -1075,7 +1113,7 @@ class SimulationPanel(QWidget):
                 "start_deg": float(self.ctrl.sweep_settings.get("start", 0.0)),
                 "end_deg": float(self.ctrl.sweep_settings.get("end", 360.0)),
                 "step_count": int(self.ctrl.sweep_settings.get("step", 2.0)),
-                "adaptive": False,
+                "adaptive": True,
                 "min_step_deg": float(self._theta_step_min),
                 "max_step_deg": float(abs(self._theta_step_max)),
             },
