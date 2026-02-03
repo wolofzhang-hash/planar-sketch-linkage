@@ -214,8 +214,6 @@ class MainWindow(QMainWindow):
         self.toolbar_file.addAction(self.act_file_open)
         self.toolbar_file.addAction(self.act_file_save)
         self.toolbar_file.addAction(self.act_file_save_as)
-        self.toolbar_file.addSeparator()
-        self.toolbar_file.addAction(self.act_bg_load)
 
         self.toolbar_edit = QToolBar(self)
         self.toolbar_edit.setIconSize(icon_size)
@@ -267,6 +265,7 @@ class MainWindow(QMainWindow):
         self.toolbar_background.setFloatable(False)
         self.toolbar_background.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_background)
+        self.toolbar_background.addAction(self.act_bg_load)
         self.toolbar_background.addAction(self.act_bg_visible)
         self.toolbar_background.addAction(self.act_bg_gray)
         self.toolbar_background.addAction(self.act_bg_opacity)
