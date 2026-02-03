@@ -139,15 +139,14 @@ class MainWindow(QMainWindow):
 
         self.menu_sketch = mb.addMenu("")
         self.menu_sketch.aboutToShow.connect(lambda: self._set_active_ribbon("sketch"))
+        self.act_create_point = QAction("", self)
+        self.act_create_point.triggered.connect(self.create_point_at_view_center)
         self.act_create_line = QAction("", self)
         self.act_create_line.triggered.connect(self.ctrl.begin_create_line)
-        self.menu_sketch.addAction(self.act_create_line)
         self.act_create_spline = QAction("", self)
         self.act_create_spline.triggered.connect(self.ctrl._add_spline_from_selection)
-        self.menu_sketch.addAction(self.act_create_spline)
         self.act_solve_accurate = QAction("", self)
         self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
-        self.menu_sketch.addAction(self.act_solve_accurate)
 
         self.menu_view = mb.addMenu("")
         self.menu_view.aboutToShow.connect(lambda: self._set_active_ribbon("view"))
@@ -226,6 +225,7 @@ class MainWindow(QMainWindow):
         self.toolbar_sketch.setFloatable(False)
         self.toolbar_sketch.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_sketch)
+        self.toolbar_sketch.addAction(self.act_create_point)
         self.toolbar_sketch.addAction(self.act_create_line)
         self.toolbar_sketch.addAction(self.act_create_spline)
         self.toolbar_sketch.addAction(self.act_solve_accurate)
@@ -265,8 +265,8 @@ class MainWindow(QMainWindow):
             "sketch": self.toolbar_sketch,
             "view": self.toolbar_view,
         }
-        for name, toolbar in toolbars.items():
-            toolbar.setVisible(name == key)
+        for toolbar in toolbars.values():
+            toolbar.setVisible(True)
 
     def _apply_action_icons(self) -> None:
         style = self.style()
@@ -280,6 +280,7 @@ class MainWindow(QMainWindow):
         self.act_delete_selected.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.act_repeat_model.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.act_settings.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.act_create_point.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
         self.act_create_line.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton))
         self.act_create_spline.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
         self.act_solve_accurate.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
@@ -322,6 +323,7 @@ class MainWindow(QMainWindow):
         self.act_delete_selected.setText(tr(lang, "action.delete_selected"))
         self.act_repeat_model.setText(tr(lang, "action.repeat_last_model_action"))
         self.act_settings.setText(tr(lang, "action.settings"))
+        self.act_create_point.setText(tr(lang, "action.create_point"))
         self.act_create_line.setText(tr(lang, "action.create_line"))
         self.act_create_spline.setText(tr(lang, "action.create_spline"))
         self.act_solve_accurate.setText(tr(lang, "action.solve_accurate_scipy"))
@@ -353,6 +355,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "SciPy Solver", msg)
         else:
             self.statusBar().showMessage("SciPy solve OK")
+
+    def create_point_at_view_center(self) -> None:
+        self.ctrl.commit_drag_if_any()
+        view_center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.ctrl.cmd_add_point(view_center.x(), view_center.y())
 
     def preset_show_all(self):
         self.ctrl.show_points_geometry = True

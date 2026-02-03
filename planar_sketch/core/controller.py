@@ -2869,8 +2869,6 @@ class SketchController:
         m = QMenu(self.win)
         m.addAction(tr(lang, "context.create_point"), lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
         m.addAction(tr(lang, "context.create_line"), self.begin_create_line)
-        add_angle = m.addAction(tr(lang, "context.create_angle_from_selection"), self._add_angle_from_selection)
-        add_angle.setEnabled(len(self._selected_points_for_angle()) >= 3)
         m.addAction(tr(lang, "context.create_spline_from_selection"), self._add_spline_from_selection)
         m.exec(global_pos)
 
@@ -2901,8 +2899,6 @@ class SketchController:
         )
         m.addSeparator()
         m.addAction(tr(lang, "context.coincide_with"), lambda: self.begin_coincide(pid))
-        add_angle = m.addAction(tr(lang, "context.create_angle_from_selection"), self._add_angle_from_selection)
-        add_angle.setEnabled(len(self._selected_points_for_angle()) >= 3)
 
         # --- Simulation helpers (driver / measurement) ---
         nbrs = []

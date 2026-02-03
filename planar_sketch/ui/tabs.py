@@ -584,7 +584,8 @@ class AnglesTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         layout.addWidget(self.table)
-        self.btn_add.clicked.connect(self._add_angle_from_points)
+        self.btn_add.setVisible(False)
+        self.btn_add.setEnabled(False)
         self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
@@ -604,9 +605,6 @@ class AnglesTab(QWidget):
             tr(lang, "table.hidden"),
             tr(lang, "table.state"),
         ])
-
-    def _add_angle_from_points(self):
-        self.ctrl._add_angle_from_selection()
 
     def _delete_selected(self):
         aid = self.panel.selected_angle_from_table()
