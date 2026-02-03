@@ -123,7 +123,8 @@ class MainWindow(QMainWindow):
         self.act_redo = QAction("", self)
         self.act_redo.setShortcuts([QKeySequence.StandardKey.Redo, QKeySequence("Ctrl+Y")])
         self.act_redo.triggered.connect(self.ctrl.stack.redo)
-        self.act_delete_selected = QAction("", self); self.act_delete_selected.setShortcut(QKeySequence.StandardKey.Delete)
+        self.act_delete_selected = QAction("", self)
+        self.act_delete_selected.setShortcuts([QKeySequence.StandardKey.Delete, QKeySequence("Backspace")])
         self.act_delete_selected.triggered.connect(self.delete_selected)
         self.act_cancel_model = QAction("", self)
         self.act_cancel_model.setShortcut(QKeySequence("Escape"))
@@ -586,8 +587,7 @@ class MainWindow(QMainWindow):
     def delete_selected(self):
         self.ctrl.commit_drag_if_any()
         if self.ctrl.selected_point_ids:
-            for pid in sorted(list(self.ctrl.selected_point_ids), reverse=True):
-                self.ctrl.cmd_delete_point(pid)
+            self.ctrl.cmd_delete_points(sorted(self.ctrl.selected_point_ids))
             return
         if self.ctrl.selected_link_id is not None:
             self.ctrl.cmd_delete_link(self.ctrl.selected_link_id); return
