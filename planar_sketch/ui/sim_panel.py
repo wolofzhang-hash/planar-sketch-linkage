@@ -178,7 +178,9 @@ class SimulationPanel(QWidget):
         self.table_loads = QTableWidget(0, 5)
         self.table_loads.setHorizontalHeaderLabels([])
         self.table_loads.verticalHeader().setVisible(False)
-        self.table_loads.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table_loads.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.SelectedClicked
+        )
         self.table_loads.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table_loads.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_loads.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -240,6 +242,7 @@ class SimulationPanel(QWidget):
         self.btn_open_last_run.clicked.connect(self.open_last_run)
 
         self.table_drivers.cellChanged.connect(self._on_driver_table_changed)
+        self.table_loads.cellChanged.connect(self._on_load_table_changed)
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
         self.apply_sweep_settings(self.ctrl.sweep_settings)
 
@@ -673,26 +676,51 @@ class SimulationPanel(QWidget):
         self.ctrl.remove_load_at(row)
         self.refresh_labels()
 
+    def _on_load_table_changed(self, row: int, col: int) -> None:
+        if col not in (2, 3, 4):
+            return
+        if row < 0 or row >= len(self.ctrl.loads):
+            return
+        item = self.table_loads.item(row, col)
+        if item is None:
+            return
+        key_map = {2: "fx", 3: "fy", 4: "mz"}
+        key = key_map.get(col)
+        if key is None:
+            return
+        try:
+            value = float(item.text())
+        except ValueError:
+            self._refresh_load_tables()
+            return
+        self.ctrl.loads[row][key] = value
+        self.refresh_labels()
+
     def _refresh_load_tables(self):
         lang = getattr(self.ctrl, "ui_language", "en")
         loads = list(self.ctrl.loads)
-        self.table_loads.setRowCount(len(loads))
-        for row, ld in enumerate(loads):
-            pid = ld.get("pid", "--")
-            ltype = str(ld.get("type", "force"))
-            fx = ld.get("fx", 0.0)
-            fy = ld.get("fy", 0.0)
-            mz = ld.get("mz", 0.0)
-            items = [
-                QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
-                QTableWidgetItem(ltype),
-                QTableWidgetItem(self.ctrl.format_number(fx)),
-                QTableWidgetItem(self.ctrl.format_number(fy)),
-                QTableWidgetItem(self.ctrl.format_number(mz)),
-            ]
-            for col, item in enumerate(items):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table_loads.setItem(row, col, item)
+        self.table_loads.blockSignals(True)
+        try:
+            self.table_loads.setRowCount(len(loads))
+            for row, ld in enumerate(loads):
+                pid = ld.get("pid", "--")
+                ltype = str(ld.get("type", "force"))
+                fx = ld.get("fx", 0.0)
+                fy = ld.get("fy", 0.0)
+                mz = ld.get("mz", 0.0)
+                items = [
+                    QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
+                    QTableWidgetItem(ltype),
+                    QTableWidgetItem(self.ctrl.format_number(fx)),
+                    QTableWidgetItem(self.ctrl.format_number(fy)),
+                    QTableWidgetItem(self.ctrl.format_number(mz)),
+                ]
+                for col, item in enumerate(items):
+                    if col in (0, 1):
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.table_loads.setItem(row, col, item)
+        finally:
+            self.table_loads.blockSignals(False)
 
         joint_loads, qs = self.ctrl.compute_quasistatic_report()
 
