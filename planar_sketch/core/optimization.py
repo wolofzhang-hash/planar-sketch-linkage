@@ -21,6 +21,7 @@ class DesignVariable:
     lower: float
     upper: float
     enabled: bool = True
+    case_ids: Optional[List[str]] = None
 
 
 @dataclass
@@ -28,6 +29,7 @@ class ObjectiveSpec:
     expression: str
     direction: str
     enabled: bool = True
+    case_ids: Optional[List[str]] = None
 
 
 @dataclass
@@ -36,6 +38,7 @@ class ConstraintSpec:
     comparator: str
     limit: float
     enabled: bool = True
+    case_ids: Optional[List[str]] = None
 
 
 def _signals_from_frames(frames: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -176,7 +179,7 @@ class OptimizationWorker(QThread):
     def __init__(
         self,
         model_snapshot: Dict[str, Any],
-        case_spec: Dict[str, Any],
+        case_specs: Dict[str, Dict[str, Any]],
         variables: List[DesignVariable],
         objectives: List[ObjectiveSpec],
         constraints: List[ConstraintSpec],
@@ -185,7 +188,7 @@ class OptimizationWorker(QThread):
     ):
         super().__init__()
         self.model_snapshot = model_snapshot
-        self.case_spec = case_spec
+        self.case_specs = case_specs
         self.variables = variables
         self.objectives = objectives
         self.constraints = constraints
@@ -199,6 +202,10 @@ class OptimizationWorker(QThread):
     def run(self) -> None:
         try:
             rng = random.Random(self.seed)
+            all_case_ids = list(self.case_specs.keys())
+            if not all_case_ids:
+                self.failed.emit("No cases available.")
+                return
             best = {"score": float("inf"), "vars": {}, "objective": None, "constraints": None}
             for idx in range(self.evals):
                 if self._stop:
@@ -210,20 +217,48 @@ class OptimizationWorker(QThread):
                     candidate[var.name] = rng.uniform(var.lower, var.upper)
 
                 snapshot = _apply_design_vars(self.model_snapshot, candidate)
-                frames, summary, status = simulate_case(snapshot, self.case_spec)
-                signals = build_signals(frames, snapshot)
+                required_cases: set[str] = set()
+                for obj in self.objectives:
+                    if not obj.enabled:
+                        continue
+                    required_cases.update(obj.case_ids or all_case_ids)
+                for con in self.constraints:
+                    if not con.enabled:
+                        continue
+                    required_cases.update(con.case_ids or all_case_ids)
+                if not required_cases:
+                    required_cases.update(all_case_ids)
+
+                signals_by_case: Dict[str, Dict[str, Any]] = {}
+                summaries: Dict[str, Any] = {}
+                statuses: Dict[str, Any] = {}
+                for case_id in required_cases:
+                    case_spec = self.case_specs.get(case_id)
+                    if not case_spec:
+                        continue
+                    frames, summary, status = simulate_case(snapshot, case_spec)
+                    signals_by_case[case_id] = build_signals(frames, snapshot)
+                    summaries[case_id] = summary
+                    statuses[case_id] = status
 
                 obj_vals = []
                 obj_score = 0.0
                 for obj in self.objectives:
                     if not obj.enabled:
                         continue
-                    val, err = evaluate_expression(obj.expression, signals)
-                    if err:
-                        val = 1e9
-                    if obj.direction == "max":
-                        val = -val
-                    obj_vals.append(val)
+                    case_vals = []
+                    for case_id in obj.case_ids or all_case_ids:
+                        signals = signals_by_case.get(case_id)
+                        if not signals:
+                            continue
+                        val, err = evaluate_expression(obj.expression, signals)
+                        if err:
+                            val = 1e9
+                        if obj.direction == "max":
+                            val = -val
+                        case_vals.append(val)
+                    if case_vals:
+                        obj_vals.append(sum(case_vals) / float(len(case_vals)))
                 base_score = obj_vals[0] if obj_vals else 0.0
 
                 violation = 0.0
@@ -231,16 +266,20 @@ class OptimizationWorker(QThread):
                 for con in self.constraints:
                     if not con.enabled:
                         continue
-                    val, err = evaluate_expression(con.expression, signals)
-                    if err:
-                        violation += 1e6
+                    for case_id in con.case_ids or all_case_ids:
+                        signals = signals_by_case.get(case_id)
+                        if not signals:
+                            continue
+                        val, err = evaluate_expression(con.expression, signals)
+                        if err:
+                            violation += 1e6
+                            con_vals.append(val)
+                            continue
                         con_vals.append(val)
-                        continue
-                    con_vals.append(val)
-                    if con.comparator == "<=":
-                        violation += max(0.0, val - con.limit)
-                    else:
-                        violation += max(0.0, con.limit - val)
+                        if con.comparator == "<=":
+                            violation += max(0.0, val - con.limit)
+                        else:
+                            violation += max(0.0, con.limit - val)
 
                 penalty = violation * 1e6
                 obj_score = base_score + penalty
@@ -251,8 +290,8 @@ class OptimizationWorker(QThread):
                         "vars": candidate,
                         "objective": base_score,
                         "constraints": con_vals,
-                        "summary": summary,
-                        "status": status,
+                        "summary": summaries,
+                        "status": statuses,
                     }
 
                 self.progress.emit({"index": idx + 1, "best": best})

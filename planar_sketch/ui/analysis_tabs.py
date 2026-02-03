@@ -60,7 +60,7 @@ class AnimationTab(QWidget):
         self.lbl_active = QLabel("")
         layout.addWidget(self.lbl_active)
 
-        self.table_case_runs = QTableWidget(0, 4)
+        self.table_case_runs = QTableWidget(0, 3)
         self.table_case_runs.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_case_runs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_case_runs.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -102,6 +102,36 @@ class AnimationTab(QWidget):
     def _manager(self) -> CaseRunManager:
         return CaseRunManager(self._project_dir())
 
+    def _case_label_text(self) -> str:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        cases = self._manager().list_cases()
+        if not cases:
+            return "--"
+        return tr(lang, "analysis.all_cases")
+
+    def _case_options(self) -> List[tuple[str, str]]:
+        options: List[tuple[str, str]] = []
+        for case in self._manager().list_cases():
+            label = f"{case.name} ({case.case_id})"
+            options.append((label, case.case_id))
+        return options
+
+    def _case_combo(self, parent: QWidget) -> QComboBox:
+        combo = QComboBox(parent)
+        lang = getattr(self.ctrl, "ui_language", "en")
+        combo.addItem(tr(lang, "analysis.all_cases"), None)
+        for label, case_id in self._case_options():
+            combo.addItem(label, case_id)
+        return combo
+
+    def _case_ids_from_combo(self, combo: Optional[QComboBox]) -> Optional[List[str]]:
+        if not isinstance(combo, QComboBox):
+            return None
+        data = combo.currentData()
+        if data is None:
+            return None
+        return [str(data)]
+
     def refresh_cases(self) -> None:
         manager = self._manager()
         cases = manager.list_cases()
@@ -109,20 +139,17 @@ class AnimationTab(QWidget):
         rows: List[Dict[str, Any]] = []
         for info in cases:
             runs = manager.list_runs(info.case_id)
-            rows.append({"case": info, "run": None, "kind": "case"})
-            for idx, run in enumerate(runs, start=1):
-                rows.append({"case": info, "run": run, "run_number": idx, "kind": "run"})
+            run_info = runs[0] if runs else None
+            rows.append({"case": info, "run": run_info, "kind": "case"})
         self._row_cache = rows
         self.table_case_runs.setRowCount(len(rows))
         for row, payload in enumerate(rows):
             case_info = payload["case"]
             run_info = payload.get("run") or {}
             is_case_row = payload.get("kind") == "case"
-            case_label = case_info.name if is_case_row else f"  \u21b3 {tr(getattr(self.ctrl, 'ui_language', 'en'), 'analysis.run')}"
-            run_number = payload.get("run_number", "")
+            case_label = case_info.name
             items = [
                 QTableWidgetItem(case_label),
-                QTableWidgetItem("" if is_case_row else str(run_number)),
                 QTableWidgetItem(str(run_info.get("success", ""))),
                 QTableWidgetItem(str(run_info.get("n_steps", ""))),
             ]
@@ -140,13 +167,12 @@ class AnimationTab(QWidget):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.table_case_runs.setHorizontalHeaderLabels(
             [
-                tr(lang, "analysis.case_run"),
-                tr(lang, "analysis.run_number"),
+                tr(lang, "analysis.case"),
                 tr(lang, "analysis.success"),
                 tr(lang, "analysis.steps"),
             ]
         )
-        self.lbl_cases_runs.setText(tr(lang, "analysis.cases_runs"))
+        self.lbl_cases_runs.setText(tr(lang, "analysis.cases"))
         self.btn_set_active.setText(tr(lang, "analysis.set_active_case"))
         self.btn_load_run_data.setText(tr(lang, "analysis.load_run_data"))
         self.group_replay.setTitle(tr(lang, "analysis.replay_plot"))
@@ -605,7 +631,7 @@ class OptimizationTab(QWidget):
         layout.addStretch(1)
 
         self.apply_language()
-        self.refresh_active_case()
+        self.refresh_case_label()
         self.ensure_defaults()
 
     def _build_variables_group(self) -> QWidget:
@@ -620,7 +646,7 @@ class OptimizationTab(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        self.table_vars = QTableWidget(0, 6)
+        self.table_vars = QTableWidget(0, 7)
         self.table_vars.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_vars.verticalHeader().setVisible(False)
         self.table_vars.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -643,7 +669,7 @@ class OptimizationTab(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        self.table_obj = QTableWidget(0, 3)
+        self.table_obj = QTableWidget(0, 4)
         self.table_obj.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_obj.verticalHeader().setVisible(False)
         self.table_obj.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -666,7 +692,7 @@ class OptimizationTab(QWidget):
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
-        self.table_con = QTableWidget(0, 4)
+        self.table_con = QTableWidget(0, 5)
         self.table_con.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table_con.verticalHeader().setVisible(False)
         self.table_con.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -728,13 +754,12 @@ class OptimizationTab(QWidget):
     def _manager(self) -> CaseRunManager:
         return CaseRunManager(self._project_dir())
 
-    def refresh_active_case(self) -> None:
-        active = self._manager().get_active_case()
-        self._set_active_label(active or "--")
+    def refresh_case_label(self) -> None:
+        self._set_cases_label(self._case_label_text())
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
-        self._set_active_label(self._manager().get_active_case() or "--")
+        self._set_cases_label(self._case_label_text())
         self.group_vars.setTitle(tr(lang, "analysis.design_variables"))
         self.group_obj.setTitle(tr(lang, "analysis.objectives"))
         self.group_con.setTitle(tr(lang, "analysis.constraints"))
@@ -754,6 +779,7 @@ class OptimizationTab(QWidget):
         self.table_vars.setHorizontalHeaderLabels(
             [
                 tr(lang, "table.enabled"),
+                tr(lang, "analysis.case"),
                 tr(lang, "analysis.variable_type"),
                 tr(lang, "analysis.variable_name"),
                 tr(lang, "analysis.variable_current"),
@@ -764,6 +790,7 @@ class OptimizationTab(QWidget):
         self.table_obj.setHorizontalHeaderLabels(
             [
                 tr(lang, "table.enabled"),
+                tr(lang, "analysis.case"),
                 tr(lang, "analysis.direction"),
                 tr(lang, "analysis.expression"),
             ]
@@ -771,6 +798,7 @@ class OptimizationTab(QWidget):
         self.table_con.setHorizontalHeaderLabels(
             [
                 tr(lang, "table.enabled"),
+                tr(lang, "analysis.case"),
                 tr(lang, "analysis.expression"),
                 tr(lang, "analysis.comparator"),
                 tr(lang, "analysis.limit"),
@@ -778,9 +806,9 @@ class OptimizationTab(QWidget):
         )
         self.table_best.setHorizontalHeaderLabels([tr(lang, "analysis.best_objective"), "P12.x", "P12.y"])
 
-    def _set_active_label(self, case_id: str) -> None:
+    def _set_cases_label(self, text: str) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
-        self.lbl_active.setText(tr(lang, "analysis.active_case").format(case=case_id))
+        self.lbl_active.setText(tr(lang, "analysis.cases_label").format(cases=text))
 
     def _set_progress_label(self, value: str) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -839,7 +867,7 @@ class OptimizationTab(QWidget):
         combo = self.sender()
         if not isinstance(combo, QComboBox):
             return
-        row = self._row_for_table_widget(self.table_vars, combo, [1])
+        row = self._row_for_table_widget(self.table_vars, combo, [2])
         if row < 0:
             return
         self._apply_variable_type(row, var_type)
@@ -848,7 +876,7 @@ class OptimizationTab(QWidget):
         combo = self.sender()
         if not isinstance(combo, QComboBox):
             return
-        row = self._row_for_table_widget(self.table_vars, combo, [2])
+        row = self._row_for_table_widget(self.table_vars, combo, [3])
         if row < 0:
             return
         self._update_current_value(row)
@@ -861,11 +889,14 @@ class OptimizationTab(QWidget):
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_vars.setItem(row, 0, enabled_item)
 
+        case_combo = self._case_combo(self.table_vars)
+        self.table_vars.setCellWidget(row, 1, case_combo)
+
         type_combo = QComboBox(self.table_vars)
         type_combo.addItems(self._variable_type_options())
         type_combo.setCurrentText(self._infer_variable_type(name))
         type_combo.currentTextChanged.connect(self._on_variable_type_changed)
-        self.table_vars.setCellWidget(row, 1, type_combo)
+        self.table_vars.setCellWidget(row, 2, type_combo)
 
         combo = QComboBox(self.table_vars)
         opts = self._variable_options_for_type(type_combo.currentText())
@@ -876,13 +907,13 @@ class OptimizationTab(QWidget):
             combo.addItem(name)
             combo.setCurrentText(name)
         combo.currentTextChanged.connect(self._on_variable_name_changed)
-        self.table_vars.setCellWidget(row, 2, combo)
+        self.table_vars.setCellWidget(row, 3, combo)
 
         current_item = QTableWidgetItem("--")
         current_item.setFlags(current_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table_vars.setItem(row, 3, current_item)
-        self.table_vars.setItem(row, 4, QTableWidgetItem(""))
+        self.table_vars.setItem(row, 4, current_item)
         self.table_vars.setItem(row, 5, QTableWidgetItem(""))
+        self.table_vars.setItem(row, 6, QTableWidgetItem(""))
         self._update_current_value(row)
 
     def remove_variable_row(self) -> None:
@@ -891,12 +922,12 @@ class OptimizationTab(QWidget):
             self.table_vars.removeRow(row)
 
     def _update_current_value(self, row: int) -> None:
-        combo = self.table_vars.cellWidget(row, 2)
+        combo = self.table_vars.cellWidget(row, 3)
         if not isinstance(combo, QComboBox):
             return
         name = combo.currentText()
         current = self._get_variable_value(name)
-        item = self.table_vars.item(row, 3)
+        item = self.table_vars.item(row, 4)
         if item:
             item.setText("--" if current is None else f"{current:.4f}")
 
@@ -935,7 +966,7 @@ class OptimizationTab(QWidget):
         return float(self.ctrl.points[pid].get(axis, 0.0))
 
     def _apply_variable_type(self, row: int, var_type: str) -> None:
-        combo = self.table_vars.cellWidget(row, 2)
+        combo = self.table_vars.cellWidget(row, 3)
         if not isinstance(combo, QComboBox):
             return
         current = combo.currentText()
@@ -956,11 +987,15 @@ class OptimizationTab(QWidget):
         enabled_item = QTableWidgetItem()
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_obj.setItem(row, 0, enabled_item)
+
+        case_combo = self._case_combo(self.table_obj)
+        self.table_obj.setCellWidget(row, 1, case_combo)
+
         combo = QComboBox(self.table_obj)
         combo.addItems(["min", "max"])
         combo.setCurrentText(direction)
-        self.table_obj.setCellWidget(row, 1, combo)
-        self.table_obj.setItem(row, 2, QTableWidgetItem(expression))
+        self.table_obj.setCellWidget(row, 2, combo)
+        self.table_obj.setItem(row, 3, QTableWidgetItem(expression))
 
     def remove_objective_row(self) -> None:
         row = self.table_obj.currentRow()
@@ -973,12 +1008,16 @@ class OptimizationTab(QWidget):
         enabled_item = QTableWidgetItem()
         enabled_item.setCheckState(Qt.CheckState.Checked)
         self.table_con.setItem(row, 0, enabled_item)
-        self.table_con.setItem(row, 1, QTableWidgetItem(expression))
+
+        case_combo = self._case_combo(self.table_con)
+        self.table_con.setCellWidget(row, 1, case_combo)
+
+        self.table_con.setItem(row, 2, QTableWidgetItem(expression))
         combo = QComboBox(self.table_con)
         combo.addItems(["<=", ">="])
         combo.setCurrentText(comparator)
-        self.table_con.setCellWidget(row, 2, combo)
-        self.table_con.setItem(row, 3, QTableWidgetItem(limit))
+        self.table_con.setCellWidget(row, 3, combo)
+        self.table_con.setItem(row, 4, QTableWidgetItem(limit))
 
     def remove_constraint_row(self) -> None:
         row = self.table_con.currentRow()
@@ -999,9 +1038,8 @@ class OptimizationTab(QWidget):
         load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
 
         manager = self._manager()
-        case_id = manager.get_active_case()
-        if case_id:
-            case_spec = manager.load_case_spec(case_id) or {}
+        for info in manager.list_cases():
+            case_spec = manager.load_case_spec(info.case_id) or {}
             measurements.extend(case_spec.get("measurements", {}).get("signals", []))
 
         if measurements:
@@ -1027,7 +1065,7 @@ class OptimizationTab(QWidget):
             return
         row = item.row()
         col = item.column()
-        if col != 2:
+        if col != 3:
             return
         lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
@@ -1042,7 +1080,7 @@ class OptimizationTab(QWidget):
             return
         row = item.row()
         col = item.column()
-        if col != 1:
+        if col != 2:
             return
         lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
@@ -1052,52 +1090,66 @@ class OptimizationTab(QWidget):
             self._open_expression_builder_for_constraint(row)
 
     def _open_expression_builder_for_objective(self, row: int) -> None:
-        expr_item = self.table_obj.item(row, 2)
+        expr_item = self.table_obj.item(row, 3)
         current = expr_item.text() if expr_item else ""
+        case_combo = self.table_obj.cellWidget(row, 1)
+        case_ids = self._case_ids_from_combo(case_combo)
         dialog = ExpressionBuilderDialog(
             self,
             initial=current,
             tokens=self._optimization_token_groups(),
             functions=self._optimization_functions(),
-            evaluator=self._evaluate_expression,
+            evaluator=lambda expr: self._evaluate_expression(expr, case_ids),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             text = dialog.expression().strip()
             if expr_item:
                 expr_item.setText(text)
             else:
-                self.table_obj.setItem(row, 2, QTableWidgetItem(text))
+                self.table_obj.setItem(row, 3, QTableWidgetItem(text))
 
     def _open_expression_builder_for_constraint(self, row: int) -> None:
-        expr_item = self.table_con.item(row, 1)
+        expr_item = self.table_con.item(row, 2)
         current = expr_item.text() if expr_item else ""
+        case_combo = self.table_con.cellWidget(row, 1)
+        case_ids = self._case_ids_from_combo(case_combo)
         dialog = ExpressionBuilderDialog(
             self,
             initial=current,
             tokens=self._optimization_token_groups(),
             functions=self._optimization_functions(),
-            evaluator=self._evaluate_expression,
+            evaluator=lambda expr: self._evaluate_expression(expr, case_ids),
         )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             text = dialog.expression().strip()
             if expr_item:
                 expr_item.setText(text)
             else:
-                self.table_con.setItem(row, 1, QTableWidgetItem(text))
+                self.table_con.setItem(row, 2, QTableWidgetItem(text))
 
-    def _evaluate_expression(self, expr: str) -> tuple[Optional[float], Optional[str]]:
-        manager = self._manager()
-        case_id = manager.get_active_case()
-        if not case_id:
-            return None, "Select an active case first"
-        case_spec = manager.load_case_spec(case_id)
-        if not case_spec:
-            return None, "Active case spec not found"
+    def _evaluate_expression(self, expr: str, case_ids: Optional[List[str]] = None) -> tuple[Optional[float], Optional[str]]:
+        case_specs = self._collect_case_specs()
+        if not case_specs:
+            return None, "No cases available"
+        selected_case_ids = case_ids or list(case_specs.keys())
+        if not selected_case_ids:
+            return None, "No cases selected"
         model_snapshot = self.ctrl.snapshot_model()
         try:
-            frames, _summary, _status = simulate_case(model_snapshot, case_spec)
-            signals = build_signals(frames, model_snapshot)
-            return evaluate_expression(expr, signals)
+            values = []
+            for case_id in selected_case_ids:
+                case_spec = case_specs.get(case_id)
+                if not case_spec:
+                    continue
+                frames, _summary, _status = simulate_case(model_snapshot, case_spec)
+                signals = build_signals(frames, model_snapshot)
+                val, err = evaluate_expression(expr, signals)
+                if err:
+                    return None, err
+                values.append(val)
+            if not values:
+                return None, "No case results"
+            return float(sum(values)) / float(len(values)), None
         except Exception as exc:
             return None, str(exc)
 
@@ -1106,10 +1158,12 @@ class OptimizationTab(QWidget):
         for row in range(self.table_vars.rowCount()):
             enabled_item = self.table_vars.item(row, 0)
             enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
-            combo = self.table_vars.cellWidget(row, 2)
+            case_combo = self.table_vars.cellWidget(row, 1)
+            case_ids = self._case_ids_from_combo(case_combo)
+            combo = self.table_vars.cellWidget(row, 3)
             name = combo.currentText() if isinstance(combo, QComboBox) else ""
-            lower_item = self.table_vars.item(row, 4)
-            upper_item = self.table_vars.item(row, 5)
+            lower_item = self.table_vars.item(row, 5)
+            upper_item = self.table_vars.item(row, 6)
             try:
                 lower = float(lower_item.text()) if lower_item and lower_item.text().strip() else None
                 upper = float(upper_item.text()) if upper_item and upper_item.text().strip() else None
@@ -1119,7 +1173,7 @@ class OptimizationTab(QWidget):
             if lower is None or upper is None:
                 QMessageBox.warning(self, "Variables", f"Bounds required for {name}.")
                 return None
-            variables.append(DesignVariable(name=name, lower=lower, upper=upper, enabled=enabled))
+            variables.append(DesignVariable(name=name, lower=lower, upper=upper, enabled=enabled, case_ids=case_ids))
         return variables
 
     def _collect_objectives(self) -> List[ObjectiveSpec]:
@@ -1127,11 +1181,13 @@ class OptimizationTab(QWidget):
         for row in range(self.table_obj.rowCount()):
             enabled_item = self.table_obj.item(row, 0)
             enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
-            combo = self.table_obj.cellWidget(row, 1)
+            case_combo = self.table_obj.cellWidget(row, 1)
+            case_ids = self._case_ids_from_combo(case_combo)
+            combo = self.table_obj.cellWidget(row, 2)
             direction = combo.currentText() if isinstance(combo, QComboBox) else "min"
-            expr_item = self.table_obj.item(row, 2)
+            expr_item = self.table_obj.item(row, 3)
             expr = expr_item.text().strip() if expr_item else ""
-            objs.append(ObjectiveSpec(expression=expr, direction=direction, enabled=enabled))
+            objs.append(ObjectiveSpec(expression=expr, direction=direction, enabled=enabled, case_ids=case_ids))
         return objs
 
     def _collect_constraints(self) -> List[ConstraintSpec]:
@@ -1139,11 +1195,13 @@ class OptimizationTab(QWidget):
         for row in range(self.table_con.rowCount()):
             enabled_item = self.table_con.item(row, 0)
             enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
-            expr_item = self.table_con.item(row, 1)
+            case_combo = self.table_con.cellWidget(row, 1)
+            case_ids = self._case_ids_from_combo(case_combo)
+            expr_item = self.table_con.item(row, 2)
             expr = expr_item.text().strip() if expr_item else ""
-            combo = self.table_con.cellWidget(row, 2)
+            combo = self.table_con.cellWidget(row, 3)
             comparator = combo.currentText() if isinstance(combo, QComboBox) else "<="
-            limit_item = self.table_con.item(row, 3)
+            limit_item = self.table_con.item(row, 4)
             if limit_item is None or not limit_item.text().strip():
                 limit = 0.0
             else:
@@ -1152,8 +1210,25 @@ class OptimizationTab(QWidget):
                 except Exception:
                     QMessageBox.warning(self, "Constraints", "Constraint limits must be numeric.")
                     return []
-            cons.append(ConstraintSpec(expression=expr, comparator=comparator, limit=limit, enabled=enabled))
+            cons.append(
+                ConstraintSpec(
+                    expression=expr,
+                    comparator=comparator,
+                    limit=limit,
+                    enabled=enabled,
+                    case_ids=case_ids,
+                )
+            )
         return cons
+
+    def _collect_case_specs(self) -> Dict[str, Dict[str, Any]]:
+        manager = self._manager()
+        case_specs: Dict[str, Dict[str, Any]] = {}
+        for info in manager.list_cases():
+            spec = manager.load_case_spec(info.case_id)
+            if spec:
+                case_specs[info.case_id] = spec
+        return case_specs
 
     def run_optimization(self) -> None:
         self.ensure_defaults()
@@ -1163,19 +1238,11 @@ class OptimizationTab(QWidget):
         objectives = self._collect_objectives()
         constraints = self._collect_constraints()
 
-        manager = self._manager()
-        case_id = manager.get_active_case()
-        if not case_id:
-            QMessageBox.warning(self, "Optimization", "Select an active case first.")
+        case_specs = self._collect_case_specs()
+        if not case_specs:
+            QMessageBox.warning(self, "Optimization", "No cases available.")
             return
-        case_spec = manager.load_case_spec(case_id)
-        if not case_spec:
-            QMessageBox.warning(self, "Optimization", "Active case spec not found.")
-            return
-
-        model_snapshot = manager.load_latest_model_snapshot(case_id)
-        if model_snapshot is None:
-            model_snapshot = self.ctrl.snapshot_model()
+        model_snapshot = self.ctrl.snapshot_model()
 
         try:
             evals = int(float(self.ed_evals.text() or "50"))
@@ -1186,7 +1253,7 @@ class OptimizationTab(QWidget):
 
         self._worker = OptimizationWorker(
             model_snapshot=model_snapshot,
-            case_spec=case_spec,
+            case_specs=case_specs,
             variables=variables,
             objectives=objectives,
             constraints=constraints,
