@@ -351,11 +351,21 @@ class MainWindow(QMainWindow):
 
     def _activate_sketch_mode(self) -> None:
         self._set_active_ribbon("sketch")
-        self._raise_dock(self.dock)
+        self._set_dock_visibility(active="sketch")
 
     def _activate_analysis_mode(self) -> None:
         self._set_active_ribbon("analysis")
-        self._raise_dock(self.sim_dock)
+        self._set_dock_visibility(active="analysis")
+
+    def _set_dock_visibility(self, active: str) -> None:
+        show_sketch = active == "sketch"
+        show_analysis = active == "analysis"
+        self.dock.setVisible(show_sketch)
+        self.sim_dock.setVisible(show_analysis)
+        if show_sketch:
+            self._raise_dock(self.dock)
+        if show_analysis:
+            self._raise_dock(self.sim_dock)
 
     def _raise_dock(self, dock: QDockWidget) -> None:
         dock.show()
