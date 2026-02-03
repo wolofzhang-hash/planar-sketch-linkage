@@ -176,6 +176,19 @@ class SketchView(QGraphicsView):
 
         super().mouseReleaseEvent(e)
 
+    @safe_event
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Delete:
+            if self.ctrl.win:
+                self.ctrl.win.delete_selected()
+            e.accept()
+            return
+        if e.key() == Qt.Key.Key_Escape:
+            self.ctrl.cancel_model_action()
+            e.accept()
+            return
+        super().keyPressEvent(e)
+
     def reset_view(self):
         self.resetTransform()
         self.centerOn(0, 0)
