@@ -10,7 +10,6 @@ import math
 import numbers
 import os
 import shutil
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -288,8 +287,10 @@ class CaseRunManager:
         end_snapshot: Optional[Dict[str, Any]] = None,
     ) -> str:
         case_info = self.get_or_create_case(case_spec)
-        run_id = f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{uuid.uuid4().hex[:6]}"
-        run_dir = self._run_dir(case_info.case_id, run_id)
+        run_dir = self._run_dir(case_info.case_id, "current")
+        case_runs_dir = os.path.join(self.runs_dir, case_info.case_id)
+        if os.path.isdir(case_runs_dir):
+            shutil.rmtree(case_runs_dir)
         results_dir = os.path.join(run_dir, "results")
         _ensure_dir(results_dir)
 
@@ -375,29 +376,23 @@ class CaseRunManager:
         }
 
     def list_runs(self, case_id: str) -> List[Dict[str, Any]]:
-        runs_path = os.path.join(self.runs_dir, case_id)
-        if not os.path.isdir(runs_path):
+        run_dir = self._run_dir(case_id, "current")
+        if not os.path.isdir(run_dir):
             return []
-        runs = []
-        for run_id in sorted(os.listdir(runs_path), reverse=True):
-            run_dir = os.path.join(runs_path, run_id)
-            if not os.path.isdir(run_dir):
-                continue
-            summary = _read_json(os.path.join(run_dir, "results", "summary.json"))
-            status = _read_json(os.path.join(run_dir, "status.json"))
-            runs.append(
-                {
-                    "run_id": run_id,
-                    "path": run_dir,
-                    "success": summary.get("success", status.get("success")),
-                    "n_steps": summary.get("n_steps"),
-                    "success_rate": summary.get("success_rate"),
-                    "max_hard_err": summary.get("max_hard_err"),
-                    "elapsed_sec": summary.get("elapsed_sec", status.get("elapsed_sec")),
-                    "updated_utc": status.get("finished_utc", ""),
-                }
-            )
-        return runs
+        summary = _read_json(os.path.join(run_dir, "results", "summary.json"))
+        status = _read_json(os.path.join(run_dir, "status.json"))
+        return [
+            {
+                "run_id": "current",
+                "path": run_dir,
+                "success": summary.get("success", status.get("success")),
+                "n_steps": summary.get("n_steps"),
+                "success_rate": summary.get("success_rate"),
+                "max_hard_err": summary.get("max_hard_err"),
+                "elapsed_sec": summary.get("elapsed_sec", status.get("elapsed_sec")),
+                "updated_utc": status.get("finished_utc", ""),
+            }
+        ]
 
     def last_run_path(self) -> Optional[str]:
         path = os.path.join(self.runs_dir, "last_run.txt")
