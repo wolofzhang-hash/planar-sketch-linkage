@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
 
         self.menu_sketch_action = mb.addAction("")
         self.menu_sketch_action.setCheckable(True)
-        self.menu_sketch_action.triggered.connect(lambda: self._set_active_ribbon("sketch"))
+        self.menu_sketch_action.triggered.connect(self._activate_sketch_mode)
         self.act_create_point = QAction("", self)
         self.act_create_point.triggered.connect(self.create_point_at_view_center)
         self.act_create_line = QAction("", self)
@@ -142,6 +142,10 @@ class MainWindow(QMainWindow):
         self.act_create_spline.triggered.connect(self.ctrl._add_spline_from_selection)
         self.act_solve_accurate = QAction("", self)
         self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
+
+        self.menu_analysis_action = mb.addAction("")
+        self.menu_analysis_action.setCheckable(True)
+        self.menu_analysis_action.triggered.connect(self._activate_analysis_mode)
 
         self.menu_view_action = mb.addAction("")
         self.menu_view_action.setCheckable(True)
@@ -176,6 +180,19 @@ class MainWindow(QMainWindow):
         self.act_reset_view.triggered.connect(self.view.reset_view)
         self.act_fit_all = QAction("", self)
         self.act_fit_all.triggered.connect(self.view.fit_all)
+
+        self.act_analysis_play = QAction("", self)
+        self.act_analysis_play.triggered.connect(self.sim_panel.play)
+        self.act_analysis_stop = QAction("", self)
+        self.act_analysis_stop.triggered.connect(self.sim_panel.stop)
+        self.act_analysis_reset_pose = QAction("", self)
+        self.act_analysis_reset_pose.triggered.connect(self.sim_panel.reset_pose)
+        self.act_analysis_export = QAction("", self)
+        self.act_analysis_export.triggered.connect(self.sim_panel.export_csv)
+        self.act_analysis_save_run = QAction("", self)
+        self.act_analysis_save_run.triggered.connect(self.sim_panel.save_last_run)
+        self.act_analysis_open_last_run = QAction("", self)
+        self.act_analysis_open_last_run.triggered.connect(self.sim_panel.open_last_run)
 
     def _build_toolbars(self) -> None:
         icon_size = QSize(20, 20)
@@ -239,12 +256,26 @@ class MainWindow(QMainWindow):
         self.toolbar_view.addAction(self.act_reset_view)
         self.toolbar_view.addAction(self.act_fit_all)
 
+        self.toolbar_analysis = QToolBar(self)
+        self.toolbar_analysis.setIconSize(icon_size)
+        self.toolbar_analysis.setMovable(False)
+        self.toolbar_analysis.setFloatable(False)
+        self.toolbar_analysis.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_analysis)
+        self.toolbar_analysis.addAction(self.act_analysis_play)
+        self.toolbar_analysis.addAction(self.act_analysis_stop)
+        self.toolbar_analysis.addAction(self.act_analysis_reset_pose)
+        self.toolbar_analysis.addSeparator()
+        self.toolbar_analysis.addAction(self.act_analysis_export)
+        self.toolbar_analysis.addAction(self.act_analysis_save_run)
+        self.toolbar_analysis.addAction(self.act_analysis_open_last_run)
+
         self._apply_action_icons()
         self._set_active_ribbon("file")
 
     def _set_toolbars_visible(self, visible: bool) -> None:
         self._toolbars_enabled = visible
-        for toolbar in (self.toolbar_file, self.toolbar_edit, self.toolbar_sketch, self.toolbar_view):
+        for toolbar in (self.toolbar_file, self.toolbar_edit, self.toolbar_sketch, self.toolbar_view, self.toolbar_analysis):
             toolbar.setVisible(visible)
         if visible:
             self._set_active_ribbon(getattr(self, "_active_ribbon", "file"))
@@ -258,6 +289,7 @@ class MainWindow(QMainWindow):
             "edit": self.toolbar_edit,
             "sketch": self.toolbar_sketch,
             "view": self.toolbar_view,
+            "analysis": self.toolbar_analysis,
         }
         for name, toolbar in toolbars.items():
             toolbar.setVisible(name == key)
@@ -266,8 +298,21 @@ class MainWindow(QMainWindow):
             ("edit", self.menu_edit_action),
             ("sketch", self.menu_sketch_action),
             ("view", self.menu_view_action),
+            ("analysis", self.menu_analysis_action),
         ):
             action.setChecked(name == key)
+
+    def _activate_sketch_mode(self) -> None:
+        self._set_active_ribbon("sketch")
+        self._raise_dock(self.dock)
+
+    def _activate_analysis_mode(self) -> None:
+        self._set_active_ribbon("analysis")
+        self._raise_dock(self.sim_dock)
+
+    def _raise_dock(self, dock: QDockWidget) -> None:
+        dock.show()
+        dock.raise_()
 
     def _apply_action_icons(self) -> None:
         style = self.style()
@@ -300,6 +345,12 @@ class MainWindow(QMainWindow):
         self.act_preset_links_only.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
         self.act_reset_view.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserStop))
         self.act_fit_all.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.act_analysis_play.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.act_analysis_stop.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaStop))
+        self.act_analysis_reset_pose.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.act_analysis_export.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.act_analysis_save_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.act_analysis_open_last_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -307,11 +358,13 @@ class MainWindow(QMainWindow):
         self.menu_edit_action.setText(tr(lang, "menu.edit"))
         self.menu_sketch_action.setText(tr(lang, "menu.sketch"))
         self.menu_view_action.setText(tr(lang, "menu.view"))
+        self.menu_analysis_action.setText(tr(lang, "menu.analysis"))
         if hasattr(self, "toolbar_file"):
             self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
             self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
             self.toolbar_sketch.setWindowTitle(tr(lang, "menu.sketch"))
             self.toolbar_view.setWindowTitle(tr(lang, "menu.view"))
+            self.toolbar_analysis.setWindowTitle(tr(lang, "menu.analysis"))
         self.act_file_new.setText(tr(lang, "action.new"))
         self.act_file_open.setText(tr(lang, "action.open"))
         self.act_file_save.setText(tr(lang, "action.save"))
@@ -341,6 +394,12 @@ class MainWindow(QMainWindow):
         self.act_preset_links_only.setText(tr(lang, "action.preset_links_only"))
         self.act_reset_view.setText(tr(lang, "action.reset_view"))
         self.act_fit_all.setText(tr(lang, "action.fit_all"))
+        self.act_analysis_play.setText(tr(lang, "sim.play"))
+        self.act_analysis_stop.setText(tr(lang, "sim.stop"))
+        self.act_analysis_reset_pose.setText(tr(lang, "sim.reset_pose"))
+        self.act_analysis_export.setText(tr(lang, "sim.export_csv"))
+        self.act_analysis_save_run.setText(tr(lang, "sim.save_run"))
+        self.act_analysis_open_last_run.setText(tr(lang, "sim.open_last_run"))
         self.dock.setWindowTitle(tr(lang, "dock.sketch"))
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
