@@ -606,16 +606,7 @@ class AnglesTab(QWidget):
         ])
 
     def _add_angle_from_points(self):
-        ids = self.panel.selected_points_from_table(include_hidden=False)
-        if len(ids) < 3:
-            QMessageBox.information(self, "Need 3 points", "Select 3 points (2nd is vertex).")
-            return
-        i, j, k = ids[0], ids[1], ids[2]
-        pi, pj, pk = self.ctrl.points[i], self.ctrl.points[j], self.ctrl.points[k]
-        v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
-        v2x, v2y = pk["x"] - pj["x"], pk["y"] - pj["y"]
-        deg = math.degrees(angle_between(v1x, v1y, v2x, v2y))
-        self.ctrl.cmd_add_angle(i, j, k, deg)
+        self.ctrl._add_angle_from_selection()
 
     def _delete_selected(self):
         aid = self.panel.selected_angle_from_table()

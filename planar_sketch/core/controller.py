@@ -2836,17 +2836,41 @@ class SketchController:
         self.update_status()
 
     def on_point_clicked_idle(self, pid: int, modifiers):
-        if modifiers & Qt.KeyboardModifier.ControlModifier:
+        if modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier):
             self.toggle_point(pid)
         else:
             self.select_point_single(pid, keep_others=False)
         self.update_status()
+
+    def _selected_points_for_angle(self) -> List[int]:
+        if self.panel:
+            ids = self.panel.selected_points_from_table(include_hidden=False)
+        else:
+            ids = sorted(self.selected_point_ids)
+        return [pid for pid in ids if pid in self.points]
+
+    def _add_angle_from_selection(self):
+        ids = self._selected_points_for_angle()
+        if len(ids) < 3:
+            QMessageBox.information(self.win, "Need 3 points", "Select 3 points (2nd is vertex).")
+            return
+        i, j, k = ids[0], ids[1], ids[2]
+        if len({i, j, k}) < 3:
+            QMessageBox.information(self.win, "Need 3 points", "Select 3 distinct points (2nd is vertex).")
+            return
+        pi, pj, pk = self.points[i], self.points[j], self.points[k]
+        v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
+        v2x, v2y = pk["x"] - pj["x"], pk["y"] - pj["y"]
+        deg = math.degrees(angle_between(v1x, v1y, v2x, v2y))
+        self.cmd_add_angle(i, j, k, deg)
 
     def show_empty_context_menu(self, global_pos, scene_pos: QPointF):
         lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
         m.addAction(tr(lang, "context.create_point"), lambda: self.cmd_add_point(scene_pos.x(), scene_pos.y()))
         m.addAction(tr(lang, "context.create_line"), self.begin_create_line)
+        add_angle = m.addAction(tr(lang, "context.create_angle_from_selection"), self._add_angle_from_selection)
+        add_angle.setEnabled(len(self._selected_points_for_angle()) >= 3)
         m.addAction(tr(lang, "context.create_spline_from_selection"), self._add_spline_from_selection)
         m.exec(global_pos)
 
@@ -2877,6 +2901,8 @@ class SketchController:
         )
         m.addSeparator()
         m.addAction(tr(lang, "context.coincide_with"), lambda: self.begin_coincide(pid))
+        add_angle = m.addAction(tr(lang, "context.create_angle_from_selection"), self._add_angle_from_selection)
+        add_angle.setEnabled(len(self._selected_points_for_angle()) >= 3)
 
         # --- Simulation helpers (driver / measurement) ---
         nbrs = []
