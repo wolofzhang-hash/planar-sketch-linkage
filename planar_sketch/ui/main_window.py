@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbars()
         self.apply_language()
+        self.menuBar().setVisible(False)
         self.file_new()
         self.update_undo_redo_actions()
         self.ctrl.update_status()
