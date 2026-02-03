@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt, QSignalBlocker, QItemSelectionModel, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QLabel, QMessageBox, QPushButton, QLineEdit, QComboBox,
+    QLabel, QMessageBox, QPushButton, QLineEdit, QComboBox, QHeaderView,
     QMenu, QInputDialog, QDialog
 )
 
@@ -161,6 +161,9 @@ class PointsTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(True)
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(lambda: self.ctrl.cmd_add_point(0.0, 0.0))
         self.btn_del.clicked.connect(self._delete_selected)

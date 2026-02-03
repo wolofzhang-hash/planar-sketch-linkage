@@ -994,7 +994,6 @@ class OptimizationTab(QWidget):
     def _optimization_token_groups(self) -> Dict[str, List[str]]:
         groups: Dict[str, List[str]] = {}
         groups["Input/Output"] = ["input_deg", "output_deg"]
-        groups["Status"] = ["hard_err", "success"]
 
         measurements = [name for name, _val in self.ctrl.get_measure_values_deg()]
         load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
