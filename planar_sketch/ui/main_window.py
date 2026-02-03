@@ -48,7 +48,8 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_toolbars()
         self.apply_language()
-        self.menuBar().setVisible(False)
+        self.menuBar().setVisible(True)
+        self._set_toolbars_visible(False)
         self.file_new()
         self.update_undo_redo_actions()
         self.ctrl.update_status()
@@ -259,7 +260,14 @@ class MainWindow(QMainWindow):
         self._apply_action_icons()
         self._set_active_ribbon("file")
 
+    def _set_toolbars_visible(self, visible: bool) -> None:
+        self._toolbars_enabled = visible
+        for toolbar in (self.toolbar_file, self.toolbar_edit, self.toolbar_sketch, self.toolbar_view):
+            toolbar.setVisible(visible)
+
     def _set_active_ribbon(self, key: str) -> None:
+        if not getattr(self, "_toolbars_enabled", True):
+            return
         toolbars = {
             "file": self.toolbar_file,
             "edit": self.toolbar_edit,
