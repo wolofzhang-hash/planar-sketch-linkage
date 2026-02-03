@@ -2290,21 +2290,28 @@ class SketchController:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(DelBody())
 
-    def cmd_delete_point(self, pid: int):
+    def cmd_delete_points(self, pids: List[int]):
         if not self._confirm_stop_replay("modify the model"):
             return
-        if pid not in self.points: return
+        ids = [pid for pid in pids if pid in self.points]
+        if not ids:
+            return
         ctrl = self
         model_before = self.snapshot_model()
-        class DelPoint(Command):
-            name = "Delete Point"
+        class DelPoints(Command):
+            name = "Delete Point" if len(ids) == 1 else "Delete Points"
             def do(self_):
-                ctrl._remove_point(pid)
+                for pid in sorted(ids, reverse=True):
+                    if pid in ctrl.points:
+                        ctrl._remove_point(pid)
                 ctrl.solve_constraints(); ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
-        self.stack.push(DelPoint())
+        self.stack.push(DelPoints())
+
+    def cmd_delete_point(self, pid: int):
+        self.cmd_delete_points([pid])
 
     def cmd_delete_link(self, lid: int):
         if not self._confirm_stop_replay("modify the model"):
@@ -3003,8 +3010,7 @@ class SketchController:
 
     def _delete_selected_points_multi(self):
         ids = sorted(list(self.selected_point_ids))
-        for pid in reversed(ids):
-            self.cmd_delete_point(pid)
+        self.cmd_delete_points(ids)
 
     def _add_spline_from_selection(self):
         ids = sorted(list(self.selected_point_ids))

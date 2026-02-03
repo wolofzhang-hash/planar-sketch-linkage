@@ -213,7 +213,7 @@ class SketchView(QGraphicsView):
 
     @safe_event
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key.Key_Delete:
+        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             if self.ctrl.win:
                 self.ctrl.win.delete_selected()
             e.accept()
