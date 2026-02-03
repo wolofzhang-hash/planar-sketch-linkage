@@ -776,6 +776,32 @@ class OptimizationTab(QWidget):
             combo.addItem(label, case_id)
         return combo
 
+    def _refresh_case_combo_options(self, table: QTableWidget, column: int) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        options = self._case_options()
+        for row in range(table.rowCount()):
+            combo = table.cellWidget(row, column)
+            if not isinstance(combo, QComboBox):
+                continue
+            current_data = combo.currentData()
+            current_text = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem(tr(lang, "analysis.all_cases"), None)
+            for label, case_id in options:
+                combo.addItem(label, case_id)
+            if current_data is None:
+                combo.setCurrentIndex(0)
+            else:
+                index = combo.findData(current_data)
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+                else:
+                    index = combo.findText(current_text)
+                    if index >= 0:
+                        combo.setCurrentIndex(index)
+            combo.blockSignals(False)
+
     def _case_ids_from_combo(self, combo: Optional[QComboBox]) -> Optional[List[str]]:
         if not isinstance(combo, QComboBox):
             return None
@@ -786,6 +812,12 @@ class OptimizationTab(QWidget):
 
     def refresh_case_label(self) -> None:
         self._set_cases_label(self._case_label_text())
+
+    def refresh_active_case(self) -> None:
+        self.refresh_case_label()
+        self._refresh_case_combo_options(self.table_vars, 1)
+        self._refresh_case_combo_options(self.table_obj, 1)
+        self._refresh_case_combo_options(self.table_con, 1)
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
