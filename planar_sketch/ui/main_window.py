@@ -123,6 +123,10 @@ class MainWindow(QMainWindow):
         self.act_redo.triggered.connect(self.ctrl.stack.redo)
         self.act_delete_selected = QAction("", self); self.act_delete_selected.setShortcut(QKeySequence.StandardKey.Delete)
         self.act_delete_selected.triggered.connect(self.delete_selected)
+        self.act_cancel_model = QAction("", self)
+        self.act_cancel_model.setShortcut(QKeySequence("Escape"))
+        self.act_cancel_model.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.act_cancel_model.triggered.connect(self.ctrl.cancel_model_action)
         self.act_repeat_model = QAction("", self)
         self.act_repeat_model.setShortcut(QKeySequence("F4"))
         self.act_repeat_model.triggered.connect(self.ctrl.repeat_last_model_action)
@@ -133,11 +137,14 @@ class MainWindow(QMainWindow):
         self.menu_sketch_action.setCheckable(True)
         self.menu_sketch_action.triggered.connect(self._activate_sketch_mode)
         self.act_create_point = QAction("", self)
+        self.act_create_point.setCheckable(True)
         self.act_create_point.triggered.connect(self.ctrl.begin_create_point)
         self.act_create_line = QAction("", self)
+        self.act_create_line.setCheckable(True)
         self.act_create_line.triggered.connect(self.ctrl.begin_create_line)
         self.act_create_spline = QAction("", self)
-        self.act_create_spline.triggered.connect(self.ctrl._add_spline_from_selection)
+        self.act_create_spline.setCheckable(True)
+        self.act_create_spline.triggered.connect(self.ctrl.begin_create_spline)
         self.act_solve_accurate = QAction("", self)
         self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
 
@@ -287,6 +294,7 @@ class MainWindow(QMainWindow):
         for action, handler in (
             (self.act_create_point, lambda: self.ctrl.begin_create_point(continuous=True)),
             (self.act_create_line, lambda: self.ctrl.begin_create_line(continuous=True)),
+            (self.act_create_spline, lambda: self.ctrl.begin_create_spline(continuous=True)),
         ):
             widget = self.toolbar_sketch.widgetForAction(action)
             if widget is None:
@@ -390,6 +398,12 @@ class MainWindow(QMainWindow):
         self.act_analysis_export.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.act_analysis_save_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.act_analysis_open_last_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+
+    def update_model_action_state(self) -> None:
+        action = getattr(self.ctrl, "_continuous_model_action", None)
+        self.act_create_point.setChecked(action == "CreatePoint")
+        self.act_create_line.setChecked(action == "CreateLine")
+        self.act_create_spline.setChecked(action == "CreateSpline")
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
