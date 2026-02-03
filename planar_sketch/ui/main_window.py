@@ -101,6 +101,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         self.menu_file = mb.addMenu("")
+        self.menu_file.aboutToShow.connect(lambda: self._set_active_ribbon("file"))
         self.act_file_new = QAction("", self)
         self.act_file_new.triggered.connect(self.file_new)
         self.menu_file.addAction(self.act_file_new)
@@ -119,6 +120,7 @@ class MainWindow(QMainWindow):
         self.menu_file.addAction(self.act_file_exit)
 
         self.menu_edit = mb.addMenu("")
+        self.menu_edit.aboutToShow.connect(lambda: self._set_active_ribbon("edit"))
         self.act_undo = QAction("", self); self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
         self.act_undo.triggered.connect(self.ctrl.stack.undo); self.menu_edit.addAction(self.act_undo)
         self.act_redo = QAction("", self); self.act_redo.setShortcut(QKeySequence.StandardKey.Redo)
@@ -136,6 +138,7 @@ class MainWindow(QMainWindow):
         self.menu_edit.addAction(self.act_settings)
 
         self.menu_sketch = mb.addMenu("")
+        self.menu_sketch.aboutToShow.connect(lambda: self._set_active_ribbon("sketch"))
         self.act_create_line = QAction("", self)
         self.act_create_line.triggered.connect(self.ctrl.begin_create_line)
         self.menu_sketch.addAction(self.act_create_line)
@@ -147,6 +150,7 @@ class MainWindow(QMainWindow):
         self.menu_sketch.addAction(self.act_solve_accurate)
 
         self.menu_view = mb.addMenu("")
+        self.menu_view.aboutToShow.connect(lambda: self._set_active_ribbon("view"))
         self.act_pm = QAction("", self, checkable=True); self.act_pm.setChecked(True)
         self.act_pm.triggered.connect(lambda c: self._toggle_pm(c)); self.menu_view.addAction(self.act_pm)
         self.act_dm = QAction("", self, checkable=True); self.act_dm.setChecked(True)
@@ -252,6 +256,17 @@ class MainWindow(QMainWindow):
         self.toolbar_view.addAction(self.act_fit_all)
 
         self._apply_action_icons()
+        self._set_active_ribbon("file")
+
+    def _set_active_ribbon(self, key: str) -> None:
+        toolbars = {
+            "file": self.toolbar_file,
+            "edit": self.toolbar_edit,
+            "sketch": self.toolbar_sketch,
+            "view": self.toolbar_view,
+        }
+        for name, toolbar in toolbars.items():
+            toolbar.setVisible(name == key)
 
     def _apply_action_icons(self) -> None:
         style = self.style()
