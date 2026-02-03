@@ -754,6 +754,36 @@ class OptimizationTab(QWidget):
     def _manager(self) -> CaseRunManager:
         return CaseRunManager(self._project_dir())
 
+    def _case_label_text(self) -> str:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        cases = self._manager().list_cases()
+        if not cases:
+            return "--"
+        return tr(lang, "analysis.all_cases")
+
+    def _case_options(self) -> List[tuple[str, str]]:
+        options: List[tuple[str, str]] = []
+        for case in self._manager().list_cases():
+            label = f"{case.name} ({case.case_id})"
+            options.append((label, case.case_id))
+        return options
+
+    def _case_combo(self, parent: QWidget) -> QComboBox:
+        combo = QComboBox(parent)
+        lang = getattr(self.ctrl, "ui_language", "en")
+        combo.addItem(tr(lang, "analysis.all_cases"), None)
+        for label, case_id in self._case_options():
+            combo.addItem(label, case_id)
+        return combo
+
+    def _case_ids_from_combo(self, combo: Optional[QComboBox]) -> Optional[List[str]]:
+        if not isinstance(combo, QComboBox):
+            return None
+        data = combo.currentData()
+        if data is None:
+            return None
+        return [str(data)]
+
     def refresh_case_label(self) -> None:
         self._set_cases_label(self._case_label_text())
 
