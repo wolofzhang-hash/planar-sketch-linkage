@@ -40,8 +40,6 @@ class MainWindow(QMainWindow):
         self.sim_panel = SimulationPanel(self.ctrl)
         self.sim_dock.setWidget(self.sim_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sim_dock)
-        self.tabifyDockWidget(self.dock, self.sim_dock)
-        self.sim_dock.raise_()
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage(tr(self.ctrl.ui_language, "status.idle"))
         self.current_file: Optional[str] = None
