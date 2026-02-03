@@ -4453,8 +4453,9 @@ class SketchController:
         # Collect applied torques and convert them to equivalent force couples
         applied_torque: Dict[int, float] = {pid: 0.0 for pid in point_ids}
 
-        def _pick_neighbor(pid: int) -> Optional[int]:
-            # Prefer link neighbors, then rigid edges.
+        def _pick_torque_neighbor(pid: int, qvec: np.ndarray) -> Optional[int]:
+            # Prefer link neighbors, then rigid edges. Choose the farthest neighbor
+            # to reduce the required force magnitude for a given torque.
             neigh: List[int] = []
             for l in self.links.values():
                 if l.get("ref", False):
@@ -4464,15 +4465,28 @@ class SketchController:
                     neigh.append(j)
                 elif j == pid and i in idx_map:
                     neigh.append(i)
-            if neigh:
-                return neigh[0]
-            for b in self.bodies.values():
-                for (i, j, _L) in b.get("rigid_edges", []):
-                    if i == pid and j in idx_map:
-                        return int(j)
-                    if j == pid and i in idx_map:
-                        return int(i)
-            return None
+            if not neigh:
+                for b in self.bodies.values():
+                    for (i, j, _L) in b.get("rigid_edges", []):
+                        if i == pid and j in idx_map:
+                            neigh.append(int(j))
+                        elif j == pid and i in idx_map:
+                            neigh.append(int(i))
+            if not neigh:
+                return None
+            i = idx_map[pid]
+            xi, yi = float(qvec[2 * i]), float(qvec[2 * i + 1])
+            best_nb = None
+            best_r2 = -1.0
+            for nb in neigh:
+                j = idx_map[nb]
+                dx = float(qvec[2 * j]) - xi
+                dy = float(qvec[2 * j + 1]) - yi
+                r2 = dx * dx + dy * dy
+                if r2 > best_r2:
+                    best_r2 = r2
+                    best_nb = nb
+            return best_nb
 
         # Apply loads
         for load in self.loads:
@@ -4495,7 +4509,7 @@ class SketchController:
         for pid, mz in list(applied_torque.items()):
             if abs(mz) < 1e-12:
                 continue
-            nb = _pick_neighbor(pid)
+            nb = _pick_torque_neighbor(pid, q)
             if nb is None:
                 # No neighbor => cannot form a couple; keep it only for display.
                 continue
