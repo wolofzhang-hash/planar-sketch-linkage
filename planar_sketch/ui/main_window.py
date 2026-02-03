@@ -6,11 +6,11 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox, QInputDialog
+    QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle
 )
 
 from ..core.controller import SketchController
@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(tr(self.ctrl.ui_language, "status.idle"))
         self.current_file: Optional[str] = None
         self._build_menus()
+        self._build_toolbars()
         self.apply_language()
         self.file_new()
         self.update_undo_redo_actions()
@@ -189,6 +190,100 @@ class MainWindow(QMainWindow):
         self.act_fit_all.triggered.connect(self.view.fit_all)
         self.menu_view.addAction(self.act_fit_all)
 
+    def _build_toolbars(self) -> None:
+        icon_size = QSize(20, 20)
+        self.toolbar_file = QToolBar(self)
+        self.toolbar_file.setIconSize(icon_size)
+        self.toolbar_file.setMovable(False)
+        self.toolbar_file.setFloatable(False)
+        self.toolbar_file.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_file)
+        self.toolbar_file.addAction(self.act_file_new)
+        self.toolbar_file.addAction(self.act_file_open)
+        self.toolbar_file.addAction(self.act_file_save)
+        self.toolbar_file.addAction(self.act_file_save_as)
+
+        self.toolbar_edit = QToolBar(self)
+        self.toolbar_edit.setIconSize(icon_size)
+        self.toolbar_edit.setMovable(False)
+        self.toolbar_edit.setFloatable(False)
+        self.toolbar_edit.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_edit)
+        self.toolbar_edit.addAction(self.act_undo)
+        self.toolbar_edit.addAction(self.act_redo)
+        self.toolbar_edit.addAction(self.act_delete_selected)
+        self.toolbar_edit.addAction(self.act_repeat_model)
+        self.toolbar_edit.addSeparator()
+        self.toolbar_edit.addAction(self.act_settings)
+
+        self.toolbar_sketch = QToolBar(self)
+        self.toolbar_sketch.setIconSize(icon_size)
+        self.toolbar_sketch.setMovable(False)
+        self.toolbar_sketch.setFloatable(False)
+        self.toolbar_sketch.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_sketch)
+        self.toolbar_sketch.addAction(self.act_create_line)
+        self.toolbar_sketch.addAction(self.act_create_spline)
+        self.toolbar_sketch.addAction(self.act_solve_accurate)
+
+        self.toolbar_view = QToolBar(self)
+        self.toolbar_view.setIconSize(icon_size)
+        self.toolbar_view.setMovable(False)
+        self.toolbar_view.setFloatable(False)
+        self.toolbar_view.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_view)
+        self.toolbar_view.addAction(self.act_pm)
+        self.toolbar_view.addAction(self.act_dm)
+        self.toolbar_view.addAction(self.act_body_color)
+        self.toolbar_view.addAction(self.act_splines)
+        self.toolbar_view.addAction(self.act_load_arrows)
+        self.toolbar_view.addSeparator()
+        self.toolbar_view.addAction(self.act_bg_load)
+        self.toolbar_view.addAction(self.act_bg_visible)
+        self.toolbar_view.addAction(self.act_bg_gray)
+        self.toolbar_view.addAction(self.act_bg_opacity)
+        self.toolbar_view.addAction(self.act_bg_clear)
+        self.toolbar_view.addSeparator()
+        self.toolbar_view.addAction(self.act_preset_show_all)
+        self.toolbar_view.addAction(self.act_preset_points_only)
+        self.toolbar_view.addAction(self.act_preset_links_only)
+        self.toolbar_view.addSeparator()
+        self.toolbar_view.addAction(self.act_reset_view)
+        self.toolbar_view.addAction(self.act_fit_all)
+
+        self._apply_action_icons()
+
+    def _apply_action_icons(self) -> None:
+        style = self.style()
+        self.act_file_new.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileIcon))
+        self.act_file_open.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.act_file_save.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.act_file_save_as.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
+        self.act_file_exit.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogCloseButton))
+        self.act_undo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowBack))
+        self.act_redo.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowForward))
+        self.act_delete_selected.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.act_repeat_model.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.act_settings.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
+        self.act_create_line.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton))
+        self.act_create_spline.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
+        self.act_solve_accurate.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
+        self.act_pm.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
+        self.act_dm.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.act_body_color.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DriveDVDIcon))
+        self.act_splines.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogInfoView))
+        self.act_load_arrows.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.act_bg_load.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton))
+        self.act_bg_visible.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
+        self.act_bg_gray.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
+        self.act_bg_opacity.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.act_bg_clear.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton))
+        self.act_preset_show_all.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
+        self.act_preset_points_only.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
+        self.act_preset_links_only.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
+        self.act_reset_view.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserStop))
+        self.act_fit_all.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.menu_file.setTitle(tr(lang, "menu.file"))
@@ -197,6 +292,11 @@ class MainWindow(QMainWindow):
         self.menu_view.setTitle(tr(lang, "menu.view"))
         self.menu_bg.setTitle(tr(lang, "menu.background_image"))
         self.menu_presets.setTitle(tr(lang, "menu.presets"))
+        if hasattr(self, "toolbar_file"):
+            self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
+            self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
+            self.toolbar_sketch.setWindowTitle(tr(lang, "menu.sketch"))
+            self.toolbar_view.setWindowTitle(tr(lang, "menu.view"))
         self.act_file_new.setText(tr(lang, "action.new"))
         self.act_file_open.setText(tr(lang, "action.open"))
         self.act_file_save.setText(tr(lang, "action.save"))
