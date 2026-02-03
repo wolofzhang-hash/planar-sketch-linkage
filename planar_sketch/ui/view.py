@@ -67,6 +67,11 @@ class SketchView(QGraphicsView):
 
     @safe_event
     def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton and self.ctrl.mode == "CreatePoint":
+            sp = self.mapToScene(e.position().toPoint())
+            self.ctrl.on_scene_clicked_create_point(sp)
+            e.accept()
+            return
         if e.button() == Qt.MouseButton.LeftButton and self.ctrl.mode == "BackgroundImagePick":
             sp = self.mapToScene(e.position().toPoint())
             if self.ctrl.on_background_pick(sp):
