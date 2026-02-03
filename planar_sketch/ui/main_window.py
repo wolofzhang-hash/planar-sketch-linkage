@@ -206,6 +206,8 @@ class MainWindow(QMainWindow):
         self.toolbar_file.addAction(self.act_file_open)
         self.toolbar_file.addAction(self.act_file_save)
         self.toolbar_file.addAction(self.act_file_save_as)
+        self.toolbar_file.addSeparator()
+        self.toolbar_file.addAction(self.act_bg_load)
 
         self.toolbar_edit = QToolBar(self)
         self.toolbar_edit.setIconSize(icon_size)
@@ -243,7 +245,6 @@ class MainWindow(QMainWindow):
         self.toolbar_view.addAction(self.act_splines)
         self.toolbar_view.addAction(self.act_load_arrows)
         self.toolbar_view.addSeparator()
-        self.toolbar_view.addAction(self.act_bg_load)
         self.toolbar_view.addAction(self.act_bg_visible)
         self.toolbar_view.addAction(self.act_bg_gray)
         self.toolbar_view.addAction(self.act_bg_opacity)
