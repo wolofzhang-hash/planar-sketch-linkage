@@ -1738,6 +1738,11 @@ class SketchController:
             self.panel.clear_bodies_selection_only()
         self.update_status()
 
+    def focus_link_in_panel(self, lid: int) -> None:
+        self.select_link_single(lid)
+        if self.panel:
+            self.panel.focus_link(lid)
+
     def select_angle_single(self, aid: int):
         if aid not in self.angles: return
         self.commit_drag_if_any()
@@ -1760,6 +1765,11 @@ class SketchController:
             self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
         self.update_status()
+
+    def focus_angle_in_panel(self, aid: int) -> None:
+        self.select_angle_single(aid)
+        if self.panel:
+            self.panel.focus_angle(aid)
 
 
 
@@ -1786,6 +1796,11 @@ class SketchController:
                 pass
         self.update_status()
 
+    def focus_coincide_in_panel(self, cid: int) -> None:
+        self.select_coincide_single(cid)
+        if self.panel:
+            self.panel.focus_constraint_key(f"C{cid}")
+
     def select_point_line_single(self, plid: int):
         if plid not in self.point_lines:
             return
@@ -1809,6 +1824,11 @@ class SketchController:
             except Exception:
                 pass
         self.update_status()
+
+    def focus_point_line_in_panel(self, plid: int) -> None:
+        self.select_point_line_single(plid)
+        if self.panel:
+            self.panel.focus_constraint_key(f"P{plid}")
 
     def select_point_spline_single(self, psid: int):
         if psid not in self.point_splines:
@@ -1834,6 +1854,11 @@ class SketchController:
                 pass
         self.update_status()
 
+    def focus_point_spline_in_panel(self, psid: int) -> None:
+        self.select_point_spline_single(psid)
+        if self.panel:
+            self.panel.focus_constraint_key(f"S{psid}")
+
     def select_body_single(self, bid: int):
         if bid not in self.bodies: return
         self.commit_drag_if_any()
@@ -1855,6 +1880,11 @@ class SketchController:
             self.panel.clear_angles_selection_only()
             self.panel.clear_splines_selection_only()
         self.update_status()
+
+    def focus_body_in_panel(self, bid: int) -> None:
+        self.select_body_single(bid)
+        if self.panel:
+            self.panel.focus_body(bid)
 
     def select_spline_single(self, sid: int):
         if sid not in self.splines:
@@ -1883,6 +1913,11 @@ class SketchController:
             except Exception:
                 pass
         self.update_status()
+
+    def focus_spline_in_panel(self, sid: int) -> None:
+        self.select_spline_single(sid)
+        if self.panel:
+            self.panel.focus_spline(sid)
 
     def apply_box_selection(self, pids: List[int], toggle: bool):
         pids = [pid for pid in pids if pid in self.points and (not self.is_point_effectively_hidden(pid)) and self.show_points_geometry]
@@ -1942,6 +1977,11 @@ class SketchController:
             self.panel.clear_angles_selection_only()
             self.panel.clear_splines_selection_only()
             self.panel.clear_bodies_selection_only()
+
+    def focus_point_in_panel(self, pid: int) -> None:
+        self.select_point_single(pid, keep_others=False)
+        if self.panel:
+            self.panel.focus_point(pid)
 
     def toggle_point(self, pid: int):
         if pid not in self.points: return

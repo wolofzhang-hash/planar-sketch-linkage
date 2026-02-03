@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Optional, List
 
 from PyQt6.QtCore import QTimer, QSignalBlocker, QItemSelectionModel
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTabWidget, QLabel, QAbstractItemView
 
 from .tabs import ParametersTab, PointsTab, LinksTab, AnglesTab, SplinesTab, BodiesTab, ConstraintsTab
 from .i18n import tr
@@ -94,6 +94,46 @@ class SketchPanel(QWidget):
 
     def select_constraints_row(self, key: str):
         self.constraints_tab.select_key(key)
+
+    def _scroll_table_selection(self, table):
+        sel = table.selectedItems()
+        if not sel:
+            return
+        row = sel[0].row()
+        table.setCurrentCell(row, 0)
+        item = table.item(row, 0)
+        if item is not None:
+            table.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+
+    def focus_point(self, pid: int):
+        self.tabs.setCurrentWidget(self.points_tab)
+        self.select_points_multi([pid])
+        self._scroll_table_selection(self.points_tab.table)
+
+    def focus_link(self, lid: int):
+        self.tabs.setCurrentWidget(self.links_tab)
+        self.select_link(lid)
+        self._scroll_table_selection(self.links_tab.table)
+
+    def focus_angle(self, aid: int):
+        self.tabs.setCurrentWidget(self.angles_tab)
+        self.select_angle(aid)
+        self._scroll_table_selection(self.angles_tab.table)
+
+    def focus_spline(self, sid: int):
+        self.tabs.setCurrentWidget(self.splines_tab)
+        self.select_spline(sid)
+        self._scroll_table_selection(self.splines_tab.table)
+
+    def focus_body(self, bid: int):
+        self.tabs.setCurrentWidget(self.bodies_tab)
+        self.select_body(bid)
+        self._scroll_table_selection(self.bodies_tab.table)
+
+    def focus_constraint_key(self, key: str):
+        self.tabs.setCurrentWidget(self.constraints_tab)
+        self.select_constraints_row(key)
+        self._scroll_table_selection(self.constraints_tab.table)
 
     def clear_bodies_selection_only(self):
         self.bodies_tab.table.clearSelection()

@@ -19,6 +19,7 @@ from .items import (
     PointSplineItem,
     ForceArrowItem,
     TorqueArrowItem,
+    AngleItem,
 )
 
 if TYPE_CHECKING:
@@ -175,6 +176,40 @@ class SketchView(QGraphicsView):
             self.ctrl.commit_drag_if_any()
 
         super().mouseReleaseEvent(e)
+
+    @safe_event
+    def mouseDoubleClickEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            item = self._item_at_pos(e.position().toPoint())
+            if isinstance(item, PointItem):
+                self.ctrl.focus_point_in_panel(item.pid)
+                e.accept()
+                return
+            if isinstance(item, LinkItem):
+                self.ctrl.focus_link_in_panel(item.lid)
+                e.accept()
+                return
+            if isinstance(item, AngleItem):
+                self.ctrl.focus_angle_in_panel(item.aid)
+                e.accept()
+                return
+            if isinstance(item, SplineItem):
+                self.ctrl.focus_spline_in_panel(item.sid)
+                e.accept()
+                return
+            if isinstance(item, CoincideItem):
+                self.ctrl.focus_coincide_in_panel(item.cid)
+                e.accept()
+                return
+            if isinstance(item, PointLineItem):
+                self.ctrl.focus_point_line_in_panel(item.plid)
+                e.accept()
+                return
+            if isinstance(item, PointSplineItem):
+                self.ctrl.focus_point_spline_in_panel(item.psid)
+                e.accept()
+                return
+        super().mouseDoubleClickEvent(e)
 
     @safe_event
     def keyPressEvent(self, e):
