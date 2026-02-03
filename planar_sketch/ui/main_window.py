@@ -148,6 +148,9 @@ class MainWindow(QMainWindow):
         self.menu_view_action = mb.addAction("")
         self.menu_view_action.setCheckable(True)
         self.menu_view_action.triggered.connect(lambda: self._set_active_ribbon("view"))
+        self.menu_background_action = mb.addAction("")
+        self.menu_background_action.setCheckable(True)
+        self.menu_background_action.triggered.connect(lambda: self._set_active_ribbon("background"))
         self.act_pm = QAction("", self, checkable=True); self.act_pm.setChecked(True)
         self.act_pm.triggered.connect(lambda c: self._toggle_pm(c))
         self.act_dm = QAction("", self, checkable=True); self.act_dm.setChecked(True)
@@ -243,17 +246,23 @@ class MainWindow(QMainWindow):
         self.toolbar_view.addAction(self.act_splines)
         self.toolbar_view.addAction(self.act_load_arrows)
         self.toolbar_view.addSeparator()
-        self.toolbar_view.addAction(self.act_bg_visible)
-        self.toolbar_view.addAction(self.act_bg_gray)
-        self.toolbar_view.addAction(self.act_bg_opacity)
-        self.toolbar_view.addAction(self.act_bg_clear)
-        self.toolbar_view.addSeparator()
         self.toolbar_view.addAction(self.act_preset_show_all)
         self.toolbar_view.addAction(self.act_preset_points_only)
         self.toolbar_view.addAction(self.act_preset_links_only)
         self.toolbar_view.addSeparator()
         self.toolbar_view.addAction(self.act_reset_view)
         self.toolbar_view.addAction(self.act_fit_all)
+
+        self.toolbar_background = QToolBar(self)
+        self.toolbar_background.setIconSize(icon_size)
+        self.toolbar_background.setMovable(False)
+        self.toolbar_background.setFloatable(False)
+        self.toolbar_background.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_background)
+        self.toolbar_background.addAction(self.act_bg_visible)
+        self.toolbar_background.addAction(self.act_bg_gray)
+        self.toolbar_background.addAction(self.act_bg_opacity)
+        self.toolbar_background.addAction(self.act_bg_clear)
 
         self.toolbar_analysis = QToolBar(self)
         self.toolbar_analysis.setIconSize(icon_size)
@@ -274,7 +283,14 @@ class MainWindow(QMainWindow):
 
     def _set_toolbars_visible(self, visible: bool) -> None:
         self._toolbars_enabled = visible
-        for toolbar in (self.toolbar_file, self.toolbar_edit, self.toolbar_sketch, self.toolbar_view, self.toolbar_analysis):
+        for toolbar in (
+            self.toolbar_file,
+            self.toolbar_edit,
+            self.toolbar_sketch,
+            self.toolbar_view,
+            self.toolbar_background,
+            self.toolbar_analysis,
+        ):
             toolbar.setVisible(visible)
         if visible:
             self._set_active_ribbon(getattr(self, "_active_ribbon", "file"))
@@ -288,6 +304,7 @@ class MainWindow(QMainWindow):
             "edit": self.toolbar_edit,
             "sketch": self.toolbar_sketch,
             "view": self.toolbar_view,
+            "background": self.toolbar_background,
             "analysis": self.toolbar_analysis,
         }
         for name, toolbar in toolbars.items():
@@ -297,6 +314,7 @@ class MainWindow(QMainWindow):
             ("edit", self.menu_edit_action),
             ("sketch", self.menu_sketch_action),
             ("view", self.menu_view_action),
+            ("background", self.menu_background_action),
             ("analysis", self.menu_analysis_action),
         ):
             action.setChecked(name == key)
@@ -357,12 +375,14 @@ class MainWindow(QMainWindow):
         self.menu_edit_action.setText(tr(lang, "menu.edit"))
         self.menu_sketch_action.setText(tr(lang, "menu.sketch"))
         self.menu_view_action.setText(tr(lang, "menu.view"))
+        self.menu_background_action.setText(tr(lang, "menu.background_image"))
         self.menu_analysis_action.setText(tr(lang, "menu.analysis"))
         if hasattr(self, "toolbar_file"):
             self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
             self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
             self.toolbar_sketch.setWindowTitle(tr(lang, "menu.sketch"))
             self.toolbar_view.setWindowTitle(tr(lang, "menu.view"))
+            self.toolbar_background.setWindowTitle(tr(lang, "menu.background_image"))
             self.toolbar_analysis.setWindowTitle(tr(lang, "menu.analysis"))
         self.act_file_new.setText(tr(lang, "action.new"))
         self.act_file_open.setText(tr(lang, "action.open"))
