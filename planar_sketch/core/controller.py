@@ -115,6 +115,7 @@ class SketchController:
         self._drag_pid: Optional[int] = None
         self._drag_before: Optional[Dict[int, Tuple[float, float]]] = None
         self._last_model_action: Optional[str] = None
+        self._continuous_model_action: Optional[str] = None
         self._last_scene_pos: Optional[Tuple[float, float]] = None
         self._last_point_pos: Optional[Tuple[float, float]] = None
 
@@ -235,7 +236,13 @@ class SketchController:
 
     def status_text(self) -> str:
         if self.mode == "CreateLine":
+            if self._continuous_model_action == "CreateLine":
+                return "Create Line (continuous): select 2 points (LMB)."
             return "Create Line: select 2 points (LMB)."
+        if self.mode == "CreatePoint":
+            if self._continuous_model_action == "CreatePoint":
+                return "Create Point (continuous): click to place points."
+            return "Create Point: click to place a point."
         if self.mode == "Coincide":
             if self._co_master is None:
                 return "Coincide: select the point to constrain."
@@ -2714,10 +2721,24 @@ class SketchController:
         self._drag_before = None
         self.cmd_move_system(before, after)
 
-    def begin_create_line(self):
+    def begin_create_line(self, continuous: bool = False):
         self.commit_drag_if_any()
         self.mode = "CreateLine"
+        self._continuous_model_action = "CreateLine" if continuous else None
         self._line_sel = []
+        self.update_status()
+
+    def begin_create_point(self, continuous: bool = False):
+        self.commit_drag_if_any()
+        self.mode = "CreatePoint"
+        self._continuous_model_action = "CreatePoint" if continuous else None
+        self.update_status()
+
+    def on_scene_clicked_create_point(self, pos: QPointF):
+        self.cmd_add_point(float(pos.x()), float(pos.y()))
+        if self._continuous_model_action != "CreatePoint":
+            self.mode = "Idle"
+            self._continuous_model_action = None
         self.update_status()
 
     def update_last_scene_pos(self, pos: QPointF):
@@ -2738,6 +2759,7 @@ class SketchController:
     def begin_coincide(self, master: int):
         self.commit_drag_if_any()
         self.mode = "Coincide"
+        self._continuous_model_action = None
         self._co_master = master
         self.update_status()
 
@@ -2745,6 +2767,7 @@ class SketchController:
         """Start point-on-line creation: choose 2 points to define the line."""
         self.commit_drag_if_any()
         self.mode = "PointOnLine"
+        self._continuous_model_action = None
         self._pol_master = int(master)
         self._pol_line_sel = []
         self.update_status()
@@ -2753,6 +2776,7 @@ class SketchController:
         """Start point-on-spline creation: choose a spline to constrain."""
         self.commit_drag_if_any()
         self.mode = "PointOnSpline"
+        self._continuous_model_action = None
         self._pos_master = int(master)
         self.update_status()
 
@@ -2762,7 +2786,11 @@ class SketchController:
         self._line_sel.append(pid)
         if len(self._line_sel) >= 2:
             i, j = self._line_sel[0], self._line_sel[1]
-            self.mode = "Idle"
+            if self._continuous_model_action == "CreateLine":
+                self.mode = "CreateLine"
+            else:
+                self.mode = "Idle"
+                self._continuous_model_action = None
             self._line_sel = []
             self.cmd_add_link(i, j)
         self.update_status()

@@ -6,11 +6,11 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QEvent
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle
+    QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle, QToolButton
 )
 
 from ..core.controller import SketchController
@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self.menu_sketch_action.setCheckable(True)
         self.menu_sketch_action.triggered.connect(self._activate_sketch_mode)
         self.act_create_point = QAction("", self)
-        self.act_create_point.triggered.connect(self.create_point_at_view_center)
+        self.act_create_point.triggered.connect(self.ctrl.begin_create_point)
         self.act_create_line = QAction("", self)
         self.act_create_line.triggered.connect(self.ctrl.begin_create_line)
         self.act_create_spline = QAction("", self)
@@ -233,6 +233,7 @@ class MainWindow(QMainWindow):
         self.toolbar_sketch.addAction(self.act_create_line)
         self.toolbar_sketch.addAction(self.act_create_spline)
         self.toolbar_sketch.addAction(self.act_solve_accurate)
+        self._install_sketch_double_clicks()
 
         self.toolbar_view = QToolBar(self)
         self.toolbar_view.setIconSize(icon_size)
@@ -280,6 +281,27 @@ class MainWindow(QMainWindow):
 
         self._apply_action_icons()
         self._set_active_ribbon("file")
+
+    def _install_sketch_double_clicks(self) -> None:
+        self._double_click_action_widgets = {}
+        for action, handler in (
+            (self.act_create_point, lambda: self.ctrl.begin_create_point(continuous=True)),
+            (self.act_create_line, lambda: self.ctrl.begin_create_line(continuous=True)),
+        ):
+            widget = self.toolbar_sketch.widgetForAction(action)
+            if widget is None:
+                continue
+            if isinstance(widget, QToolButton):
+                widget.installEventFilter(self)
+                self._double_click_action_widgets[widget] = handler
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.MouseButtonDblClick:
+            handler = getattr(self, "_double_click_action_widgets", {}).get(obj)
+            if handler is not None:
+                handler()
+                return True
+        return super().eventFilter(obj, event)
 
     def _set_toolbars_visible(self, visible: bool) -> None:
         self._toolbars_enabled = visible
