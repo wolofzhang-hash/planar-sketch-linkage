@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
         self._build_toolbars()
         self.apply_language()
         self.menuBar().setVisible(True)
-        self._set_toolbars_visible(False)
+        self._set_toolbars_visible(True)
         self.file_new()
         self.update_undo_redo_actions()
         self.ctrl.update_status()
@@ -102,45 +102,38 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self):
         mb = self.menuBar()
-        self.menu_file = mb.addMenu("")
-        self.menu_file.aboutToShow.connect(lambda: self._set_active_ribbon("file"))
+        self.menu_file_action = mb.addAction("")
+        self.menu_file_action.setCheckable(True)
+        self.menu_file_action.triggered.connect(lambda: self._set_active_ribbon("file"))
         self.act_file_new = QAction("", self)
         self.act_file_new.triggered.connect(self.file_new)
-        self.menu_file.addAction(self.act_file_new)
         self.act_file_open = QAction("", self)
         self.act_file_open.triggered.connect(self.file_open)
-        self.menu_file.addAction(self.act_file_open)
         self.act_file_save = QAction("", self)
         self.act_file_save.triggered.connect(self.file_save)
-        self.menu_file.addAction(self.act_file_save)
         self.act_file_save_as = QAction("", self)
         self.act_file_save_as.triggered.connect(self.file_save_as)
-        self.menu_file.addAction(self.act_file_save_as)
-        self.menu_file.addSeparator()
         self.act_file_exit = QAction("", self)
         self.act_file_exit.triggered.connect(self.close)
-        self.menu_file.addAction(self.act_file_exit)
 
-        self.menu_edit = mb.addMenu("")
-        self.menu_edit.aboutToShow.connect(lambda: self._set_active_ribbon("edit"))
+        self.menu_edit_action = mb.addAction("")
+        self.menu_edit_action.setCheckable(True)
+        self.menu_edit_action.triggered.connect(lambda: self._set_active_ribbon("edit"))
         self.act_undo = QAction("", self); self.act_undo.setShortcut(QKeySequence.StandardKey.Undo)
-        self.act_undo.triggered.connect(self.ctrl.stack.undo); self.menu_edit.addAction(self.act_undo)
+        self.act_undo.triggered.connect(self.ctrl.stack.undo)
         self.act_redo = QAction("", self); self.act_redo.setShortcut(QKeySequence.StandardKey.Redo)
-        self.act_redo.triggered.connect(self.ctrl.stack.redo); self.menu_edit.addAction(self.act_redo)
-        self.menu_edit.addSeparator()
+        self.act_redo.triggered.connect(self.ctrl.stack.redo)
         self.act_delete_selected = QAction("", self); self.act_delete_selected.setShortcut(QKeySequence.StandardKey.Delete)
-        self.act_delete_selected.triggered.connect(self.delete_selected); self.menu_edit.addAction(self.act_delete_selected)
+        self.act_delete_selected.triggered.connect(self.delete_selected)
         self.act_repeat_model = QAction("", self)
         self.act_repeat_model.setShortcut(QKeySequence("F4"))
         self.act_repeat_model.triggered.connect(self.ctrl.repeat_last_model_action)
-        self.menu_edit.addAction(self.act_repeat_model)
-        self.menu_edit.addSeparator()
         self.act_settings = QAction("", self)
         self.act_settings.triggered.connect(self.open_settings)
-        self.menu_edit.addAction(self.act_settings)
 
-        self.menu_sketch = mb.addMenu("")
-        self.menu_sketch.aboutToShow.connect(lambda: self._set_active_ribbon("sketch"))
+        self.menu_sketch_action = mb.addAction("")
+        self.menu_sketch_action.setCheckable(True)
+        self.menu_sketch_action.triggered.connect(lambda: self._set_active_ribbon("sketch"))
         self.act_create_point = QAction("", self)
         self.act_create_point.triggered.connect(self.create_point_at_view_center)
         self.act_create_line = QAction("", self)
@@ -150,50 +143,39 @@ class MainWindow(QMainWindow):
         self.act_solve_accurate = QAction("", self)
         self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
 
-        self.menu_view = mb.addMenu("")
-        self.menu_view.aboutToShow.connect(lambda: self._set_active_ribbon("view"))
+        self.menu_view_action = mb.addAction("")
+        self.menu_view_action.setCheckable(True)
+        self.menu_view_action.triggered.connect(lambda: self._set_active_ribbon("view"))
         self.act_pm = QAction("", self, checkable=True); self.act_pm.setChecked(True)
-        self.act_pm.triggered.connect(lambda c: self._toggle_pm(c)); self.menu_view.addAction(self.act_pm)
+        self.act_pm.triggered.connect(lambda c: self._toggle_pm(c))
         self.act_dm = QAction("", self, checkable=True); self.act_dm.setChecked(True)
-        self.act_dm.triggered.connect(lambda c: self._toggle_dm(c)); self.menu_view.addAction(self.act_dm)
+        self.act_dm.triggered.connect(lambda c: self._toggle_dm(c))
         self.act_body_color = QAction("", self, checkable=True); self.act_body_color.setChecked(True)
-        self.act_body_color.triggered.connect(lambda c: self._toggle_body_coloring(c)); self.menu_view.addAction(self.act_body_color)
+        self.act_body_color.triggered.connect(lambda c: self._toggle_body_coloring(c))
         self.act_splines = QAction("", self, checkable=True); self.act_splines.setChecked(True)
-        self.act_splines.triggered.connect(lambda c: self._toggle_splines(c)); self.menu_view.addAction(self.act_splines)
+        self.act_splines.triggered.connect(lambda c: self._toggle_splines(c))
         self.act_load_arrows = QAction("", self, checkable=True); self.act_load_arrows.setChecked(True)
-        self.act_load_arrows.triggered.connect(lambda c: self._toggle_load_arrows(c)); self.menu_view.addAction(self.act_load_arrows)
-        self.menu_view.addSeparator()
-        self.menu_bg = self.menu_view.addMenu("")
+        self.act_load_arrows.triggered.connect(lambda c: self._toggle_load_arrows(c))
         self.act_bg_load = QAction("", self)
         self.act_bg_load.triggered.connect(self.load_background_image)
-        self.menu_bg.addAction(self.act_bg_load)
         self.act_bg_visible = QAction("", self, checkable=True); self.act_bg_visible.setChecked(True)
-        self.act_bg_visible.triggered.connect(lambda c: self._toggle_background_visible(c)); self.menu_bg.addAction(self.act_bg_visible)
+        self.act_bg_visible.triggered.connect(lambda c: self._toggle_background_visible(c))
         self.act_bg_gray = QAction("", self, checkable=True)
-        self.act_bg_gray.triggered.connect(lambda c: self._toggle_background_grayscale(c)); self.menu_bg.addAction(self.act_bg_gray)
+        self.act_bg_gray.triggered.connect(lambda c: self._toggle_background_grayscale(c))
         self.act_bg_opacity = QAction("", self)
         self.act_bg_opacity.triggered.connect(self.set_background_opacity)
-        self.menu_bg.addAction(self.act_bg_opacity)
         self.act_bg_clear = QAction("", self)
         self.act_bg_clear.triggered.connect(self.clear_background_image)
-        self.menu_bg.addAction(self.act_bg_clear)
-        self.menu_presets = self.menu_view.addMenu("")
         self.act_preset_show_all = QAction("", self)
         self.act_preset_show_all.triggered.connect(self.preset_show_all)
-        self.menu_presets.addAction(self.act_preset_show_all)
         self.act_preset_points_only = QAction("", self)
         self.act_preset_points_only.triggered.connect(self.preset_points_only)
-        self.menu_presets.addAction(self.act_preset_points_only)
         self.act_preset_links_only = QAction("", self)
         self.act_preset_links_only.triggered.connect(self.preset_links_only)
-        self.menu_presets.addAction(self.act_preset_links_only)
-        self.menu_view.addSeparator()
         self.act_reset_view = QAction("", self)
         self.act_reset_view.triggered.connect(self.view.reset_view)
-        self.menu_view.addAction(self.act_reset_view)
         self.act_fit_all = QAction("", self)
         self.act_fit_all.triggered.connect(self.view.fit_all)
-        self.menu_view.addAction(self.act_fit_all)
 
     def _build_toolbars(self) -> None:
         icon_size = QSize(20, 20)
@@ -264,18 +246,28 @@ class MainWindow(QMainWindow):
         self._toolbars_enabled = visible
         for toolbar in (self.toolbar_file, self.toolbar_edit, self.toolbar_sketch, self.toolbar_view):
             toolbar.setVisible(visible)
+        if visible:
+            self._set_active_ribbon(getattr(self, "_active_ribbon", "file"))
 
     def _set_active_ribbon(self, key: str) -> None:
         if not getattr(self, "_toolbars_enabled", True):
             return
+        self._active_ribbon = key
         toolbars = {
             "file": self.toolbar_file,
             "edit": self.toolbar_edit,
             "sketch": self.toolbar_sketch,
             "view": self.toolbar_view,
         }
-        for toolbar in toolbars.values():
-            toolbar.setVisible(True)
+        for name, toolbar in toolbars.items():
+            toolbar.setVisible(name == key)
+        for name, action in (
+            ("file", self.menu_file_action),
+            ("edit", self.menu_edit_action),
+            ("sketch", self.menu_sketch_action),
+            ("view", self.menu_view_action),
+        ):
+            action.setChecked(name == key)
 
     def _apply_action_icons(self) -> None:
         style = self.style()
@@ -311,12 +303,10 @@ class MainWindow(QMainWindow):
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
-        self.menu_file.setTitle(tr(lang, "menu.file"))
-        self.menu_edit.setTitle(tr(lang, "menu.edit"))
-        self.menu_sketch.setTitle(tr(lang, "menu.sketch"))
-        self.menu_view.setTitle(tr(lang, "menu.view"))
-        self.menu_bg.setTitle(tr(lang, "menu.background_image"))
-        self.menu_presets.setTitle(tr(lang, "menu.presets"))
+        self.menu_file_action.setText(tr(lang, "menu.file"))
+        self.menu_edit_action.setText(tr(lang, "menu.edit"))
+        self.menu_sketch_action.setText(tr(lang, "menu.sketch"))
+        self.menu_view_action.setText(tr(lang, "menu.view"))
         if hasattr(self, "toolbar_file"):
             self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
             self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
