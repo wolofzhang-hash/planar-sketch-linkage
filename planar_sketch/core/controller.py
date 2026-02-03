@@ -1500,6 +1500,7 @@ class SketchController:
 
     def _remove_point(self, pid: int):
         if pid not in self.points: return
+        self._remove_point_dependents({pid})
         to_del_l = [lid for lid, l in self.links.items() if l["i"] == pid or l["j"] == pid]
         for lid in to_del_l: self._remove_link(lid)
         to_del_a = [aid for aid, a in self.angles.items() if a["i"] == pid or a["j"] == pid or a["k"] == pid]
@@ -1515,10 +1516,8 @@ class SketchController:
         to_del_spl = [sid for sid, s in self.splines.items() if pid in s.get("points", [])]
         for sid in to_del_spl:
             self._remove_spline(sid)
-        for b in self.bodies.values():
-            if pid in b.get("points", []):
-                b["points"] = [x for x in b["points"] if x != pid]
-                b["rigid_edges"] = self.compute_body_rigid_edges(b["points"])
+        for bid in [bid for bid, b in self.bodies.items() if pid in b.get("points", [])]:
+            self._remove_body(bid)
         p = self.points[pid]
         if "traj_item" in p:
             self.scene.removeItem(p["traj_item"])
@@ -1537,6 +1536,51 @@ class SketchController:
             self.selected_point_id = next(iter(self.selected_point_ids), None)
 
     
+    def _remove_point_dependents(self, pids: set[int]) -> None:
+        if not pids:
+            return
+        self.loads = [ld for ld in self.loads if int(ld.get("pid", -1)) not in pids]
+        self.load_measures = [lm for lm in self.load_measures if int(lm.get("pid", -1)) not in pids]
+        removed_meas_names: List[str] = []
+        kept_measures: List[Dict[str, Any]] = []
+        for m in self.measures:
+            mtype = m.get("type")
+            if mtype == "vector":
+                if int(m.get("pivot", -1)) in pids or int(m.get("tip", -1)) in pids:
+                    removed_meas_names.append(str(m.get("name", "")))
+                    continue
+            elif mtype == "joint":
+                if {int(m.get("i", -1)), int(m.get("j", -1)), int(m.get("k", -1))} & pids:
+                    removed_meas_names.append(str(m.get("name", "")))
+                    continue
+            kept_measures.append(m)
+        self.measures = kept_measures
+        for name in removed_meas_names:
+            self._sim_zero_meas_deg.pop(name, None)
+
+        kept_drivers: List[Dict[str, Any]] = []
+        for drv in self.drivers:
+            dtype = drv.get("type")
+            if dtype == "vector":
+                if int(drv.get("pivot", -1)) in pids or int(drv.get("tip", -1)) in pids:
+                    continue
+            elif dtype == "joint":
+                if {int(drv.get("i", -1)), int(drv.get("j", -1)), int(drv.get("k", -1))} & pids:
+                    continue
+            kept_drivers.append(drv)
+        if len(kept_drivers) != len(self.drivers):
+            self.drivers = kept_drivers
+            self._sim_zero_driver_rad = []
+            self._sync_primary_driver()
+
+        kept_outputs: List[Dict[str, Any]] = []
+        for out in self.outputs:
+            if int(out.get("pivot", -1)) in pids or int(out.get("tip", -1)) in pids:
+                continue
+            kept_outputs.append(out)
+        if len(kept_outputs) != len(self.outputs):
+            self.outputs = kept_outputs
+            self._sync_primary_output()
 
     def _create_coincide(self, cid: int, a: int, b: int, hidden: bool, enabled: bool = True):
         self.coincides[cid] = {"a": int(a), "b": int(b), "hidden": bool(hidden), "enabled": bool(enabled), "over": False}
