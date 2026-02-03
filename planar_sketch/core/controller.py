@@ -1505,12 +1505,22 @@ class SketchController:
         for lid in to_del_l: self._remove_link(lid)
         to_del_a = [aid for aid, a in self.angles.items() if a["i"] == pid or a["j"] == pid or a["k"] == pid]
         for aid in to_del_a: self._remove_angle(aid)
-        to_del_c = [cid for cid, c in self.coincides.items() if int(c.get("a")) == pid or int(c.get("b")) == pid]
+        to_del_c = [
+            cid
+            for cid, c in self.coincides.items()
+            if self._safe_int(c.get("a")) == pid or self._safe_int(c.get("b")) == pid
+        ]
         for cid in to_del_c: self._remove_coincide(cid)
-        to_del_pl = [plid for plid, pl in self.point_lines.items() if int(pl.get("p")) == pid or int(pl.get("i")) == pid or int(pl.get("j")) == pid]
+        to_del_pl = [
+            plid
+            for plid, pl in self.point_lines.items()
+            if self._safe_int(pl.get("p")) == pid
+            or self._safe_int(pl.get("i")) == pid
+            or self._safe_int(pl.get("j")) == pid
+        ]
         for plid in to_del_pl:
             self._remove_point_line(plid)
-        to_del_ps = [psid for psid, ps in self.point_splines.items() if int(ps.get("p")) == pid]
+        to_del_ps = [psid for psid, ps in self.point_splines.items() if self._safe_int(ps.get("p")) == pid]
         for psid in to_del_ps:
             self._remove_point_spline(psid)
         to_del_spl = [sid for sid, s in self.splines.items() if pid in s.get("points", [])]
@@ -1539,18 +1549,22 @@ class SketchController:
     def _remove_point_dependents(self, pids: set[int]) -> None:
         if not pids:
             return
-        self.loads = [ld for ld in self.loads if int(ld.get("pid", -1)) not in pids]
-        self.load_measures = [lm for lm in self.load_measures if int(lm.get("pid", -1)) not in pids]
+        self.loads = [ld for ld in self.loads if self._safe_int(ld.get("pid", -1)) not in pids]
+        self.load_measures = [lm for lm in self.load_measures if self._safe_int(lm.get("pid", -1)) not in pids]
         removed_meas_names: List[str] = []
         kept_measures: List[Dict[str, Any]] = []
         for m in self.measures:
             mtype = m.get("type")
             if mtype == "vector":
-                if int(m.get("pivot", -1)) in pids or int(m.get("tip", -1)) in pids:
+                if self._safe_int(m.get("pivot", -1)) in pids or self._safe_int(m.get("tip", -1)) in pids:
                     removed_meas_names.append(str(m.get("name", "")))
                     continue
             elif mtype == "joint":
-                if {int(m.get("i", -1)), int(m.get("j", -1)), int(m.get("k", -1))} & pids:
+                if {
+                    self._safe_int(m.get("i", -1)),
+                    self._safe_int(m.get("j", -1)),
+                    self._safe_int(m.get("k", -1)),
+                } & pids:
                     removed_meas_names.append(str(m.get("name", "")))
                     continue
             kept_measures.append(m)
@@ -1562,10 +1576,14 @@ class SketchController:
         for drv in self.drivers:
             dtype = drv.get("type")
             if dtype == "vector":
-                if int(drv.get("pivot", -1)) in pids or int(drv.get("tip", -1)) in pids:
+                if self._safe_int(drv.get("pivot", -1)) in pids or self._safe_int(drv.get("tip", -1)) in pids:
                     continue
             elif dtype == "joint":
-                if {int(drv.get("i", -1)), int(drv.get("j", -1)), int(drv.get("k", -1))} & pids:
+                if {
+                    self._safe_int(drv.get("i", -1)),
+                    self._safe_int(drv.get("j", -1)),
+                    self._safe_int(drv.get("k", -1)),
+                } & pids:
                     continue
             kept_drivers.append(drv)
         if len(kept_drivers) != len(self.drivers):
@@ -1575,12 +1593,19 @@ class SketchController:
 
         kept_outputs: List[Dict[str, Any]] = []
         for out in self.outputs:
-            if int(out.get("pivot", -1)) in pids or int(out.get("tip", -1)) in pids:
+            if self._safe_int(out.get("pivot", -1)) in pids or self._safe_int(out.get("tip", -1)) in pids:
                 continue
             kept_outputs.append(out)
         if len(kept_outputs) != len(self.outputs):
             self.outputs = kept_outputs
             self._sync_primary_output()
+
+    @staticmethod
+    def _safe_int(value: Any, default: int = -1) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
 
     def _create_coincide(self, cid: int, a: int, b: int, hidden: bool, enabled: bool = True):
         self.coincides[cid] = {"a": int(a), "b": int(b), "hidden": bool(hidden), "enabled": bool(enabled), "over": False}
