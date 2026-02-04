@@ -3867,7 +3867,7 @@ class SketchController:
                 if "rad" not in drv:
                     normalized["_needs_rad"] = True
                 self.drivers.append(normalized)
-        elif isinstance(driver, dict):
+        elif isinstance(driver, dict) and driver:
             legacy_driver = self._normalize_driver(driver)
             if legacy_driver.get("enabled"):
                 if "rad" not in driver:
@@ -3904,7 +3904,7 @@ class SketchController:
                 if "rad" not in out:
                     normalized["_needs_rad"] = True
                 self.outputs.append(normalized)
-        elif isinstance(output, dict):
+        elif isinstance(output, dict) and output:
             legacy_output = self._normalize_output(output)
             if legacy_output.get("enabled"):
                 if "rad" not in output:
