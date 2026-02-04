@@ -634,7 +634,6 @@ class AnimationTab(QWidget):
         lang = getattr(self.ctrl, "ui_language", "en")
         menu = QMenu(self)
         act_set_active = menu.addAction(tr(lang, "analysis.set_active_case"))
-        act_load_run_data = menu.addAction(tr(lang, "analysis.load_run_data"))
         menu.addSeparator()
         act_open_run = menu.addAction(tr(lang, "analysis.open_run_folder"))
         act_load_snapshot = menu.addAction(tr(lang, "analysis.load_run_snapshot"))
@@ -647,8 +646,6 @@ class AnimationTab(QWidget):
         selected = menu.exec(self.table_case_runs.viewport().mapToGlobal(pos))
         if selected == act_set_active:
             self.set_active_case()
-        elif selected == act_load_run_data:
-            self.load_run_data()
         elif selected == act_open_run:
             self.open_run_folder()
         elif selected == act_load_snapshot:
