@@ -311,6 +311,28 @@ class SimulationPanel(QWidget):
             self.optimization_tab.apply_language()
         self.refresh_labels()
 
+    def reset_analysis_state(self) -> None:
+        if self._timer.isActive():
+            self._timer.stop()
+        self._records = []
+        self._pending_sim_start_capture = False
+        self._run_context = None
+        self._run_start_snapshot = None
+        self._last_run_data = None
+        self._frame = 0
+        self._driver_sweep = None
+        self._driver_last_ok = []
+        self._driver_step_scale = 1.0
+        self._driver_step_scale_max = 1.0
+        self._sweep_steps_total = None
+        self._sweep_step_index = 0
+        if hasattr(self, "animation_tab"):
+            self.animation_tab.reset_state()
+        if hasattr(self, "optimization_tab"):
+            self.optimization_tab.reset_state()
+        self._refresh_run_buttons()
+        self.refresh_labels()
+
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
             return os.path.dirname(self.ctrl.win.current_file)

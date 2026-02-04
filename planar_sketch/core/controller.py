@@ -86,7 +86,7 @@ class SketchController:
         self.show_body_coloring = True
         self.show_trajectories = False
         self.show_load_arrows = True
-        self.display_precision = 3
+        self.display_precision = 1
         self.load_arrow_width = 1.6
         self.torque_arrow_width = 1.6
         self.ui_language = "en"
