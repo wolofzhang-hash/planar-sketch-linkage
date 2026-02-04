@@ -75,6 +75,12 @@ def model_variable_signals(snapshot: Dict[str, Any]) -> Dict[str, float]:
         if lid is None:
             continue
         signals[f"Link{lid}.L"] = float(link.get("L", 0.0))
+    for pl in snapshot.get("point_lines", []) or []:
+        plid = pl.get("id")
+        if plid is None:
+            continue
+        if "s" in pl:
+            signals[f"PointLine{plid}.s"] = float(pl.get("s", 0.0))
     for param in snapshot.get("parameters", []) or []:
         name = str(param.get("name", "")).strip()
         if not name:
@@ -121,6 +127,14 @@ def _recompute_snapshot_from_parameters(snapshot: Dict[str, Any]) -> None:
         if err is None and val is not None:
             a["deg"] = float(val)
 
+    for pl in snapshot.get("point_lines", []) or []:
+        expr = (pl.get("s_expr") or "").strip()
+        if not expr:
+            continue
+        val, err = registry.eval_expr(expr)
+        if err is None and val is not None:
+            pl["s"] = float(val)
+
 
 def _update_link_constraints(
     snapshot: Dict[str, Any],
@@ -163,6 +177,7 @@ def _apply_design_vars(
     snapshot = copy.deepcopy(model_snapshot)
     point_vars: Dict[str, float] = {}
     link_vars: Dict[int, float] = {}
+    line_vars: Dict[int, float] = {}
     param_vars: Dict[str, float] = {}
 
     for key, val in variables.items():
@@ -181,6 +196,14 @@ def _apply_design_vars(
             except Exception:
                 continue
             link_vars[lid] = float(val)
+            continue
+        if key.startswith("PointLine") and key.endswith(".s"):
+            plid_str = key[len("PointLine") : -len(".s")]
+            try:
+                plid = int(plid_str)
+            except Exception:
+                continue
+            line_vars[plid] = float(val)
 
     if param_vars:
         params_list = list(snapshot.get("parameters", []) or [])
@@ -212,6 +235,11 @@ def _apply_design_vars(
             l["L"] = float(link_vars[lid])
     for lid, new_length in link_vars.items():
         _update_link_constraints(snapshot, lid, new_length, warnings)
+    if line_vars:
+        for pl in snapshot.get("point_lines", []) or []:
+            plid = pl.get("id")
+            if plid in line_vars:
+                pl["s"] = float(line_vars[plid])
     return snapshot
 
 
