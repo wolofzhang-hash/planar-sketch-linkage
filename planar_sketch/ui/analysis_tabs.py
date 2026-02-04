@@ -666,6 +666,7 @@ class OptimizationTab(QWidget):
         self.ctrl = ctrl
         self._worker: Optional[OptimizationWorker] = None
         self._best_vars: Dict[str, float] = {}
+        self._best_var_names: List[str] = []
         self._progress_value = "--"
 
         layout = QVBoxLayout(self)
@@ -911,7 +912,7 @@ class OptimizationTab(QWidget):
                 tr(lang, "analysis.limit"),
             ]
         )
-        self.table_best.setHorizontalHeaderLabels([tr(lang, "analysis.best_objective"), "P12.x", "P12.y"])
+        self._set_best_table_headers(self._best_var_names or self._collect_enabled_variable_names())
 
     def reset_state(self) -> None:
         if self._worker:
@@ -939,6 +940,7 @@ class OptimizationTab(QWidget):
             self.add_variable_row("P12.y")
         if self.table_obj.rowCount() == 0:
             self.add_objective_row(direction="min", expression="max(load.P9.Mag)")
+        self._set_best_table_headers(self._collect_enabled_variable_names())
 
     def _variable_type_options(self) -> List[str]:
         return ["Coordinate", "Length", "Parameter", "All"]
@@ -980,6 +982,28 @@ class OptimizationTab(QWidget):
                 if table.cellWidget(row, col) is widget:
                     return row
         return -1
+
+    def _collect_enabled_variable_names(self) -> List[str]:
+        names: List[str] = []
+        for row in range(self.table_vars.rowCount()):
+            enabled_item = self.table_vars.item(row, 0)
+            enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
+            if not enabled:
+                continue
+            combo = self.table_vars.cellWidget(row, 3)
+            if not isinstance(combo, QComboBox):
+                continue
+            name = combo.currentText().strip()
+            if name:
+                names.append(name)
+        return names
+
+    def _set_best_table_headers(self, var_names: List[str]) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        self._best_var_names = list(var_names)
+        headers = [tr(lang, "analysis.best_objective")] + self._best_var_names
+        self.table_best.setColumnCount(len(headers))
+        self.table_best.setHorizontalHeaderLabels(headers)
 
     def _on_variable_type_changed(self, var_type: str) -> None:
         combo = self.sender()
@@ -1353,6 +1377,7 @@ class OptimizationTab(QWidget):
         variables = self._collect_variables()
         if variables is None:
             return
+        self._set_best_table_headers([var.name for var in variables if var.enabled])
         objectives = self._collect_objectives()
         constraints = self._collect_constraints()
 
@@ -1419,7 +1444,7 @@ class OptimizationTab(QWidget):
         obj_item = QTableWidgetItem("--" if obj_val is None else f"{obj_val:.4f}")
         obj_item.setFlags(obj_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table_best.setItem(0, 0, obj_item)
-        for idx, key in enumerate(["P12.x", "P12.y"], start=1):
+        for idx, key in enumerate(self._best_var_names, start=1):
             val = self._best_vars.get(key)
             item = QTableWidgetItem("--" if val is None else f"{val:.4f}")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1431,6 +1456,20 @@ class OptimizationTab(QWidget):
             return
         for name, val in self._best_vars.items():
             if not name.startswith("P") or "." not in name:
+                if name.startswith("Link") and name.endswith(".L"):
+                    lid_str = name[len("Link") : -len(".L")]
+                    try:
+                        lid = int(lid_str)
+                    except Exception:
+                        continue
+                    link = self.ctrl.links.get(lid)
+                    if not link or link.get("ref", False):
+                        continue
+                    self.ctrl.cmd_set_link_length(lid, float(val))
+                elif name.startswith("Param."):
+                    param_name = name[len("Param.") :].strip()
+                    if param_name:
+                        self.ctrl.cmd_set_param(param_name, float(val))
                 continue
             pid_str, axis = name[1:].split(".", 1)
             try:
