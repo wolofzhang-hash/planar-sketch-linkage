@@ -120,8 +120,8 @@ class SketchController:
         self._last_point_pos: Optional[Tuple[float, float]] = None
 
         # --- Linkage-style simulation configuration ---
-        # Driver: either a world-angle of a vector (pivot->tip) or a joint angle (i-j-k).
-        # type: "vector" or "joint"
+        # Driver: world-angle of a pivot->tip direction.
+        # type: "angle"
         self.driver: Dict[str, Any] = self._default_driver()
         # Multiple drivers (primary driver is drivers[0] when present)
         self.drivers: List[Dict[str, Any]] = []
@@ -172,9 +172,8 @@ class SketchController:
     def _default_driver() -> Dict[str, Any]:
         return {
             "enabled": False,
-            "type": "vector",
+            "type": "angle",
             "pivot": None, "tip": None,
-            "i": None, "j": None, "k": None,
             "rad": 0.0,
             "sweep_start": None,
             "sweep_end": None,
@@ -195,12 +194,9 @@ class SketchController:
             sweep_end = float(self.sweep_settings.get("end", 360.0))
         return {
             "enabled": bool(data.get("enabled", True)),
-            "type": str(data.get("type", "vector")),
+            "type": str(data.get("type", "angle")),
             "pivot": data.get("pivot"),
             "tip": data.get("tip"),
-            "i": data.get("i"),
-            "j": data.get("j"),
-            "k": data.get("k"),
             "rad": float(data.get("rad", 0.0) or 0.0),
             "sweep_start": sweep_start,
             "sweep_end": sweep_end,
@@ -548,7 +544,7 @@ class SketchController:
             for out in active_outputs:
                 entry = {
                     "mode": "output",
-                    "type": "vector",
+                    "type": "angle",
                     "pivot": out.get("pivot"),
                     "tip": out.get("tip"),
                     "rad": out.get("rad", 0.0),
@@ -556,36 +552,17 @@ class SketchController:
                 drive_sources.append(entry)
 
         for drv in drive_sources:
-            dtype = str(drv.get("type", "vector"))
-            if dtype == "joint":
-                i = drv.get("i")
-                k = drv.get("k")
-                if i is not None:
-                    driven_pids.add(int(i))
-                if k is not None:
-                    driven_pids.add(int(k))
-            else:
-                tip = drv.get("tip")
-                if tip is not None:
-                    driven_pids.add(int(tip))
+            tip = drv.get("tip")
+            if tip is not None:
+                driven_pids.add(int(tip))
 
         # Allow editing lengths that belong to the active drivers (avoid false OVER).
         driver_length_pairs: set[frozenset[int]] = set()
         for drv in drive_sources:
-            dtype = str(drv.get("type", "vector"))
-            if dtype == "joint":
-                i = drv.get("i")
-                j = drv.get("j")
-                k = drv.get("k")
-                if i is not None and j is not None:
-                    driver_length_pairs.add(frozenset({int(i), int(j)}))
-                if j is not None and k is not None:
-                    driver_length_pairs.add(frozenset({int(j), int(k)}))
-            else:
-                piv = drv.get("pivot")
-                tip = drv.get("tip")
-                if piv is not None and tip is not None:
-                    driver_length_pairs.add(frozenset({int(piv), int(tip)}))
+            piv = drv.get("pivot")
+            tip = drv.get("tip")
+            if piv is not None and tip is not None:
+                driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
         # PBD-style iterations
         for _ in range(max(1, int(iters))):
@@ -603,47 +580,24 @@ class SketchController:
                     tp["y"] = float(tp["y"]) + a * (ty - float(tp["y"]))
             # (1) Hard drivers first
             for drv in drive_sources:
-                dtype = str(drv.get("type", "vector"))
-                if dtype == "joint":
-                    i = drv.get("i")
-                    j = drv.get("j")
-                    k = drv.get("k")
-                    if i is None or j is None or k is None:
-                        continue
-                    i = int(i); j = int(j); k = int(k)
-                    if drag_pid in (i, j, k):
-                        continue
-                    if i in self.points and j in self.points and k in self.points:
-                        pi = self.points[i]
-                        pj = self.points[j]
-                        pk = self.points[k]
-                        lock_i = bool(pi.get("fixed", False)) or (drag_pid == i)
-                        lock_j = bool(pj.get("fixed", False)) or (drag_pid == j)
-                        lock_k = bool(pk.get("fixed", False)) or (drag_pid == k)
-                        ConstraintSolver.enforce_driver_joint_angle(
-                            pi, pj, pk,
-                            float(drv.get("rad", 0.0)),
-                            lock_i, lock_j, lock_k,
-                        )
-                else:
-                    piv = drv.get("pivot")
-                    tip = drv.get("tip")
-                    if piv is None or tip is None:
-                        continue
-                    piv = int(piv); tip = int(tip)
-                    if drag_pid in (piv, tip):
-                        continue
-                    if piv in self.points and tip in self.points:
-                        piv_pt = self.points[piv]
-                        tip_pt = self.points[tip]
-                        lock_piv = bool(piv_pt.get("fixed", False)) or (drag_pid == piv)
-                        lock_tip = bool(tip_pt.get("fixed", False)) or (drag_pid == tip)
-                        ConstraintSolver.enforce_driver_angle(
-                            piv_pt, tip_pt,
-                            float(drv.get("rad", 0.0)),
-                            lock_piv,
-                            lock_tip=lock_tip,
-                        )
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is None or tip is None:
+                    continue
+                piv = int(piv); tip = int(tip)
+                if drag_pid in (piv, tip):
+                    continue
+                if piv in self.points and tip in self.points:
+                    piv_pt = self.points[piv]
+                    tip_pt = self.points[tip]
+                    lock_piv = bool(piv_pt.get("fixed", False)) or (drag_pid == piv)
+                    lock_tip = bool(tip_pt.get("fixed", False)) or (drag_pid == tip)
+                    ConstraintSolver.enforce_driver_angle(
+                        piv_pt, tip_pt,
+                        float(drv.get("rad", 0.0)),
+                        lock_piv,
+                        lock_tip=lock_tip,
+                    )
 
             # (2) Coincide constraints
             for c in self.coincides.values():
@@ -684,7 +638,19 @@ class SketchController:
                 lock_p = bool(pp.get("fixed", False)) or (drag_pid == p_id) or (p_id in driven_pids)
                 lock_a = bool(pa.get("fixed", False)) or (drag_pid == i_id) or (i_id in driven_pids)
                 lock_b = bool(pb.get("fixed", False)) or (drag_pid == j_id) or (j_id in driven_pids)
-                ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
+                if "s" in pl:
+                    ok = ConstraintSolver.solve_point_on_line_offset(
+                        pp,
+                        pa,
+                        pb,
+                        float(pl.get("s", 0.0)),
+                        lock_p,
+                        lock_a,
+                        lock_b,
+                        tol=1e-6,
+                    )
+                else:
+                    ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
                 if not ok:
                     pl["over"] = True
 
@@ -887,7 +853,13 @@ class SketchController:
                 abx, aby = bx - ax, by - ay
                 denom = math.hypot(abx, aby)
                 if denom > 1e-12:
-                    dist = abs((px - ax) * (-aby) + (py - ay) * (abx)) / denom
+                    if "s" in pl:
+                        ux, uy = abx / denom, aby / denom
+                        target_x = ax + ux * float(pl.get("s", 0.0))
+                        target_y = ay + uy * float(pl.get("s", 0.0))
+                        dist = math.hypot(px - target_x, py - target_y)
+                    else:
+                        dist = abs((px - ax) * (-aby) + (py - ay) * (abx)) / denom
                     max_pl = max(max_pl, dist)
 
         # Point-on-spline constraints
@@ -994,7 +966,7 @@ class SketchController:
                 if bool(c.get("enabled", True)) and int(c.get("a", -1)) in comp and int(c.get("b", -1)) in comp
             )
             point_lines = sum(
-                1
+                (2 if "s" in pl else 1)
                 for pl in self.point_lines.values()
                 if bool(pl.get("enabled", True))
                 and int(pl.get("p", -1)) in comp
@@ -1103,6 +1075,24 @@ class SketchController:
             else:
                 a["deg_expr_error"] = True
                 a["deg_expr_error_msg"] = str(err)
+
+        # Point-on-line (s): s_expr
+        for plid, pl in self.point_lines.items():
+            if "s" not in pl:
+                continue
+            expr = pl.get("s_expr", "")
+            if not expr:
+                pl.pop("s_expr_error", None)
+                pl.pop("s_expr_error_msg", None)
+                continue
+            val, err = self.parameters.eval_expr(str(expr))
+            if err is None and val is not None:
+                pl["s"] = float(val)
+                pl.pop("s_expr_error", None)
+                pl.pop("s_expr_error_msg", None)
+            else:
+                pl["s_expr_error"] = True
+                pl["s_expr_error_msg"] = str(err)
 
     # --- Parameter commands (Undo/Redo) ---
     def cmd_set_param(self, name: str, value: float):
@@ -1555,7 +1545,7 @@ class SketchController:
         kept_measures: List[Dict[str, Any]] = []
         for m in self.measures:
             mtype = m.get("type")
-            if mtype == "vector":
+            if mtype == "angle":
                 if self._safe_int(m.get("pivot", -1)) in pids or self._safe_int(m.get("tip", -1)) in pids:
                     removed_meas_names.append(str(m.get("name", "")))
                     continue
@@ -1575,15 +1565,8 @@ class SketchController:
         kept_drivers: List[Dict[str, Any]] = []
         for drv in self.drivers:
             dtype = drv.get("type")
-            if dtype == "vector":
+            if dtype == "angle":
                 if self._safe_int(drv.get("pivot", -1)) in pids or self._safe_int(drv.get("tip", -1)) in pids:
-                    continue
-            elif dtype == "joint":
-                if {
-                    self._safe_int(drv.get("i", -1)),
-                    self._safe_int(drv.get("j", -1)),
-                    self._safe_int(drv.get("k", -1)),
-                } & pids:
                     continue
             kept_drivers.append(drv)
         if len(kept_drivers) != len(self.drivers):
@@ -1625,8 +1608,19 @@ class SketchController:
             self.selected_coincide_id = None
 
 
-    def _create_point_line(self, plid: int, p: int, i: int, j: int, hidden: bool, enabled: bool = True):
-        self.point_lines[plid] = {
+    def _create_point_line(
+        self,
+        plid: int,
+        p: int,
+        i: int,
+        j: int,
+        hidden: bool,
+        enabled: bool = True,
+        s: Optional[float] = None,
+        s_expr: str = "",
+        name: str = "",
+    ):
+        entry: Dict[str, Any] = {
             "p": int(p),
             "i": int(i),
             "j": int(j),
@@ -1634,6 +1628,12 @@ class SketchController:
             "enabled": bool(enabled),
             "over": False,
         }
+        if s is not None:
+            entry["s"] = float(s)
+            entry["s_expr"] = str(s_expr or "")
+            if name:
+                entry["name"] = str(name)
+        self.point_lines[plid] = entry
         it = PointLineItem(plid, self)
         self.point_lines[plid]["item"] = it
         self.scene.addItem(it)
@@ -1649,6 +1649,15 @@ class SketchController:
         del self.point_lines[plid]
         if self.selected_point_line_id == plid:
             self.selected_point_line_id = None
+
+    def _point_line_offset_name(self, pl: Dict[str, Any]) -> str:
+        try:
+            p = int(pl.get("p", -1))
+            i = int(pl.get("i", -1))
+            j = int(pl.get("j", -1))
+        except Exception:
+            return "point line s"
+        return f"s P{p} on (P{i}-P{j})"
 
     def _create_spline(self, sid: int, point_ids: List[int], hidden: bool):
         pts = [pid for pid in point_ids if pid in self.points]
@@ -2484,6 +2493,49 @@ class SketchController:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(AddPointLine())
 
+    def cmd_add_point_line_offset(self, p: int, i: int, j: int, s: float = 0.0, s_expr: str = ""):
+        """Add a point-on-line displacement constraint: P = A + unit(B-A) * s."""
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if p not in self.points or i not in self.points or j not in self.points:
+            return
+        if i == j:
+            return
+        if p == i or p == j:
+            return
+        line_pair = frozenset({int(i), int(j)})
+        for pl in self.point_lines.values():
+            if int(pl.get("p")) == int(p) and frozenset({int(pl.get("i")), int(pl.get("j"))}) == line_pair:
+                return
+        ctrl = self
+        model_before = self.snapshot_model()
+        plid = self._next_plid
+        name = self._point_line_offset_name({"p": p, "i": i, "j": j})
+
+        class AddPointLineOffset(Command):
+            name = "Add Point On Line (s)"
+            def do(self_):
+                ctrl._next_plid = max(ctrl._next_plid, plid + 1)
+                ctrl._create_point_line(
+                    plid, p, i, j,
+                    hidden=False,
+                    enabled=True,
+                    s=float(s),
+                    s_expr=str(s_expr or ""),
+                    name=name,
+                )
+                pp = ctrl.points[p]; pa = ctrl.points[i]; pb = ctrl.points[j]
+                lock_p = bool(pp.get("fixed", False))
+                lock_a = bool(pa.get("fixed", False))
+                lock_b = bool(pb.get("fixed", False))
+                ConstraintSolver.solve_point_on_line_offset(pp, pa, pb, float(s), lock_p, lock_a, lock_b, tol=1e-6)
+                ctrl.solve_constraints(drag_pid=p)
+                ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(AddPointLineOffset())
+
     def cmd_add_point_spline(self, p: int, s: int):
         """Add a point-on-spline constraint: point p lies on spline s."""
         if not self._confirm_stop_replay("modify the model"):
@@ -3025,6 +3077,41 @@ class SketchController:
         deg = math.degrees(angle_between(v1x, v1y, v2x, v2y))
         self.cmd_add_angle(i, j, k, deg)
 
+    def add_point_line_offset_from_selection(self):
+        """Create a point-on-line (s) constraint from the current selection."""
+        self.commit_drag_if_any()
+        p = None
+        i = None
+        j = None
+        if self.selected_link_id is not None and self.selected_link_id in self.links:
+            link = self.links[self.selected_link_id]
+            i = int(link.get("i"))
+            j = int(link.get("j"))
+            if self.selected_point_id is not None:
+                p = int(self.selected_point_id)
+        else:
+            selected = sorted(list(self.selected_point_ids))
+            if len(selected) == 3:
+                p = int(self.selected_point_id) if self.selected_point_id in selected else int(selected[-1])
+                others = [pid for pid in selected if pid != p]
+                if len(others) == 2:
+                    i, j = int(others[0]), int(others[1])
+        if p is None or i is None or j is None:
+            QMessageBox.information(
+                self.win,
+                "Selection",
+                "Select a line (or two points) for A,B and a point P before adding Point on Line (s).",
+            )
+            return
+        if p == i or p == j:
+            QMessageBox.information(
+                self.win,
+                "Selection",
+                "Point P must be distinct from the line endpoints.",
+            )
+            return
+        self.cmd_add_point_line_offset(p, i, j, s=0.0)
+
     def show_empty_context_menu(self, global_pos, scene_pos: QPointF):
         lang = getattr(self, "ui_language", "en")
         m = QMenu(self.win)
@@ -3082,31 +3169,21 @@ class SketchController:
             m.addSeparator()
             sub_drv = m.addMenu(tr(lang, "context.set_driver"))
 
-            # Vector driver: choose a neighbor as tip
-            sub_vec = sub_drv.addMenu(tr(lang, "context.vector_pivot_tip"))
+            sub_angle = sub_drv.addMenu(tr(lang, "context.angle_pivot_tip"))
             for nb in nbrs:
-                sub_vec.addAction(
+                sub_angle.addAction(
                     tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                    lambda nb=nb: self.set_driver(pid, nb),
+                    lambda nb=nb: self.set_driver_angle(pid, nb),
                 )
-
-            # Joint driver: choose two neighbors as i and k
-            sub_joint = sub_drv.addMenu(tr(lang, "context.joint_angle"))
-            if len(nbrs) >= 2:
-                for i in nbrs:
-                    for k in nbrs:
-                        if i == k:
-                            continue
-                        sub_joint.addAction(f"P{i}-P{pid}-P{k}", lambda i=i, k=k: self.set_driver_joint(i, pid, k))
 
             sub_drv.addSeparator()
             sub_drv.addAction(tr(lang, "context.clear_driver"), self.clear_driver)
 
             sub_meas = m.addMenu(tr(lang, "context.add_measurement"))
 
-            sub_mvec = sub_meas.addMenu(tr(lang, "context.vector_world"))
+            sub_mvec = sub_meas.addMenu(tr(lang, "context.angle_world"))
             for nb in nbrs:
-                sub_mvec.addAction(f"V(P{pid}->P{nb})", lambda nb=nb: self.add_measure_vector(pid, nb))
+                sub_mvec.addAction(f"A(P{pid}->P{nb})", lambda nb=nb: self.add_measure_angle(pid, nb))
 
             sub_mjoint = sub_meas.addMenu(tr(lang, "context.joint_angle"))
             if len(nbrs) >= 2:
@@ -3272,11 +3349,10 @@ class SketchController:
         active_drivers = self._active_drivers()
         show_driver_index = len(active_drivers) > 1
         for idx, drv in enumerate(active_drivers):
-            driver_type = str(drv.get("type", "vector"))
-            if driver_type == "joint":
-                pid = drv.get("j")
-            else:
-                pid = drv.get("pivot")
+            driver_type = str(drv.get("type", "angle"))
+            if driver_type != "angle":
+                continue
+            pid = drv.get("pivot")
             if pid is None:
                 continue
             label = "↻" if not show_driver_index else f"↻{idx + 1}"
@@ -3588,8 +3664,17 @@ class SketchController:
                 for cid, c in sorted(self.coincides.items(), key=lambda kv: kv[0])
             ],
             "point_lines": [
-                {"id": plid, "p": pl.get("p"), "i": pl.get("i"), "j": pl.get("j"),
-                 "hidden": bool(pl.get("hidden", False)), "enabled": bool(pl.get("enabled", True))}
+                {
+                    "id": plid,
+                    "p": pl.get("p"),
+                    "i": pl.get("i"),
+                    "j": pl.get("j"),
+                    "hidden": bool(pl.get("hidden", False)),
+                    "enabled": bool(pl.get("enabled", True)),
+                    **({"s": float(pl.get("s", 0.0))} if "s" in pl else {}),
+                    **({"s_expr": str(pl.get("s_expr", ""))} if pl.get("s_expr") else {}),
+                    **({"name": str(pl.get("name", ""))} if pl.get("name") else {}),
+                }
                 for plid, pl in sorted(self.point_lines.items(), key=lambda kv: kv[0])
             ],
             "point_splines": [
@@ -3605,12 +3690,9 @@ class SketchController:
             ],
             "driver": {
                 "enabled": bool(self.driver.get("enabled", False)),
-                "type": str(self.driver.get("type", "vector")),
+                "type": str(self.driver.get("type", "angle")),
                 "pivot": self.driver.get("pivot"),
                 "tip": self.driver.get("tip"),
-                "i": self.driver.get("i"),
-                "j": self.driver.get("j"),
-                "k": self.driver.get("k"),
                 "rad": float(self.driver.get("rad", 0.0)),
                 "sweep_start": self.driver.get("sweep_start"),
                 "sweep_end": self.driver.get("sweep_end"),
@@ -3618,12 +3700,9 @@ class SketchController:
             "drivers": [
                 {
                     "enabled": bool(d.get("enabled", False)),
-                    "type": str(d.get("type", "vector")),
+                    "type": str(d.get("type", "angle")),
                     "pivot": d.get("pivot"),
                     "tip": d.get("tip"),
-                    "i": d.get("i"),
-                    "j": d.get("j"),
-                    "k": d.get("k"),
                     "rad": float(d.get("rad", 0.0)),
                     "sweep_start": d.get("sweep_start"),
                     "sweep_end": d.get("sweep_end"),
@@ -3877,22 +3956,15 @@ class SketchController:
         for drv in self.drivers:
             if not drv.pop("_needs_rad", False):
                 continue
-            dtype = str(drv.get("type", "vector"))
-            if dtype == "joint":
-                i = drv.get("i")
-                j = drv.get("j")
-                k = drv.get("k")
-                if i is not None and j is not None and k is not None:
-                    ang = self.get_joint_angle_rad(int(i), int(j), int(k))
-                    if ang is not None:
-                        drv["rad"] = float(ang)
-            else:
-                piv = drv.get("pivot")
-                tip = drv.get("tip")
-                if piv is not None and tip is not None:
-                    ang = self.get_vector_angle_rad(int(piv), int(tip))
-                    if ang is not None:
-                        drv["rad"] = float(ang)
+            dtype = str(drv.get("type", "angle"))
+            if dtype != "angle":
+                continue
+            piv = drv.get("pivot")
+            tip = drv.get("tip")
+            if piv is not None and tip is not None:
+                ang = self.get_angle_rad(int(piv), int(tip))
+                if ang is not None:
+                    drv["rad"] = float(ang)
         self._sync_primary_driver()
 
         self.outputs = []
@@ -3917,7 +3989,7 @@ class SketchController:
             piv = out.get("pivot")
             tip = out.get("tip")
             if piv is not None and tip is not None:
-                ang = self.get_vector_angle_rad(int(piv), int(tip))
+                ang = self.get_angle_rad(int(piv), int(tip))
                 if ang is not None:
                     out["rad"] = float(ang)
         self._sync_primary_output()
@@ -3925,17 +3997,17 @@ class SketchController:
         for m in measures:
             mtype = str(m.get("type", "")).lower()
             name = str(m.get("name", ""))
-            if mtype == "vector":
+            if mtype == "angle":
                 pivot = m.get("pivot")
                 tip = m.get("tip")
                 if pivot is None or tip is None:
                     continue
                 if int(pivot) in self.points and int(tip) in self.points:
                     self.measures.append({
-                        "type": "vector",
+                        "type": "angle",
                         "pivot": int(pivot),
                         "tip": int(tip),
-                        "name": name or f"vec P{int(pivot)}->P{int(tip)}",
+                        "name": name or f"ang P{int(pivot)}->P{int(tip)}",
                     })
             elif mtype == "joint":
                 i = m.get("i")
@@ -4008,10 +4080,21 @@ class SketchController:
                 continue
             max_plid = max(max_plid, plid)
             if p in self.points and i in self.points and j in self.points and i != j and p != i and p != j:
+                s_expr = str(pl.get("s_expr", ""))
+                name = str(pl.get("name", ""))
+                s_val = None
+                if "s" in pl or s_expr:
+                    try:
+                        s_val = float(pl.get("s", 0.0))
+                    except Exception:
+                        s_val = 0.0
                 self._create_point_line(
                     plid, p, i, j,
                     hidden=bool(pl.get("hidden", False)),
                     enabled=bool(pl.get("enabled", True)),
+                    s=s_val,
+                    s_expr=s_expr,
+                    name=name,
                 )
         self._next_plid = max(max_plid + 1, 0)
 
@@ -4047,34 +4130,17 @@ class SketchController:
 
 
     # -------------------- Linkage-style simulation API --------------------
-    def set_driver(self, pivot_pid: int, tip_pid: int):
-        """Set the input driver as a world-angle vector (pivot -> tip)."""
+    def set_driver_angle(self, pivot_pid: int, tip_pid: int):
+        """Set the input driver as a world-angle direction (pivot -> tip)."""
         driver = self._normalize_driver({
             "enabled": True,
-            "type": "vector",
+            "type": "angle",
             "pivot": int(pivot_pid),
             "tip": int(tip_pid),
-            "i": None, "j": None, "k": None,
             "sweep_start": self.sweep_settings.get("start", 0.0),
             "sweep_end": self.sweep_settings.get("end", 360.0),
         })
-        ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
-        if ang is not None:
-            driver["rad"] = float(ang)
-        self.drivers.insert(0, driver)
-        self._sync_primary_driver()
-
-    def set_driver_joint(self, i_pid: int, j_pid: int, k_pid: int):
-        """Set the input driver as a joint angle (i-j-k), signed and clamped to (-pi, pi]."""
-        driver = self._normalize_driver({
-            "enabled": True,
-            "type": "joint",
-            "pivot": None, "tip": None,
-            "i": int(i_pid), "j": int(j_pid), "k": int(k_pid),
-            "sweep_start": self.sweep_settings.get("start", 0.0),
-            "sweep_end": self.sweep_settings.get("end", 360.0),
-        })
-        ang = self.get_joint_angle_rad(int(i_pid), int(j_pid), int(k_pid))
+        ang = self.get_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
             driver["rad"] = float(ang)
         self.drivers.insert(0, driver)
@@ -4086,13 +4152,13 @@ class SketchController:
         self._sync_primary_driver()
 
     def set_output(self, pivot_pid: int, tip_pid: int):
-        """Set the output measurement vector (pivot -> tip)."""
+        """Set the output measurement angle (pivot -> tip)."""
         output = self._normalize_output({
             "enabled": True,
             "pivot": int(pivot_pid),
             "tip": int(tip_pid),
         })
-        ang = self.get_vector_angle_rad(int(pivot_pid), int(tip_pid))
+        ang = self.get_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
             output["rad"] = float(ang)
         self.outputs.insert(0, output)
@@ -4172,18 +4238,47 @@ class SketchController:
             j_id = int(pl.get("j", -1))
             if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
                 continue
+            if "s" in pl:
+                s_val = float(pl.get("s", 0.0))
 
-            def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
-                px, py = _xy(q, p_id)
-                ax, ay = _xy(q, i_id)
-                bx, by = _xy(q, j_id)
-                abx, aby = bx - ax, by - ay
-                denom = math.hypot(abx, aby)
-                if denom < 1e-9:
-                    return 0.0
-                return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+                def _polx(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
+                    px, _py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    target_x = ax + ux * s_val
+                    return px - target_x
 
-            funcs.append(_pol)
+                def _poly(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
+                    _px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    target_y = ay + uy * s_val
+                    return py - target_y
+
+                funcs.append(_polx)
+                funcs.append(_poly)
+            else:
+                def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
+                    px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+
+                funcs.append(_pol)
 
         # Point-on-spline constraints (distance to closest sampled point)
         for ps in self.point_splines.values():
@@ -4263,40 +4358,22 @@ class SketchController:
         active_outputs = self._active_outputs()
         if active_drivers:
             for drv in active_drivers:
-                if drv.get("type") == "joint":
-                    i = drv.get("i")
-                    j = drv.get("j")
-                    k = drv.get("k")
-                    if i in idx_map and j in idx_map and k in idx_map:
-                        target = float(drv.get("rad", 0.0))
+                if drv.get("type") != "angle":
+                    continue
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv in idx_map and tip in idx_map:
+                    target = float(drv.get("rad", 0.0))
 
-                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                            xi, yi = _xy(q, int(i))
-                            xj, yj = _xy(q, int(j))
-                            xk, yk = _xy(q, int(k))
-                            v1x, v1y = xi - xj, yi - yj
-                            v2x, v2y = xk - xj, yk - yj
-                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                                return 0.0
-                            cur = angle_between(v1x, v1y, v2x, v2y)
-                            return clamp_angle_rad(cur - target)
+                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                        px, py = _xy(q, int(piv))
+                        tx, ty = _xy(q, int(tip))
+                        dx, dy = tx - px, ty - py
+                        if abs(dx) + abs(dy) < 1e-12:
+                            return 0.0
+                        return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                        funcs.append(_drv)
-                else:
-                    piv = drv.get("pivot")
-                    tip = drv.get("tip")
-                    if piv in idx_map and tip in idx_map:
-                        target = float(drv.get("rad", 0.0))
-
-                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                            px, py = _xy(q, int(piv))
-                            tx, ty = _xy(q, int(tip))
-                            dx, dy = tx - px, ty - py
-                            if abs(dx) + abs(dy) < 1e-12:
-                                return 0.0
-                            return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                        funcs.append(_drv)
+                    funcs.append(_drv)
         elif active_outputs:
             for out in active_outputs:
                 piv = out.get("pivot")
@@ -4553,40 +4630,22 @@ class SketchController:
                     _add(_out, "output", {"type": "output_angle", "pivot": int(piv), "tip": int(tip)})
         elif include_driver:
             for drv in self._active_drivers():
-                if drv.get("type") == "joint":
-                    i = drv.get("i")
-                    j = drv.get("j")
-                    k = drv.get("k")
-                    if i in idx_map and j in idx_map and k in idx_map:
-                        target = float(drv.get("rad", 0.0))
+                if drv.get("type") != "angle":
+                    continue
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv in idx_map and tip in idx_map:
+                    target = float(drv.get("rad", 0.0))
 
-                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                            xi, yi = _xy(q, int(i))
-                            xj, yj = _xy(q, int(j))
-                            xk, yk = _xy(q, int(k))
-                            v1x, v1y = xi - xj, yi - yj
-                            v2x, v2y = xk - xj, yk - yj
-                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                                return 0.0
-                            cur = angle_between(v1x, v1y, v2x, v2y)
-                            return clamp_angle_rad(cur - target)
+                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                        px, py = _xy(q, int(piv))
+                        tx, ty = _xy(q, int(tip))
+                        dx, dy = tx - px, ty - py
+                        if abs(dx) + abs(dy) < 1e-12:
+                            return 0.0
+                        return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                        _add(_drv, "actuator", {"type": "driver_joint", "i": int(i), "j": int(j), "k": int(k)})
-                else:
-                    piv = drv.get("pivot")
-                    tip = drv.get("tip")
-                    if piv in idx_map and tip in idx_map:
-                        target = float(drv.get("rad", 0.0))
-
-                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                            px, py = _xy(q, int(piv))
-                            tx, ty = _xy(q, int(tip))
-                            dx, dy = tx - px, ty - py
-                            if abs(dx) + abs(dy) < 1e-12:
-                                return 0.0
-                            return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                        _add(_drv, "actuator", {"type": "driver_angle", "pivot": int(piv), "tip": int(tip)})
+                    _add(_drv, "actuator", {"type": "driver_angle", "pivot": int(piv), "tip": int(tip)})
 
         return funcs, roles, meta
 
@@ -4869,9 +4928,9 @@ class SketchController:
                 titem.add_point(p["x"], p["y"])
 
     # ---- Measurements ----
-    def add_measure_vector(self, pivot_pid: int, tip_pid: int):
-        name = f"vec P{int(pivot_pid)}->P{int(tip_pid)}"
-        self.measures.append({"type": "vector", "pivot": int(pivot_pid), "tip": int(tip_pid), "name": name})
+    def add_measure_angle(self, pivot_pid: int, tip_pid: int):
+        name = f"ang P{int(pivot_pid)}->P{int(tip_pid)}"
+        self.measures.append({"type": "angle", "pivot": int(pivot_pid), "tip": int(tip_pid), "name": name})
 
     def add_measure_joint(self, i_pid: int, j_pid: int, k_pid: int):
         name = f"ang P{int(i_pid)}-P{int(j_pid)}-P{int(k_pid)}"
@@ -4900,32 +4959,42 @@ class SketchController:
             return
         self.load_measures.pop(index)
 
-    def get_measure_values_deg(self) -> List[tuple[str, Optional[float]]]:
-        """Return measurement values in degrees.
+    def get_measure_values(self) -> List[tuple[str, Optional[float], str]]:
+        """Return measurement values with units.
 
-        If a sweep has started (Play), values are reported relative to the Play-start pose
+        If a sweep has started (Play), angle values are reported relative to the Play-start pose
         (i.e., value==0 at the starting pose).
         """
-        out: List[tuple[str, Optional[float]]] = []
+        out: List[tuple[str, Optional[float], str]] = []
         for m in self.measures:
             nm = str(m.get("name", ""))
+            mtype = str(m.get("type", "")).lower()
             abs_deg: Optional[float] = None
-            if m.get("type") == "vector":
-                ang = self.get_vector_angle_rad(int(m.get("pivot")), int(m.get("tip")))
+            if mtype == "angle":
+                ang = self.get_angle_rad(int(m.get("pivot")), int(m.get("tip")))
                 abs_deg = None if ang is None else math.degrees(ang)
-            elif m.get("type") == "joint":
+            elif mtype == "joint":
                 ang = self.get_joint_angle_rad(int(m.get("i")), int(m.get("j")), int(m.get("k")))
                 abs_deg = None if ang is None else math.degrees(ang)
 
             if abs_deg is None:
-                out.append((nm, None))
+                out.append((nm, None, "deg"))
                 continue
 
             if nm in self._sim_zero_meas_deg:
-                out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm]))))
+                out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm])), "deg"))
             else:
-                out.append((nm, abs_deg))
-        return out
+                out.append((nm, abs_deg, "deg"))
+
+        for pl in self.point_lines.values():
+            if "s" not in pl:
+                continue
+            nm = str(pl.get("name", "")) or self._point_line_offset_name(pl)
+            try:
+                sval = float(pl.get("s", 0.0))
+            except (TypeError, ValueError):
+                sval = None
+            out.append((nm, sval, "mm"))
         return out
 
     def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
@@ -4953,7 +5022,7 @@ class SketchController:
         return out
 
     # ---- Angles ----
-    def get_vector_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
+    def get_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
         if pivot_pid not in self.points or tip_pid not in self.points:
             return None
         p = self.points[pivot_pid]
@@ -4984,16 +5053,13 @@ class SketchController:
         primary = self._primary_driver()
         if not primary or not primary.get("enabled"):
             return None
-        if primary.get("type") == "joint":
-            i, j, k = primary.get("i"), primary.get("j"), primary.get("k")
-            if i is None or j is None or k is None:
-                return None
-            return self.get_joint_angle_rad(int(i), int(j), int(k))
+        if primary.get("type") != "angle":
+            return None
         piv = primary.get("pivot")
         tip = primary.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def _get_output_angle_abs_rad(self) -> Optional[float]:
         primary = self._primary_output()
@@ -5003,7 +5069,7 @@ class SketchController:
         tip = primary.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def _get_output_angle_abs_rad_for(self, output: Dict[str, Any]) -> Optional[float]:
         if not output or not output.get("enabled"):
@@ -5012,21 +5078,18 @@ class SketchController:
         tip = output.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def _get_driver_angle_abs_rad(self, driver: Dict[str, Any]) -> Optional[float]:
         if not driver or not driver.get("enabled"):
             return None
-        if driver.get("type") == "joint":
-            i, j, k = driver.get("i"), driver.get("j"), driver.get("k")
-            if i is None or j is None or k is None:
-                return None
-            return self.get_joint_angle_rad(int(i), int(j), int(k))
+        if driver.get("type") != "angle":
+            return None
         piv = driver.get("pivot")
         tip = driver.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def get_input_angle_deg(self) -> Optional[float]:
         """Current input angle in degrees.
@@ -5168,9 +5231,9 @@ class SketchController:
             self._sync_primary_output()
 
         self._sim_zero_meas_deg = {}
-        for (nm, val) in self.get_measure_values_deg():
-            # At this moment get_measure_values_deg returns ABS (since _sim_zero_meas_deg is cleared)
-            if val is not None:
+        for (nm, val, unit) in self.get_measure_values():
+            # At this moment get_measure_values returns ABS (since _sim_zero_meas_deg is cleared)
+            if unit == "deg" and val is not None:
                 self._sim_zero_meas_deg[str(nm)] = float(val)
 
     def update_sim_start_pose_snapshot(self):

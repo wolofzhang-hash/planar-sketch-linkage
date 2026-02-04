@@ -957,7 +957,7 @@ class OptimizationTab(QWidget):
         self._set_best_table_headers(self._collect_enabled_variable_names())
 
     def _variable_type_options(self) -> List[str]:
-        return ["Coordinate", "Length", "Parameter", "All"]
+        return ["Coordinate", "Length", "Parameter", "Constraint", "All"]
 
     def _variable_options_for_type(self, var_type: str) -> List[str]:
         coords = []
@@ -966,13 +966,20 @@ class OptimizationTab(QWidget):
             coords.append(f"P{pid}.y")
         lengths = [f"Link{lid}.L" for lid in sorted(self.ctrl.links.keys())]
         params = [f"Param.{name}" for name in sorted(self.ctrl.parameters.params.keys())]
+        offsets = [
+            f"PointLine{plid}.s"
+            for plid, pl in sorted(getattr(self.ctrl, "point_lines", {}).items(), key=lambda kv: kv[0])
+            if "s" in pl
+        ]
         if var_type == "Coordinate":
             return coords
         if var_type == "Length":
             return lengths
         if var_type == "Parameter":
             return params
-        return coords + lengths + params
+        if var_type == "Constraint":
+            return offsets
+        return coords + lengths + params + offsets
 
     def _infer_variable_type(self, name: Optional[str]) -> str:
         if not name:
@@ -983,6 +990,8 @@ class OptimizationTab(QWidget):
             return "Length"
         if name.startswith("Param."):
             return "Parameter"
+        if name.startswith("PointLine") and name.endswith(".s"):
+            return "Constraint"
         return "Coordinate"
 
     def _row_for_table_widget(self, table: QTableWidget, widget: Optional[QComboBox], columns: List[int]) -> int:
@@ -1111,6 +1120,16 @@ class OptimizationTab(QWidget):
                         p2 = self.ctrl.points[j]
                         return math.hypot(p2["x"] - p1["x"], p2["y"] - p1["y"])
                 return float(link.get("L", 0.0))
+            if name.startswith("PointLine") and name.endswith(".s"):
+                plid_str = name[len("PointLine") : -len(".s")]
+                try:
+                    plid = int(plid_str)
+                except Exception:
+                    return None
+                pl = getattr(self.ctrl, "point_lines", {}).get(plid)
+                if not pl or "s" not in pl:
+                    return None
+                return float(pl.get("s", 0.0))
             return None
         pid_str, axis = name[1:].split(".", 1)
         try:
@@ -1190,7 +1209,7 @@ class OptimizationTab(QWidget):
         groups: Dict[str, List[str]] = {}
         groups["Input/Output"] = ["input_deg", "output_deg"]
 
-        measurements = [name for name, _val in self.ctrl.get_measure_values_deg()]
+        measurements = [name for name, _val, _unit in self.ctrl.get_measure_values()]
         load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
 
         manager = self._manager()

@@ -101,51 +101,6 @@ class ConstraintSolver:
         return True
 
 
-    @staticmethod
-    def enforce_driver_joint_angle(p_i: Dict[str, Any], p_j: Dict[str, Any], p_k: Dict[str, Any],
-                                  theta_target: float, lock_i: bool, lock_j: bool, lock_k: bool,
-                                  tol: float = 1e-8) -> bool:
-        """Hard-set the joint angle at j for (i-j-k).
-
-        This rotates i and/or k around j to match theta_target while preserving |ji| and |jk|.
-        """
-        v1x, v1y = p_i["x"] - p_j["x"], p_i["y"] - p_j["y"]
-        v2x, v2y = p_k["x"] - p_j["x"], p_k["y"] - p_j["y"]
-        d1 = math.hypot(v1x, v1y)
-        d2 = math.hypot(v2x, v2y)
-        if d1 < 1e-12 or d2 < 1e-12:
-            return False
-
-        cur = angle_between(v1x, v1y, v2x, v2y)
-        err = clamp_angle_rad(cur - theta_target)
-        if abs(err) <= tol:
-            return True
-
-        # If both ends are locked, can't enforce.
-        if lock_i and lock_k:
-            return False
-
-        # Prefer rotating the unlocked endpoint(s) about j. If both unlocked, split the correction.
-        if lock_i and not lock_k:
-            rv2x, rv2y = rot2(v2x, v2y, -err)
-            p_k["x"] = p_j["x"] + rv2x
-            p_k["y"] = p_j["y"] + rv2y
-            return True
-        if lock_k and not lock_i:
-            rv1x, rv1y = rot2(v1x, v1y, +err)
-            p_i["x"] = p_j["x"] + rv1x
-            p_i["y"] = p_j["y"] + rv1y
-            return True
-
-        half = err * 0.5
-        rv1x, rv1y = rot2(v1x, v1y, +half)
-        rv2x, rv2y = rot2(v2x, v2y, -half)
-        p_i["x"] = p_j["x"] + rv1x
-        p_i["y"] = p_j["y"] + rv1y
-        p_k["x"] = p_j["x"] + rv2x
-        p_k["y"] = p_j["y"] + rv2y
-        return True
-
 
     @staticmethod
     def solve_point_on_line(
@@ -205,6 +160,60 @@ class ConstraintSolver:
             b["x"] = bx - (w_b / w) * dx
             b["y"] = by - (w_b / w) * dy
 
+        return True
+
+    @staticmethod
+    def solve_point_on_line_offset(
+        p: Dict[str, Any],
+        a: Dict[str, Any],
+        b: Dict[str, Any],
+        s: float,
+        lock_p: bool,
+        lock_a: bool,
+        lock_b: bool,
+        tol: float = 1e-8,
+    ) -> bool:
+        """Enforce point P to sit at A + unit(B-A) * s.
+
+        This pins the point to a specific displacement along the AB direction.
+        """
+        ax, ay = float(a["x"]), float(a["y"])
+        bx, by = float(b["x"]), float(b["y"])
+        px, py = float(p["x"]), float(p["y"])
+
+        abx, aby = bx - ax, by - ay
+        ab_len = math.hypot(abx, aby)
+        if ab_len < 1e-12:
+            return True
+
+        ux, uy = abx / ab_len, aby / ab_len
+        target_x = ax + ux * float(s)
+        target_y = ay + uy * float(s)
+
+        dx = target_x - px
+        dy = target_y - py
+        if dx * dx + dy * dy <= tol * tol:
+            return True
+
+        if lock_p and lock_a and lock_b:
+            return False
+
+        w_p = 0.0 if lock_p else 1.0
+        w_a = 0.0 if lock_a else 1.0
+        w_b = 0.0 if lock_b else 1.0
+        w = w_p + w_a + w_b
+        if w <= 0.0:
+            return False
+
+        if w_p > 0.0:
+            p["x"] = px + (w_p / w) * dx
+            p["y"] = py + (w_p / w) * dy
+        if w_a > 0.0:
+            a["x"] = ax - (w_a / w) * dx
+            a["y"] = ay - (w_a / w) * dy
+        if w_b > 0.0:
+            b["x"] = bx - (w_b / w) * dx
+            b["y"] = by - (w_b / w) * dy
         return True
 
     @staticmethod

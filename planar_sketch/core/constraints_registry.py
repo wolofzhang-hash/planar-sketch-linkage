@@ -59,8 +59,12 @@ class ConstraintRegistry:
         # Point-on-line constraints
         for plid, pl in sorted(getattr(self.ctrl, "point_lines", {}).items(), key=lambda kv: kv[0]):
             key = f"P{plid}"
-            typ = "PointOnLine"
-            ent = f"P{pl['p']} on (P{pl['i']}-P{pl['j']})"
+            if "s" in pl:
+                typ = "PointOnLine(s)"
+                ent = f"P{pl['p']} on (P{pl['i']}-P{pl['j']}) @ s={pl.get('s', 0.0)}"
+            else:
+                typ = "PointOnLine"
+                ent = f"P{pl['p']} on (P{pl['i']}-P{pl['j']})"
             enabled = bool(pl.get("enabled", True))
             state = "OVER" if pl.get("over", False) else "OK"
             yield ConstraintRow(key, typ, ent, enabled, state)
@@ -150,15 +154,22 @@ class ConstraintRegistry:
                 "enabled": bool(c.get("enabled", True)),
             })
         for plid, pl in sorted(getattr(self.ctrl, "point_lines", {}).items(), key=lambda kv: kv[0]):
-            out.append({
-                "type": "point_line",
+            entry = {
+                "type": "point_line_s" if "s" in pl else "point_line",
                 "id": int(plid),
                 "p": int(pl.get("p", -1)),
                 "i": int(pl.get("i", -1)),
                 "j": int(pl.get("j", -1)),
                 "hidden": bool(pl.get("hidden", False)),
                 "enabled": bool(pl.get("enabled", True)),
-            })
+            }
+            if "s" in pl:
+                entry["s"] = float(pl.get("s", 0.0))
+                if pl.get("s_expr"):
+                    entry["s_expr"] = str(pl.get("s_expr", ""))
+                if pl.get("name"):
+                    entry["name"] = str(pl.get("name", ""))
+            out.append(entry)
         for psid, ps in sorted(getattr(self.ctrl, "point_splines", {}).items(), key=lambda kv: kv[0]):
             out.append({
                 "type": "point_spline",
@@ -207,15 +218,20 @@ class ConstraintRegistry:
                     "hidden": bool(c.get("hidden", False)),
                     "enabled": bool(c.get("enabled", True)),
                 })
-            elif t in ("point_line", "pointonline", "point_line_constraint"):
-                point_lines.append({
+            elif t in ("point_line", "pointonline", "point_line_constraint", "point_line_s", "point_line_offset"):
+                entry = {
                     "id": int(c.get("id", -1)),
                     "p": int(c.get("p", -1)),
                     "i": int(c.get("i", -1)),
                     "j": int(c.get("j", -1)),
                     "hidden": bool(c.get("hidden", False)),
                     "enabled": bool(c.get("enabled", True)),
-                })
+                }
+                if t in ("point_line_s", "point_line_offset") or "s" in c or "s_expr" in c:
+                    entry["s"] = float(c.get("s", 0.0))
+                    entry["s_expr"] = str(c.get("s_expr", ""))
+                    entry["name"] = str(c.get("name", ""))
+                point_lines.append(entry)
             elif t in ("point_spline", "pointonspline", "point_spline_constraint"):
                 point_splines.append({
                     "id": int(c.get("id", -1)),

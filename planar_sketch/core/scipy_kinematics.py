@@ -114,27 +114,19 @@ class SciPyKinematicSolver:
             active_outputs = _active_outputs()
             if active_drivers:
                 for drv in active_drivers:
-                    dtype = str(drv.get("type", "vector"))
+                    dtype = str(drv.get("type", "angle"))
                     target = float(drv.get("rad", 0.0))
-                    if dtype == "joint" and drv.get("i") is not None and drv.get("j") is not None and drv.get("k") is not None:
-                        i = int(drv["i"]); j = int(drv["j"]); k = int(drv["k"])
-                        if i in ctrl.points and j in ctrl.points and k in ctrl.points:
-                            ix, iy = get_xy(i, x)
-                            jx, jy = get_xy(j, x)
-                            kx, ky = get_xy(k, x)
-                            cur = _joint_angle_rad(ix, iy, jx, jy, kx, ky)
-                            c0, c1 = _angle_residual_rad(cur, target)
-                            r.extend([c0, c1])
-                    else:
-                        piv = drv.get("pivot")
-                        tip = drv.get("tip")
-                        if piv is not None and tip is not None and int(piv) in ctrl.points and int(tip) in ctrl.points:
-                            piv = int(piv); tip = int(tip)
-                            ax, ay = get_xy(piv, x)
-                            bx, by = get_xy(tip, x)
-                            cur = math.atan2(by - ay, bx - ax)
-                            c0, c1 = _angle_residual_rad(cur, target)
-                            r.extend([c0, c1])
+                    if dtype != "angle":
+                        continue
+                    piv = drv.get("pivot")
+                    tip = drv.get("tip")
+                    if piv is not None and tip is not None and int(piv) in ctrl.points and int(tip) in ctrl.points:
+                        piv = int(piv); tip = int(tip)
+                        ax, ay = get_xy(piv, x)
+                        bx, by = get_xy(tip, x)
+                        cur = math.atan2(by - ay, bx - ax)
+                        c0, c1 = _angle_residual_rad(cur, target)
+                        r.extend([c0, c1])
             elif active_outputs:
                 for out in active_outputs:
                     piv = out.get("pivot")
@@ -173,9 +165,15 @@ class SciPyKinematicSolver:
                 denom = math.hypot(vx, vy)
                 if denom < 1e-12:
                     continue
-                # cross((P-I),(J-I)) / |J-I|
-                dist = ((px - ix) * vy - (py - iy) * vx) / denom
-                r.append(dist)
+                if "s" in pl:
+                    ux, uy = vx / denom, vy / denom
+                    target_x = ix + ux * float(pl.get("s", 0.0))
+                    target_y = iy + uy * float(pl.get("s", 0.0))
+                    r.extend([px - target_x, py - target_y])
+                else:
+                    # cross((P-I),(J-I)) / |J-I|
+                    dist = ((px - ix) * vy - (py - iy) * vx) / denom
+                    r.append(dist)
 
             # Point-on-spline constraints: closest point residual
             for ps in ctrl.point_splines.values():

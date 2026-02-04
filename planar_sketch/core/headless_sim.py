@@ -54,12 +54,9 @@ class HeadlessModel:
     def _default_driver() -> Dict[str, Any]:
         return {
             "enabled": False,
-            "type": "vector",
+            "type": "angle",
             "pivot": None,
             "tip": None,
-            "i": None,
-            "j": None,
-            "k": None,
             "rad": 0.0,
         }
 
@@ -71,12 +68,9 @@ class HeadlessModel:
     def _normalize_driver(data: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "enabled": bool(data.get("enabled", True)),
-            "type": str(data.get("type", "vector")),
+            "type": str(data.get("type", "angle")),
             "pivot": data.get("pivot"),
             "tip": data.get("tip"),
-            "i": data.get("i"),
-            "j": data.get("j"),
-            "k": data.get("k"),
             "rad": float(data.get("rad", 0.0) or 0.0),
         }
 
@@ -173,16 +167,23 @@ class HeadlessModel:
             }
             for c in coincs
         }
-        self.point_lines = {
-            int(pl["id"]): {
+        point_lines: Dict[int, Dict[str, Any]] = {}
+        for pl in pls:
+            plid = int(pl.get("id", -1))
+            entry = {
                 "p": int(pl.get("p", -1)),
                 "i": int(pl.get("i", -1)),
                 "j": int(pl.get("j", -1)),
                 "enabled": bool(pl.get("enabled", True)),
                 "over": False,
             }
-            for pl in pls
-        }
+            if "s" in pl or "s_expr" in pl:
+                entry["s"] = float(pl.get("s", 0.0))
+                entry["s_expr"] = str(pl.get("s_expr", ""))
+                if pl.get("name"):
+                    entry["name"] = str(pl.get("name", ""))
+            point_lines[plid] = entry
+        self.point_lines = point_lines
         self.point_splines = {
             int(ps["id"]): {
                 "p": int(ps.get("p", -1)),
@@ -222,21 +223,14 @@ class HeadlessModel:
         for drv in self.drivers:
             if not drv.pop("_needs_rad", False):
                 continue
-            if drv.get("type") == "joint":
-                i = drv.get("i")
-                j = drv.get("j")
-                k = drv.get("k")
-                if i is not None and j is not None and k is not None:
-                    ang = self.get_joint_angle_rad(int(i), int(j), int(k))
-                    if ang is not None:
-                        drv["rad"] = float(ang)
-            else:
-                piv = drv.get("pivot")
-                tip = drv.get("tip")
-                if piv is not None and tip is not None:
-                    ang = self.get_vector_angle_rad(int(piv), int(tip))
-                    if ang is not None:
-                        drv["rad"] = float(ang)
+            if drv.get("type") != "angle":
+                continue
+            piv = drv.get("pivot")
+            tip = drv.get("tip")
+            if piv is not None and tip is not None:
+                ang = self.get_angle_rad(int(piv), int(tip))
+                if ang is not None:
+                    drv["rad"] = float(ang)
         self._sync_primary_driver()
 
         self.outputs = []
@@ -260,7 +254,7 @@ class HeadlessModel:
             piv = out.get("pivot")
             tip = out.get("tip")
             if piv is not None and tip is not None:
-                ang = self.get_vector_angle_rad(int(piv), int(tip))
+                ang = self.get_angle_rad(int(piv), int(tip))
                 if ang is not None:
                     out["rad"] = float(ang)
         self._sync_primary_output()
@@ -300,15 +294,15 @@ class HeadlessModel:
         self._sim_zero_input_rad = self._get_input_angle_abs_rad()
         self._sim_zero_output_rad = self._get_output_angle_abs_rad()
         self._sim_zero_meas_deg = {}
-        for name, val in self.get_measure_values_deg(abs_values=True):
-            if val is not None:
+        for name, val, unit in self.get_measure_values(abs_values=True):
+            if unit == "deg" and val is not None:
                 self._sim_zero_meas_deg[name] = float(val)
 
     @staticmethod
     def _rel_deg(abs_deg: float, base_deg: float) -> float:
         return (abs_deg - base_deg) % 360.0
 
-    def get_vector_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
+    def get_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
         if pivot_pid not in self.points or tip_pid not in self.points:
             return None
         p = self.points[pivot_pid]
@@ -329,20 +323,26 @@ class HeadlessModel:
             return None
         return angle_between(v1x, v1y, v2x, v2y)
 
+    def _point_line_offset_name(self, pl: Dict[str, Any]) -> str:
+        try:
+            p = int(pl.get("p", -1))
+            i = int(pl.get("i", -1))
+            j = int(pl.get("j", -1))
+        except Exception:
+            return "point line s"
+        return f"s P{p} on (P{i}-P{j})"
+
     def _get_input_angle_abs_rad(self) -> Optional[float]:
         primary = self._primary_driver()
         if not primary or not primary.get("enabled"):
             return None
-        if primary.get("type") == "joint":
-            i, j, k = primary.get("i"), primary.get("j"), primary.get("k")
-            if i is None or j is None or k is None:
-                return None
-            return self.get_joint_angle_rad(int(i), int(j), int(k))
+        if primary.get("type") != "angle":
+            return None
         piv = primary.get("pivot")
         tip = primary.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def _get_output_angle_abs_rad(self) -> Optional[float]:
         primary = self._primary_output()
@@ -352,7 +352,7 @@ class HeadlessModel:
         tip = primary.get("tip")
         if piv is None or tip is None:
             return None
-        return self.get_vector_angle_rad(int(piv), int(tip))
+        return self.get_angle_rad(int(piv), int(tip))
 
     def get_input_angle_deg(self) -> Optional[float]:
         ang = self._get_input_angle_abs_rad()
@@ -374,27 +374,38 @@ class HeadlessModel:
         base_deg = math.degrees(self._sim_zero_output_rad)
         return self._rel_deg(abs_deg, base_deg)
 
-    def get_measure_values_deg(self, abs_values: bool = False) -> List[tuple[str, Optional[float]]]:
-        out: List[tuple[str, Optional[float]]] = []
+    def get_measure_values(self, abs_values: bool = False) -> List[tuple[str, Optional[float], str]]:
+        out: List[tuple[str, Optional[float], str]] = []
         for m in self.measures:
             nm = str(m.get("name", ""))
+            mtype = str(m.get("type", "")).lower()
             abs_deg: Optional[float] = None
-            if m.get("type") == "vector":
-                ang = self.get_vector_angle_rad(int(m.get("pivot")), int(m.get("tip")))
+            if mtype == "angle":
+                ang = self.get_angle_rad(int(m.get("pivot")), int(m.get("tip")))
                 abs_deg = None if ang is None else math.degrees(ang)
-            elif m.get("type") == "joint":
+            elif mtype == "joint":
                 ang = self.get_joint_angle_rad(int(m.get("i")), int(m.get("j")), int(m.get("k")))
                 abs_deg = None if ang is None else math.degrees(ang)
 
             if abs_deg is None:
-                out.append((nm, None))
+                out.append((nm, None, "deg"))
                 continue
             if abs_values:
-                out.append((nm, abs_deg))
+                out.append((nm, abs_deg, "deg"))
             elif nm in self._sim_zero_meas_deg:
-                out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm]))))
+                out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm])), "deg"))
             else:
-                out.append((nm, abs_deg))
+                out.append((nm, abs_deg, "deg"))
+
+        for pl in self.point_lines.values():
+            if "s" not in pl:
+                continue
+            nm = str(pl.get("name", "")) or self._point_line_offset_name(pl)
+            try:
+                sval = float(pl.get("s", 0.0))
+            except (TypeError, ValueError):
+                sval = None
+            out.append((nm, sval, "mm"))
         return out
 
     def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Any]:
@@ -431,18 +442,47 @@ class HeadlessModel:
             j_id = int(pl.get("j", -1))
             if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
                 continue
+            if "s" in pl:
+                s_val = float(pl.get("s", 0.0))
 
-            def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
-                px, py = _xy(q, p_id)
-                ax, ay = _xy(q, i_id)
-                bx, by = _xy(q, j_id)
-                abx, aby = bx - ax, by - ay
-                denom = math.hypot(abx, aby)
-                if denom < 1e-9:
-                    return 0.0
-                return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+                def _polx(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
+                    px, _py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    target_x = ax + ux * s_val
+                    return px - target_x
 
-            funcs.append(_pol)
+                def _poly(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
+                    _px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    target_y = ay + uy * s_val
+                    return py - target_y
+
+                funcs.append(_polx)
+                funcs.append(_poly)
+            else:
+                def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
+                    px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+
+                funcs.append(_pol)
 
         for ps in self.point_splines.values():
             if not bool(ps.get("enabled", True)):
@@ -517,40 +557,22 @@ class HeadlessModel:
         active_outputs = self._active_outputs()
         if active_drivers:
             for drv in active_drivers:
-                if drv.get("type") == "joint":
-                    i = drv.get("i")
-                    j = drv.get("j")
-                    k = drv.get("k")
-                    if i in idx_map and j in idx_map and k in idx_map:
-                        target = float(drv.get("rad", 0.0))
+                if drv.get("type") != "angle":
+                    continue
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv in idx_map and tip in idx_map:
+                    target = float(drv.get("rad", 0.0))
 
-                        def _drv(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                            xi, yi = _xy(q, int(i))
-                            xj, yj = _xy(q, int(j))
-                            xk, yk = _xy(q, int(k))
-                            v1x, v1y = xi - xj, yi - yj
-                            v2x, v2y = xk - xj, yk - yj
-                            if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                                return 0.0
-                            cur = angle_between(v1x, v1y, v2x, v2y)
-                            return clamp_angle_rad(cur - target)
+                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
+                        px, py = _xy(q, int(piv))
+                        tx, ty = _xy(q, int(tip))
+                        dx, dy = tx - px, ty - py
+                        if abs(dx) + abs(dy) < 1e-12:
+                            return 0.0
+                        return clamp_angle_rad(math.atan2(dy, dx) - target)
 
-                        funcs.append(_drv)
-                else:
-                    piv = drv.get("pivot")
-                    tip = drv.get("tip")
-                    if piv in idx_map and tip in idx_map:
-                        target = float(drv.get("rad", 0.0))
-
-                        def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                            px, py = _xy(q, int(piv))
-                            tx, ty = _xy(q, int(tip))
-                            dx, dy = tx - px, ty - py
-                            if abs(dx) + abs(dy) < 1e-12:
-                                return 0.0
-                            return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                        funcs.append(_drv)
+                    funcs.append(_drv)
         elif active_outputs:
             for out in active_outputs:
                 piv = out.get("pivot")
@@ -706,7 +728,7 @@ class HeadlessModel:
             for out in active_outputs:
                 entry = {
                     "mode": "output",
-                    "type": "vector",
+                    "type": "angle",
                     "pivot": out.get("pivot"),
                     "tip": out.get("tip"),
                     "rad": out.get("rad", 0.0),
@@ -714,74 +736,36 @@ class HeadlessModel:
                 drive_sources.append(entry)
 
         for drv in drive_sources:
-            dtype = str(drv.get("type", "vector"))
-            if dtype == "joint":
-                i = drv.get("i")
-                k = drv.get("k")
-                if i is not None:
-                    driven_pids.add(int(i))
-                if k is not None:
-                    driven_pids.add(int(k))
-            else:
-                tip = drv.get("tip")
-                if tip is not None:
-                    driven_pids.add(int(tip))
+            tip = drv.get("tip")
+            if tip is not None:
+                driven_pids.add(int(tip))
 
         driver_length_pairs: set[frozenset[int]] = set()
         for drv in drive_sources:
-            dtype = str(drv.get("type", "vector"))
-            if dtype == "joint":
-                i = drv.get("i")
-                j = drv.get("j")
-                k = drv.get("k")
-                if i is not None and j is not None:
-                    driver_length_pairs.add(frozenset({int(i), int(j)}))
-                if j is not None and k is not None:
-                    driver_length_pairs.add(frozenset({int(j), int(k)}))
-            else:
-                piv = drv.get("pivot")
-                tip = drv.get("tip")
-                if piv is not None and tip is not None:
-                    driver_length_pairs.add(frozenset({int(piv), int(tip)}))
+            piv = drv.get("pivot")
+            tip = drv.get("tip")
+            if piv is not None and tip is not None:
+                driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
         for _ in range(int(iters)):
             for drv in drive_sources:
-                dtype = str(drv.get("type", "vector"))
-                if dtype == "joint":
-                    i = drv.get("i")
-                    j = drv.get("j")
-                    k = drv.get("k")
-                    if i is None or j is None or k is None:
-                        continue
-                    i = int(i); j = int(j); k = int(k)
-                    if i in self.points and j in self.points and k in self.points:
-                        pi, pj, pk = self.points[i], self.points[j], self.points[k]
-                        lock_i = bool(pi.get("fixed", False))
-                        lock_j = bool(pj.get("fixed", False))
-                        lock_k = bool(pk.get("fixed", False))
-                        ConstraintSolver.enforce_driver_joint_angle(
-                            pi, pj, pk,
-                            float(drv.get("rad", 0.0)),
-                            lock_i, lock_j, lock_k,
-                        )
-                else:
-                    piv = drv.get("pivot")
-                    tip = drv.get("tip")
-                    if piv is None or tip is None:
-                        continue
-                    piv = int(piv); tip = int(tip)
-                    if piv in self.points and tip in self.points:
-                        piv_pt = self.points[piv]
-                        tip_pt = self.points[tip]
-                        lock_piv = bool(piv_pt.get("fixed", False))
-                        lock_tip = bool(tip_pt.get("fixed", False))
-                        ConstraintSolver.enforce_driver_angle(
-                            piv_pt,
-                            tip_pt,
-                            float(drv.get("rad", 0.0)),
-                            lock_piv,
-                            lock_tip=lock_tip,
-                        )
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is None or tip is None:
+                    continue
+                piv = int(piv); tip = int(tip)
+                if piv in self.points and tip in self.points:
+                    piv_pt = self.points[piv]
+                    tip_pt = self.points[tip]
+                    lock_piv = bool(piv_pt.get("fixed", False))
+                    lock_tip = bool(tip_pt.get("fixed", False))
+                    ConstraintSolver.enforce_driver_angle(
+                        piv_pt,
+                        tip_pt,
+                        float(drv.get("rad", 0.0)),
+                        lock_piv,
+                        lock_tip=lock_tip,
+                    )
 
             for c in self.coincides.values():
                 if not bool(c.get("enabled", True)):
@@ -824,7 +808,19 @@ class HeadlessModel:
                 lock_p = bool(pp.get("fixed", False)) or (p_id in driven_pids)
                 lock_a = bool(pa.get("fixed", False)) or (i_id in driven_pids)
                 lock_b = bool(pb.get("fixed", False)) or (j_id in driven_pids)
-                ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
+                if "s" in pl:
+                    ok = ConstraintSolver.solve_point_on_line_offset(
+                        pp,
+                        pa,
+                        pb,
+                        float(pl.get("s", 0.0)),
+                        lock_p,
+                        lock_a,
+                        lock_b,
+                        tol=1e-6,
+                    )
+                else:
+                    ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
                 if not ok:
                     pl["over"] = True
 
@@ -956,7 +952,13 @@ class HeadlessModel:
                 abx, aby = bx - ax, by - ay
                 denom = math.hypot(abx, aby)
                 if denom > 1e-12:
-                    dist = abs((px - ax) * (-aby) + (py - ay) * abx) / denom
+                    if "s" in pl:
+                        ux, uy = abx / denom, aby / denom
+                        target_x = ax + ux * float(pl.get("s", 0.0))
+                        target_y = ay + uy * float(pl.get("s", 0.0))
+                        dist = math.hypot(px - target_x, py - target_y)
+                    else:
+                        dist = abs((px - ax) * (-aby) + (py - ay) * abx) / denom
                     max_pl = max(max_pl, dist)
 
         for ps in self.point_splines.values():
@@ -1076,7 +1078,7 @@ def simulate_case(
             "output_deg": model.get_output_angle_deg(),
             "hard_err": hard_err,
         }
-        for nm, val in model.get_measure_values_deg():
+        for nm, val, _unit in model.get_measure_values():
             rec[nm] = val
         for nm, val in model.get_load_measure_values():
             rec[nm] = val

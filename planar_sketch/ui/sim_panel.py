@@ -405,10 +405,8 @@ class SimulationPanel(QWidget):
         if drivers:
             labels = []
             for d in drivers:
-                if d.get("type") == "joint" and d.get("i") is not None and d.get("j") is not None and d.get("k") is not None:
-                    labels.append(tr(lang, "sim.driver_joint").format(i=d["i"], j=d["j"], k=d["k"]))
-                elif d.get("pivot") is not None and d.get("tip") is not None:
-                    labels.append(tr(lang, "sim.driver_vector").format(pivot=d["pivot"], tip=d["tip"]))
+                if d.get("type") == "angle" and d.get("pivot") is not None and d.get("tip") is not None:
+                    labels.append(tr(lang, "sim.driver_angle").format(pivot=d["pivot"], tip=d["tip"]))
                 else:
                     labels.append(tr(lang, "sim.driver_invalid"))
             if len(labels) == 1:
@@ -425,7 +423,7 @@ class SimulationPanel(QWidget):
             labels = []
             for o in outputs:
                 if o.get("pivot") is not None and o.get("tip") is not None:
-                    labels.append(tr(lang, "sim.output_vector").format(pivot=o["pivot"], tip=o["tip"]))
+                    labels.append(tr(lang, "sim.output_angle").format(pivot=o["pivot"], tip=o["tip"]))
                 else:
                     labels.append(tr(lang, "sim.output_unset"))
             if len(labels) == 1:
@@ -443,10 +441,8 @@ class SimulationPanel(QWidget):
 
     def _driver_label(self, driver: Dict[str, Any]) -> str:
         lang = getattr(self.ctrl, "ui_language", "en")
-        if driver.get("type") == "joint" and driver.get("i") is not None and driver.get("j") is not None and driver.get("k") is not None:
-            return tr(lang, "sim.driver_joint").format(i=driver["i"], j=driver["j"], k=driver["k"])
-        if driver.get("pivot") is not None and driver.get("tip") is not None:
-            return tr(lang, "sim.driver_vector").format(pivot=driver["pivot"], tip=driver["tip"])
+        if driver.get("type") == "angle" and driver.get("pivot") is not None and driver.get("tip") is not None:
+            return tr(lang, "sim.driver_angle").format(pivot=driver["pivot"], tip=driver["tip"])
         return tr(lang, "sim.driver_invalid")
 
     def _refresh_driver_table(self, drivers: List[Dict[str, Any]]) -> None:
@@ -475,7 +471,7 @@ class SimulationPanel(QWidget):
     def _output_label(self, output: Dict[str, Any]) -> str:
         lang = getattr(self.ctrl, "ui_language", "en")
         if output.get("pivot") is not None and output.get("tip") is not None:
-            return tr(lang, "sim.output_vector").format(pivot=output["pivot"], tip=output["tip"])
+            return tr(lang, "sim.output_angle").format(pivot=output["pivot"], tip=output["tip"])
         return tr(lang, "sim.output_unset")
 
     def _refresh_output_table(self, outputs: List[Dict[str, Any]]) -> None:
@@ -544,15 +540,7 @@ class SimulationPanel(QWidget):
         if not pair:
             return
         pivot, tip = pair
-        self.ctrl.set_driver(pivot, tip)
-        self.refresh_labels()
-
-    def _set_driver_joint_from_selection(self):
-        tri = self._selected_three_points()
-        if not tri:
-            return
-        i, j, k = tri
-        self.ctrl.set_driver_joint(i, j, k)
+        self.ctrl.set_driver_angle(pivot, tip)
         self.refresh_labels()
 
     def _clear_driver(self):
@@ -582,12 +570,12 @@ class SimulationPanel(QWidget):
         self.ctrl.clear_output()
         self.refresh_labels()
 
-    def _add_measure_vector_from_selection(self):
+    def _add_measure_angle_from_selection(self):
         pair = self._selected_two_points()
         if not pair:
             return
         pivot, tip = pair
-        self.ctrl.add_measure_vector(pivot, tip)
+        self.ctrl.add_measure_angle(pivot, tip)
         self.refresh_labels()
 
     def _add_measure_joint_from_selection(self):
@@ -615,26 +603,47 @@ class SimulationPanel(QWidget):
             self.ctrl.remove_measure_at(row_info["index"])
         elif row_info["kind"] == "load":
             self.ctrl.remove_load_measure_at(row_info["index"])
+        elif row_info["kind"] == "point_line":
+            QMessageBox.information(self, "Measurements", "Point-on-line (s) measurements are tied to constraints.")
         self.refresh_labels()
 
     def _refresh_measure_table(self):
         lang = getattr(self.ctrl, "ui_language", "en")
-        mv = self.ctrl.get_measure_values_deg()
+        all_measures = self.ctrl.get_measure_values()
+        mv = [(nm, val, unit) for (nm, val, unit) in all_measures if unit == "deg"]
+        mv_line = [(nm, val, unit) for (nm, val, unit) in all_measures if unit != "deg"]
         load_mv = self.ctrl.get_load_measure_values()
         self._measure_row_map = []
-        total_rows = len(mv) + len(load_mv)
+        total_rows = len(mv) + len(mv_line) + len(load_mv)
         self.table_meas.setRowCount(total_rows)
         row = 0
-        for index, (nm, val) in enumerate(mv):
+        for index, (nm, val, unit) in enumerate(mv):
             type_item = QTableWidgetItem(tr(lang, "sim.measurement"))
             name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else f"{self.ctrl.format_number(val)}°")
+            if val is None:
+                value_text = "--"
+            elif unit == "deg":
+                value_text = f"{self.ctrl.format_number(val)}°"
+            else:
+                value_text = f"{self.ctrl.format_number(val)} {unit}"
+            value_item = QTableWidgetItem(value_text)
             for item in (type_item, name_item, value_item):
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_meas.setItem(row, 0, type_item)
             self.table_meas.setItem(row, 1, name_item)
             self.table_meas.setItem(row, 2, value_item)
             self._measure_row_map.append({"kind": "measure", "index": index})
+            row += 1
+        for index, (nm, val, unit) in enumerate(mv_line):
+            type_item = QTableWidgetItem(tr(lang, "sim.measurement"))
+            name_item = QTableWidgetItem(str(nm))
+            value_item = QTableWidgetItem("--" if val is None else f"{self.ctrl.format_number(val)} {unit}")
+            for item in (type_item, name_item, value_item):
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_meas.setItem(row, 0, type_item)
+            self.table_meas.setItem(row, 1, name_item)
+            self.table_meas.setItem(row, 2, value_item)
+            self._measure_row_map.append({"kind": "point_line", "index": index})
             row += 1
         for index, (nm, val) in enumerate(load_mv):
             type_item = QTableWidgetItem(tr(lang, "sim.load"))
@@ -1074,7 +1083,7 @@ class SimulationPanel(QWidget):
             "driver_deg": list(self.ctrl.get_driver_angles_deg()),
         }
         rec["hard_err"] = hard_err_value
-        for nm, val in self.ctrl.get_measure_values_deg():
+        for nm, val, _unit in self.ctrl.get_measure_values():
             rec[nm] = val
         for nm, val in self.ctrl.get_load_measure_values():
             rec[nm] = val
@@ -1153,7 +1162,7 @@ class SimulationPanel(QWidget):
             max_nfev = 250
         iters = 200 if has_point_spline else 80
         signals = ["input_deg", "output_deg", "hard_err", "success"]
-        signals.extend([name for name, _val in self.ctrl.get_measure_values_deg()])
+        signals.extend([name for name, _val, _unit in self.ctrl.get_measure_values()])
         signals.extend([name for name, _val in self.ctrl.get_load_measure_values()])
         return {
             "schema_version": "1.0",
