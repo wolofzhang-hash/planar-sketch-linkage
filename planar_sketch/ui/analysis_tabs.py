@@ -91,6 +91,7 @@ class AnimationTab(QWidget):
         self._frame_timer = QTimer(self)
         self._frame_timer.timeout.connect(self._advance_frame)
         self._plot_window: Optional[PlotWindow] = None
+        self._loaded_case_id: Optional[str] = None
         self.apply_language()
         self.refresh_cases()
 
@@ -162,6 +163,11 @@ class AnimationTab(QWidget):
                 self.table_case_runs.setItem(row, col, item)
         active = manager.get_active_case()
         self._set_active_label(active or "--")
+        if active:
+            self._select_case_row(active)
+            run = next((item.get("run") for item in rows if item["case"].case_id == active), None)
+            if run and self._loaded_case_id != active:
+                self._load_run_data_for_run(run, active)
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -241,11 +247,16 @@ class AnimationTab(QWidget):
         if not case_id:
             QMessageBox.information(self, "Case", "Select a case first.")
             return
+        if not self.confirm_stop_replay("switch cases"):
+            return
         manager = self._manager()
         manager.set_active_case(case_id)
         self._set_active_label(case_id)
         if self._on_active_case_changed:
             self._on_active_case_changed()
+        run = self._selected_run()
+        if run:
+            self._load_run_data_for_run(run, case_id)
 
     def _build_replay_group(self) -> QWidget:
         group = QGroupBox("")
@@ -348,10 +359,22 @@ class AnimationTab(QWidget):
             QMessageBox.warning(self, "Case", "Failed to delete case.")
 
     def load_run_data(self) -> None:
+        case_id = self._selected_case_id()
         run = self._selected_run()
         if not run:
             QMessageBox.information(self, "Run", "Select a run first.")
             return
+        if not self.confirm_stop_replay("load run data"):
+            return
+        if case_id:
+            manager = self._manager()
+            manager.set_active_case(case_id)
+            self._set_active_label(case_id)
+            if self._on_active_case_changed:
+                self._on_active_case_changed()
+        self._load_run_data_for_run(run, case_id)
+
+    def _load_run_data_for_run(self, run: Dict[str, Any], case_id: Optional[str]) -> None:
         path = run.get("path")
         if not path:
             return
@@ -385,6 +408,14 @@ class AnimationTab(QWidget):
         self.slider_frame.setValue(0)
         self._apply_frame(0)
         self._refresh_plot_window()
+        if case_id:
+            self._loaded_case_id = case_id
+
+    def _select_case_row(self, case_id: str) -> None:
+        for row, payload in enumerate(self._row_cache):
+            if payload["case"].case_id == case_id:
+                self.table_case_runs.selectRow(row)
+                return
 
     def _coerce_frame_row(self, row: Dict[str, Any]) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
