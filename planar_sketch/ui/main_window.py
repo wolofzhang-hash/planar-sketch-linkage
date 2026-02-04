@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize, QEvent
+from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
@@ -48,7 +49,7 @@ class MainWindow(QMainWindow):
         self.apply_language()
         self.menuBar().setVisible(True)
         self._set_toolbars_visible(True)
-        self.file_new()
+        self.file_new(prompt_for_folder=False)
         self.update_undo_redo_actions()
         self.ctrl.update_status()
         self.scene.selectionChanged.connect(self._scene_selection_changed)
@@ -141,15 +142,19 @@ class MainWindow(QMainWindow):
         self.menu_sketch_action.triggered.connect(self._activate_sketch_mode)
         self.act_create_point = QAction("", self)
         self.act_create_point.setCheckable(True)
-        self.act_create_point.triggered.connect(self.ctrl.begin_create_point)
+        self.act_create_point.toggled.connect(lambda checked: self._toggle_create_action("point", checked))
         self.act_create_line = QAction("", self)
         self.act_create_line.setCheckable(True)
-        self.act_create_line.triggered.connect(self.ctrl.begin_create_line)
+        self.act_create_line.toggled.connect(lambda checked: self._toggle_create_action("line", checked))
         self.act_create_spline = QAction("", self)
         self.act_create_spline.setCheckable(True)
-        self.act_create_spline.triggered.connect(self.ctrl.begin_create_spline)
+        self.act_create_spline.toggled.connect(lambda checked: self._toggle_create_action("spline", checked))
         self.act_solve_accurate = QAction("", self)
         self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
+
+        self.menu_boundary_action = mb.addAction("")
+        self.menu_boundary_action.setCheckable(True)
+        self.menu_boundary_action.triggered.connect(lambda: self._set_active_ribbon("boundary"))
 
         self.menu_analysis_action = mb.addAction("")
         self.menu_analysis_action.setCheckable(True)
@@ -204,6 +209,17 @@ class MainWindow(QMainWindow):
         self.act_analysis_save_run.triggered.connect(self.sim_panel.save_last_run)
         self.act_analysis_open_last_run = QAction("", self)
         self.act_analysis_open_last_run.triggered.connect(self.sim_panel.open_last_run)
+
+        self.act_boundary_constraints = QAction("", self)
+        self.act_boundary_constraints.triggered.connect(self.show_constraints_tab)
+        self.act_boundary_loads = QAction("", self)
+        self.act_boundary_loads.triggered.connect(self.show_loads_tab)
+        self.act_boundary_add_force = QAction("", self)
+        self.act_boundary_add_force.triggered.connect(self.sim_panel._add_force_from_selection)
+        self.act_boundary_add_torque = QAction("", self)
+        self.act_boundary_add_torque.triggered.connect(self.sim_panel._add_torque_from_selection)
+        self.act_boundary_clear_loads = QAction("", self)
+        self.act_boundary_clear_loads.triggered.connect(self.sim_panel._clear_loads)
 
     def _build_toolbars(self) -> None:
         icon_size = QSize(20, 20)
@@ -288,6 +304,19 @@ class MainWindow(QMainWindow):
         self.toolbar_analysis.addAction(self.act_analysis_save_run)
         self.toolbar_analysis.addAction(self.act_analysis_open_last_run)
 
+        self.toolbar_boundary = QToolBar(self)
+        self.toolbar_boundary.setIconSize(icon_size)
+        self.toolbar_boundary.setMovable(False)
+        self.toolbar_boundary.setFloatable(False)
+        self.toolbar_boundary.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_boundary)
+        self.toolbar_boundary.addAction(self.act_boundary_constraints)
+        self.toolbar_boundary.addAction(self.act_boundary_loads)
+        self.toolbar_boundary.addSeparator()
+        self.toolbar_boundary.addAction(self.act_boundary_add_force)
+        self.toolbar_boundary.addAction(self.act_boundary_add_torque)
+        self.toolbar_boundary.addAction(self.act_boundary_clear_loads)
+
         self._apply_action_icons()
         self._set_active_ribbon("file")
 
@@ -322,6 +351,7 @@ class MainWindow(QMainWindow):
             self.toolbar_view,
             self.toolbar_background,
             self.toolbar_analysis,
+            self.toolbar_boundary,
         ):
             toolbar.setVisible(visible)
         if visible:
@@ -338,6 +368,7 @@ class MainWindow(QMainWindow):
             "view": self.toolbar_view,
             "background": self.toolbar_background,
             "analysis": self.toolbar_analysis,
+            "boundary": self.toolbar_boundary,
         }
         for name, toolbar in toolbars.items():
             toolbar.setVisible(name == key)
@@ -345,6 +376,7 @@ class MainWindow(QMainWindow):
             ("file", self.menu_file_action),
             ("edit", self.menu_edit_action),
             ("sketch", self.menu_sketch_action),
+            ("boundary", self.menu_boundary_action),
             ("view", self.menu_view_action),
             ("background", self.menu_background_action),
             ("analysis", self.menu_analysis_action),
@@ -410,18 +442,27 @@ class MainWindow(QMainWindow):
         self.act_analysis_export.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.act_analysis_save_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.act_analysis_open_last_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
+        self.act_boundary_constraints.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.act_boundary_loads.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.act_boundary_add_force.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.act_boundary_add_torque.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
+        self.act_boundary_clear_loads.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
 
     def update_model_action_state(self) -> None:
-        action = getattr(self.ctrl, "_continuous_model_action", None)
-        self.act_create_point.setChecked(action == "CreatePoint")
-        self.act_create_line.setChecked(action == "CreateLine")
-        self.act_create_spline.setChecked(action == "CreateSpline")
+        mode = getattr(self.ctrl, "mode", "Idle")
+        with QSignalBlocker(self.act_create_point):
+            self.act_create_point.setChecked(mode == "CreatePoint")
+        with QSignalBlocker(self.act_create_line):
+            self.act_create_line.setChecked(mode == "CreateLine")
+        with QSignalBlocker(self.act_create_spline):
+            self.act_create_spline.setChecked(mode == "CreateSpline")
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.menu_file_action.setText(tr(lang, "menu.file"))
         self.menu_edit_action.setText(tr(lang, "menu.edit"))
         self.menu_sketch_action.setText(tr(lang, "menu.sketch"))
+        self.menu_boundary_action.setText(tr(lang, "menu.boundary"))
         self.menu_view_action.setText(tr(lang, "menu.view"))
         self.menu_background_action.setText(tr(lang, "menu.background_image"))
         self.menu_analysis_action.setText(tr(lang, "menu.analysis"))
@@ -429,6 +470,7 @@ class MainWindow(QMainWindow):
             self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
             self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
             self.toolbar_sketch.setWindowTitle(tr(lang, "menu.sketch"))
+            self.toolbar_boundary.setWindowTitle(tr(lang, "menu.boundary"))
             self.toolbar_view.setWindowTitle(tr(lang, "menu.view"))
             self.toolbar_background.setWindowTitle(tr(lang, "menu.background_image"))
             self.toolbar_analysis.setWindowTitle(tr(lang, "menu.analysis"))
@@ -467,10 +509,27 @@ class MainWindow(QMainWindow):
         self.act_analysis_export.setText(tr(lang, "sim.export_csv"))
         self.act_analysis_save_run.setText(tr(lang, "sim.save_run"))
         self.act_analysis_open_last_run.setText(tr(lang, "sim.open_last_run"))
+        self.act_boundary_constraints.setText(tr(lang, "action.boundary_constraints"))
+        self.act_boundary_loads.setText(tr(lang, "action.boundary_loads"))
+        self.act_boundary_add_force.setText(tr(lang, "action.boundary_add_force"))
+        self.act_boundary_add_torque.setText(tr(lang, "action.boundary_add_torque"))
+        self.act_boundary_clear_loads.setText(tr(lang, "action.boundary_clear_loads"))
         self.dock.setWindowTitle(tr(lang, "dock.sketch"))
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
         self.sim_panel.apply_language()
+
+    def _toggle_create_action(self, kind: str, checked: bool) -> None:
+        if checked:
+            if kind == "point":
+                self.ctrl.begin_create_point()
+            elif kind == "line":
+                self.ctrl.begin_create_line()
+            elif kind == "spline":
+                self.ctrl.begin_create_spline()
+        else:
+            if getattr(self.ctrl, "mode", "Idle") in ("CreatePoint", "CreateLine", "CreateSpline"):
+                self.ctrl.cancel_model_action()
 
     def solve_accurate_scipy(self):
         """Run SciPy kinematics solver once."""
@@ -480,6 +539,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "SciPy Solver", msg)
         else:
             self.statusBar().showMessage("SciPy solve OK")
+
+    def show_constraints_tab(self) -> None:
+        self._set_active_ribbon("boundary")
+        self._set_dock_visibility(active="sketch")
+        self.panel.tabs.setCurrentWidget(self.panel.constraints_tab)
+
+    def show_loads_tab(self) -> None:
+        self._set_active_ribbon("boundary")
+        self._set_dock_visibility(active="analysis")
+        self.sim_panel.tabs.setCurrentIndex(0)
 
     def create_point_at_view_center(self) -> None:
         self.ctrl.commit_drag_if_any()
@@ -598,7 +667,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.selected_body_id is not None:
             self.ctrl.cmd_delete_body(self.ctrl.selected_body_id); return
 
-    def file_new(self):
+    def file_new(self, prompt_for_folder: bool = True):
         self.ctrl.commit_drag_if_any()
         if not self.ctrl.load_dict(
             {
@@ -616,6 +685,12 @@ class MainWindow(QMainWindow):
             return
         self.ctrl.stack.clear()
         self.current_file = None
+        if hasattr(self, "sim_panel"):
+            self.sim_panel.reset_analysis_state()
+        if prompt_for_folder:
+            project_file = self._prompt_project_file("New Project")
+            if project_file:
+                self.current_file = project_file
         if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
             self.sim_panel.animation_tab.refresh_cases()
 
@@ -648,10 +723,26 @@ class MainWindow(QMainWindow):
 
     def file_save_as(self):
         self.ctrl.commit_drag_if_any()
-        path, _ = QFileDialog.getSaveFileName(self, "Save Sketch As", "", "Sketch JSON (*.json)")
-        if not path: return
-        if not path.lower().endswith(".json"): path += ".json"
-        self.current_file = path
+        project_file = self._prompt_project_file("Save Sketch As")
+        if not project_file:
+            return
+        self.current_file = project_file
         self.file_save()
         if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
             self.sim_panel.animation_tab.refresh_cases()
+
+    def _prompt_project_file(self, title: str) -> Optional[str]:
+        path, _ = QFileDialog.getSaveFileName(self, title, "", "Sketch JSON (*.json)")
+        if not path:
+            return None
+        base_name = os.path.splitext(os.path.basename(path))[0] or "project"
+        parent_dir = os.path.dirname(path) or os.getcwd()
+        folder = os.path.join(parent_dir, base_name)
+        if os.path.exists(folder):
+            idx = 1
+            while os.path.exists(os.path.join(parent_dir, f"{base_name}_{idx}")):
+                idx += 1
+            folder = os.path.join(parent_dir, f"{base_name}_{idx}")
+            base_name = os.path.basename(folder)
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, f"{base_name}.json")
