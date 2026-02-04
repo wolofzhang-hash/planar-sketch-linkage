@@ -107,6 +107,21 @@ class ExpressionEvaluator(ast.NodeVisitor):
         if not isinstance(node.func, ast.Name):
             raise ExpressionError("Only simple function calls are allowed")
         name = node.func.id
+        if name == "signal":
+            if len(node.args) != 1:
+                raise ExpressionError("signal() expects one argument")
+            key_node = node.args[0]
+            if isinstance(key_node, ast.Constant) and isinstance(key_node.value, str):
+                key = key_node.value
+            elif isinstance(key_node, ast.Name):
+                key = key_node.id
+            elif isinstance(key_node, ast.Attribute):
+                key = _attr_to_path(key_node)
+            else:
+                raise ExpressionError("signal() expects a string or signal name")
+            if key not in self.signals:
+                raise ExpressionError(f"Unknown signal: {key}")
+            return self.signals[key]
         if name not in _ALLOWED_FUNCS:
             raise ExpressionError(f"Function not allowed: {name}")
         if len(node.args) != 1:

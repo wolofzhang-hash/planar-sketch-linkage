@@ -88,7 +88,18 @@ class ExpressionBuilderDialog(QDialog):
         return {"box": box, "lists": list_widgets}
 
     def _insert_text(self, text: str) -> None:
-        self.edit.insert(text)
+        def is_identifier_path(value: str) -> bool:
+            if not value:
+                return False
+            parts = value.split(".")
+            return all(part.isidentifier() for part in parts)
+
+        operators = {"+", "-", "*", "/", "(", ")", ","}
+        if text and not is_identifier_path(text) and not text.endswith("(") and text not in operators:
+            escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+            self.edit.insert(f'signal("{escaped}")')
+        else:
+            self.edit.insert(text)
         self.edit.setFocus()
 
     def _on_evaluate_clicked(self) -> None:

@@ -168,6 +168,10 @@ class AnimationTab(QWidget):
             run = next((item.get("run") for item in rows if item["case"].case_id == active), None)
             if run and self._loaded_case_id != active:
                 self._load_run_data_for_run(run, active)
+        if hasattr(self.ctrl, "win") and getattr(self.ctrl.win, "sim_panel", None):
+            sim_panel = self.ctrl.win.sim_panel
+            if hasattr(sim_panel, "optimization_tab"):
+                sim_panel.optimization_tab.refresh_active_case()
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -190,6 +194,19 @@ class AnimationTab(QWidget):
         self.btn_record_gif.setText(tr(lang, "analysis.record_gif"))
         self._set_active_label(self._manager().get_active_case() or "--")
         self._set_frame_label(self._frame_index, len(self._frames))
+
+    def reset_state(self) -> None:
+        if self._frame_timer.isActive():
+            self._frame_timer.stop()
+        self._frames = []
+        self._frame_index = 0
+        self._loaded_case_id = None
+        self.slider_frame.setRange(0, 0)
+        self.slider_frame.setValue(0)
+        self._set_frame_label(0, 0)
+        if self._plot_window is not None:
+            self._plot_window.close()
+            self._plot_window = None
 
     def _set_active_label(self, case_id: str) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -815,7 +832,6 @@ class OptimizationTab(QWidget):
             if not isinstance(combo, QComboBox):
                 continue
             current_data = combo.currentData()
-            current_text = combo.currentText()
             combo.blockSignals(True)
             combo.clear()
             combo.addItem(tr(lang, "analysis.all_cases"), None)
@@ -825,12 +841,7 @@ class OptimizationTab(QWidget):
                 combo.setCurrentIndex(0)
             else:
                 index = combo.findData(current_data)
-                if index >= 0:
-                    combo.setCurrentIndex(index)
-                else:
-                    index = combo.findText(current_text)
-                    if index >= 0:
-                        combo.setCurrentIndex(index)
+                combo.setCurrentIndex(index if index >= 0 else 0)
             combo.blockSignals(False)
 
     def _case_ids_from_combo(self, combo: Optional[QComboBox]) -> Optional[List[str]]:
@@ -898,6 +909,17 @@ class OptimizationTab(QWidget):
             ]
         )
         self.table_best.setHorizontalHeaderLabels([tr(lang, "analysis.best_objective"), "P12.x", "P12.y"])
+
+    def reset_state(self) -> None:
+        if self._worker:
+            self._worker.stop()
+            self._worker = None
+        self._best_vars = {}
+        self._set_progress_label("--")
+        self.table_vars.setRowCount(0)
+        self.table_obj.setRowCount(0)
+        self.table_con.setRowCount(0)
+        self.table_best.setRowCount(0)
 
     def _set_cases_label(self, text: str) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")

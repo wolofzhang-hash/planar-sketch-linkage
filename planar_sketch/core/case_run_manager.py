@@ -68,6 +68,15 @@ class CaseRunManager:
         _write_json(self._index_path(), payload)
 
     @staticmethod
+    def _next_case_id(index: Dict[str, Any]) -> str:
+        existing_ids = {str(item.get("case_id", "")).strip() for item in index.get("cases", [])}
+        numeric_ids = [int(cid) for cid in existing_ids if cid.isdigit()]
+        next_id = max(numeric_ids, default=0) + 1
+        while str(next_id) in existing_ids:
+            next_id += 1
+        return str(next_id)
+
+    @staticmethod
     def _case_hash(case_spec: Dict[str, Any]) -> str:
         keys = {
             "driver": case_spec.get("driver"),
@@ -92,15 +101,15 @@ class CaseRunManager:
             for entry in index.get("cases", []):
                 if entry.get("case_id") == existing_id:
                     entry["updated_utc"] = now
-                    name = entry.get("name", f"Case {existing_id}")
+                    name = entry.get("name", str(existing_id))
                     created = entry.get("created_utc", now)
                     info = CaseInfo(existing_id, name, created, now, case_hash)
                     self._save_index(index)
                     self._write_case_spec(info.case_id, case_spec, created, now, name)
                     return info
 
-        case_id = case_hash[:12]
-        name = case_spec.get("name") or f"Case {case_id}"
+        case_id = self._next_case_id(index)
+        name = case_spec.get("name") or str(case_id)
         info = CaseInfo(case_id, name, now, now, case_hash)
         index["cases"].append(
             {
@@ -191,7 +200,7 @@ class CaseRunManager:
         spec = _read_json(old_path)
         if spec:
             created = spec.get("created_utc", entry.get("created_utc", now))
-            name = spec.get("name", entry.get("name", f"Case {new_case_id}"))
+            name = spec.get("name", entry.get("name", str(new_case_id)))
             self._write_case_spec(new_case_id, spec, created, now, name)
         if os.path.exists(old_path):
             os.remove(old_path)
