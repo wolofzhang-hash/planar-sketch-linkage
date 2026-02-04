@@ -44,6 +44,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage(tr(self.ctrl.ui_language, "status.idle"))
         self.current_file: Optional[str] = None
+        self.project_dir: Optional[str] = None
         self._build_menus()
         self._build_toolbars()
         self.apply_language()
@@ -685,12 +686,13 @@ class MainWindow(QMainWindow):
             return
         self.ctrl.stack.clear()
         self.current_file = None
+        self.project_dir = None
         if hasattr(self, "sim_panel"):
             self.sim_panel.reset_analysis_state()
         if prompt_for_folder:
             project_file = self._prompt_project_file("New Project")
             if project_file:
-                self.current_file = project_file
+                self._set_project_paths(project_file)
         if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
             self.sim_panel.animation_tab.refresh_cases()
 
@@ -703,7 +705,7 @@ class MainWindow(QMainWindow):
                 data = json.load(f)
             if not self.ctrl.load_dict(data, action="open a new file"):
                 return
-            self.current_file = path
+            self._set_project_paths(path)
             if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
                 self.sim_panel.animation_tab.refresh_cases()
             self.view.fit_all()
@@ -726,7 +728,7 @@ class MainWindow(QMainWindow):
         project_file = self._prompt_project_file("Save Sketch As")
         if not project_file:
             return
-        self.current_file = project_file
+        self._set_project_paths(project_file)
         self.file_save()
         if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
             self.sim_panel.animation_tab.refresh_cases()
@@ -737,12 +739,16 @@ class MainWindow(QMainWindow):
             return None
         base_name = os.path.splitext(os.path.basename(path))[0] or "project"
         parent_dir = os.path.dirname(path) or os.getcwd()
-        folder = os.path.join(parent_dir, base_name)
-        if os.path.exists(folder):
-            idx = 1
-            while os.path.exists(os.path.join(parent_dir, f"{base_name}_{idx}")):
-                idx += 1
-            folder = os.path.join(parent_dir, f"{base_name}_{idx}")
-            base_name = os.path.basename(folder)
-        os.makedirs(folder, exist_ok=True)
-        return os.path.join(folder, f"{base_name}.json")
+        return os.path.join(parent_dir, f"{base_name}.json")
+
+    def _derive_project_dir(self, project_file: str) -> str:
+        base_name = os.path.splitext(os.path.basename(project_file))[0] or "project"
+        parent_dir = os.path.dirname(project_file) or os.getcwd()
+        if os.path.basename(parent_dir) == base_name:
+            return parent_dir
+        return os.path.join(parent_dir, base_name)
+
+    def _set_project_paths(self, project_file: str) -> None:
+        self.current_file = project_file
+        self.project_dir = self._derive_project_dir(project_file)
+        os.makedirs(self.project_dir, exist_ok=True)
