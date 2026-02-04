@@ -8,7 +8,7 @@ import os
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
     QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle, QToolButton
@@ -120,10 +120,18 @@ class MainWindow(QMainWindow):
         self.menu_edit_action.triggered.connect(lambda: self._set_active_ribbon("edit"))
         self.act_undo = QAction("", self)
         self.act_undo.setShortcuts([QKeySequence.StandardKey.Undo, QKeySequence("Ctrl+Z")])
+        self.act_undo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.act_undo.triggered.connect(self.ctrl.stack.undo)
+        self.shortcut_undo = QShortcut(QKeySequence.StandardKey.Undo, self)
+        self.shortcut_undo.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.shortcut_undo.activated.connect(self.ctrl.stack.undo)
         self.act_redo = QAction("", self)
         self.act_redo.setShortcuts([QKeySequence.StandardKey.Redo, QKeySequence("Ctrl+Y")])
+        self.act_redo.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.act_redo.triggered.connect(self.ctrl.stack.redo)
+        self.shortcut_redo = QShortcut(QKeySequence.StandardKey.Redo, self)
+        self.shortcut_redo.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.shortcut_redo.activated.connect(self.ctrl.stack.redo)
         self.act_delete_selected = QAction("", self)
         self.act_delete_selected.setShortcuts([QKeySequence.StandardKey.Delete, QKeySequence("Backspace")])
         self.act_delete_selected.triggered.connect(self.delete_selected)
