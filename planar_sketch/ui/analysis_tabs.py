@@ -97,6 +97,9 @@ class AnimationTab(QWidget):
 
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
+            project_dir = getattr(self.ctrl.win, "project_dir", None)
+            if project_dir:
+                return project_dir
             return os.path.dirname(self.ctrl.win.current_file)
         return os.getcwd()
 
@@ -796,6 +799,9 @@ class OptimizationTab(QWidget):
 
     def _project_dir(self) -> str:
         if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
+            project_dir = getattr(self.ctrl.win, "project_dir", None)
+            if project_dir:
+                return project_dir
             return os.path.dirname(self.ctrl.win.current_file)
         return os.getcwd()
 
