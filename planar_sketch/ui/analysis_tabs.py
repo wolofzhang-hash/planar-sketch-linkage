@@ -1450,6 +1450,20 @@ class OptimizationTab(QWidget):
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table_best.setItem(0, idx, item)
 
+    def _refresh_best_objective_display(self) -> None:
+        objectives = self._collect_objectives()
+        obj_val: Optional[float] = None
+        for obj in objectives:
+            if not obj.enabled:
+                continue
+            obj_val, err = self._evaluate_expression(obj.expression, obj.case_ids)
+            if err:
+                obj_val = None
+            break
+        obj_item = QTableWidgetItem("--" if obj_val is None else f"{obj_val:.4f}")
+        obj_item.setFlags(obj_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self.table_best.setItem(0, 0, obj_item)
+
     def apply_best(self) -> None:
         if not self._best_vars:
             QMessageBox.information(self, "Optimization", "No best solution yet.")
@@ -1490,3 +1504,4 @@ class OptimizationTab(QWidget):
             self.ctrl.cmd_move_point_by_table(pid, float(x), float(y))
         if self.ctrl.panel:
             self.ctrl.panel.defer_refresh_all()
+        self._refresh_best_objective_display()

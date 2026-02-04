@@ -1018,6 +1018,14 @@ def simulate_case(
     hard_err_tol = float(solver.get("hard_err_tol", 1e-3))
     treat_point_spline_as_soft = bool(solver.get("treat_point_spline_as_soft", False))
 
+    if use_scipy:
+        ok, _msg = model.solve_constraints_scipy(max_nfev=max_nfev)
+        if not ok:
+            model.solve_constraints(iters=pbd_iters)
+    else:
+        model.solve_constraints(iters=pbd_iters)
+    model.mark_sim_start_pose()
+
     frames: List[Dict[str, Any]] = []
     reason = ""
     success = True

@@ -167,6 +167,8 @@ def _apply_design_vars(model_snapshot: Dict[str, Any], variables: Dict[str, floa
     for l in links:
         lid = l.get("id")
         if lid in link_vars:
+            if l.get("ref", False):
+                continue
             l["L"] = float(link_vars[lid])
     return snapshot
 
@@ -242,11 +244,13 @@ class OptimizationWorker(QThread):
                     statuses[case_id] = status
 
                 obj_vals = []
+                obj_display_vals = []
                 obj_score = 0.0
                 for obj in self.objectives:
                     if not obj.enabled:
                         continue
                     case_vals = []
+                    case_display_vals = []
                     for case_id in obj.case_ids or all_case_ids:
                         signals = signals_by_case.get(case_id)
                         if not signals:
@@ -254,12 +258,17 @@ class OptimizationWorker(QThread):
                         val, err = evaluate_expression(obj.expression, signals)
                         if err:
                             val = 1e9
-                        if obj.direction == "max":
-                            val = -val
-                        case_vals.append(val)
+                            score_val = 1e9
+                        else:
+                            score_val = -val if obj.direction == "max" else val
+                        case_vals.append(score_val)
+                        case_display_vals.append(val)
                     if case_vals:
                         obj_vals.append(sum(case_vals) / float(len(case_vals)))
+                    if case_display_vals:
+                        obj_display_vals.append(sum(case_display_vals) / float(len(case_display_vals)))
                 base_score = obj_vals[0] if obj_vals else 0.0
+                base_display = obj_display_vals[0] if obj_display_vals else 0.0
 
                 violation = 0.0
                 con_vals = []
@@ -288,7 +297,7 @@ class OptimizationWorker(QThread):
                     best = {
                         "score": obj_score,
                         "vars": candidate,
-                        "objective": base_score,
+                        "objective": base_display,
                         "constraints": con_vals,
                         "summary": summaries,
                         "status": statuses,
