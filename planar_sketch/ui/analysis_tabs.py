@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QInputDialog,
     QFileDialog,
+    QCheckBox,
 )
 
 from ..core.case_run_manager import CaseRunManager
@@ -771,6 +772,16 @@ class OptimizationTab(QWidget):
         row.addStretch(1)
         layout.addLayout(row)
 
+        log_row = QHBoxLayout()
+        self.chk_debug_log = QCheckBox("")
+        log_row.addWidget(self.chk_debug_log)
+        self.lbl_debug_log_path = QLabel("")
+        log_row.addWidget(self.lbl_debug_log_path)
+        self.ed_debug_log_path = QLineEdit("")
+        log_row.addWidget(self.ed_debug_log_path)
+        log_row.addStretch(1)
+        layout.addLayout(log_row)
+
         btn_row = QHBoxLayout()
         self.btn_run = QPushButton("")
         self.btn_stop = QPushButton("")
@@ -880,6 +891,9 @@ class OptimizationTab(QWidget):
         self.btn_del_con.setText(tr(lang, "analysis.remove"))
         self.lbl_evals.setText(tr(lang, "analysis.evals"))
         self.lbl_seed.setText(tr(lang, "analysis.seed"))
+        self.chk_debug_log.setText(tr(lang, "analysis.debug_log_enable"))
+        self.lbl_debug_log_path.setText(tr(lang, "analysis.debug_log_path"))
+        self.ed_debug_log_path.setPlaceholderText("logs/optimization_debug.log")
         self.btn_run.setText(tr(lang, "analysis.run"))
         self.btn_stop.setText(tr(lang, "analysis.stop"))
         self.btn_apply_best.setText(tr(lang, "analysis.apply_best"))
@@ -1393,6 +1407,10 @@ class OptimizationTab(QWidget):
             evals = 50
         seed_text = (self.ed_seed.text() or "").strip()
         seed = int(seed_text) if seed_text else None
+        enable_debug_log = self.chk_debug_log.isChecked()
+        debug_log_path = (self.ed_debug_log_path.text() or "").strip() or None
+        if enable_debug_log and not debug_log_path:
+            debug_log_path = os.path.join(self._project_dir(), "logs", "optimization_debug.log")
 
         self._worker = OptimizationWorker(
             model_snapshot=model_snapshot,
@@ -1402,6 +1420,8 @@ class OptimizationTab(QWidget):
             constraints=constraints,
             evals=evals,
             seed=seed,
+            enable_debug_log=enable_debug_log,
+            debug_log_path=debug_log_path,
         )
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)

@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
 import random
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -119,7 +122,44 @@ def _recompute_snapshot_from_parameters(snapshot: Dict[str, Any]) -> None:
             a["deg"] = float(val)
 
 
-def _apply_design_vars(model_snapshot: Dict[str, Any], variables: Dict[str, float]) -> Dict[str, Any]:
+def _update_link_constraints(
+    snapshot: Dict[str, Any],
+    link_id: int,
+    new_length: float,
+    warnings: Optional[List[str]] = None,
+) -> None:
+    constraints = snapshot.get("constraints")
+    if not isinstance(constraints, list):
+        return
+
+    matched = False
+    for constraint in constraints:
+        if not isinstance(constraint, dict):
+            continue
+        c_type = str(constraint.get("type", "")).lower()
+        if c_type not in ("length", "link_length", "link"):
+            continue
+        target_id = constraint.get("id", constraint.get("link_id"))
+        try:
+            target_id = int(target_id)
+        except Exception:
+            continue
+        if target_id != link_id:
+            continue
+        if constraint.get("enabled", True) is False:
+            continue
+        constraint["value"] = float(new_length)
+        matched = True
+
+    if not matched and warnings is not None:
+        warnings.append(f"length constraint not found for Link{link_id}.L")
+
+
+def _apply_design_vars(
+    model_snapshot: Dict[str, Any],
+    variables: Dict[str, float],
+    warnings: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     snapshot = copy.deepcopy(model_snapshot)
     point_vars: Dict[str, float] = {}
     link_vars: Dict[int, float] = {}
@@ -170,7 +210,46 @@ def _apply_design_vars(model_snapshot: Dict[str, Any], variables: Dict[str, floa
             if l.get("ref", False):
                 continue
             l["L"] = float(link_vars[lid])
+    for lid, new_length in link_vars.items():
+        _update_link_constraints(snapshot, lid, new_length, warnings)
     return snapshot
+
+
+class _OptimizationDebugLogger:
+    def __init__(self, enabled: bool, log_path: Optional[str]) -> None:
+        self.enabled = bool(enabled)
+        self.log_path = log_path
+        self._handle = None
+        if not self.enabled:
+            return
+        if not self.log_path:
+            self.log_path = os.path.join(os.getcwd(), "logs", "optimization_debug.log")
+        log_dir = os.path.dirname(self.log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        self._handle = open(self.log_path, "a", encoding="utf-8")
+
+    def log(self, payload: Dict[str, Any]) -> None:
+        if not self._handle:
+            return
+        try:
+            self._handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self._handle.flush()
+        except Exception:
+            self.enabled = False
+            try:
+                self._handle.close()
+            except Exception:
+                pass
+            self._handle = None
+
+    def close(self) -> None:
+        if self._handle:
+            try:
+                self._handle.close()
+            except Exception:
+                pass
+            self._handle = None
 
 
 class OptimizationWorker(QThread):
@@ -187,6 +266,8 @@ class OptimizationWorker(QThread):
         constraints: List[ConstraintSpec],
         evals: int,
         seed: Optional[int],
+        enable_debug_log: bool = False,
+        debug_log_path: Optional[str] = None,
     ):
         super().__init__()
         self.model_snapshot = model_snapshot
@@ -196,12 +277,15 @@ class OptimizationWorker(QThread):
         self.constraints = constraints
         self.evals = max(1, int(evals))
         self.seed = seed
+        self.enable_debug_log = enable_debug_log
+        self.debug_log_path = debug_log_path
         self._stop = False
 
     def stop(self) -> None:
         self._stop = True
 
     def run(self) -> None:
+        logger = _OptimizationDebugLogger(self.enable_debug_log, self.debug_log_path)
         try:
             rng = random.Random(self.seed)
             all_case_ids = list(self.case_specs.keys())
@@ -218,7 +302,8 @@ class OptimizationWorker(QThread):
                         continue
                     candidate[var.name] = rng.uniform(var.lower, var.upper)
 
-                snapshot = _apply_design_vars(self.model_snapshot, candidate)
+                apply_warnings: List[str] = []
+                snapshot = _apply_design_vars(self.model_snapshot, candidate, apply_warnings)
                 required_cases: set[str] = set()
                 for obj in self.objectives:
                     if not obj.enabled:
@@ -303,8 +388,42 @@ class OptimizationWorker(QThread):
                         "status": statuses,
                     }
 
+                status_list = []
+                overall_success = True
+                for case_id in required_cases:
+                    status = statuses.get(case_id, {})
+                    status_list.append({"case_id": case_id, "status": status})
+                    if status and not status.get("success", True):
+                        overall_success = False
+                log_record = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "eval_index": idx + 1,
+                    "case_ids": sorted(required_cases),
+                    "cases": status_list,
+                    "design_vars": candidate,
+                    "objective_value": base_display,
+                    "objective_score": obj_score,
+                    "penalty": penalty,
+                    "constraint_violation": violation,
+                    "solver_status": "success" if overall_success else "fail",
+                }
+                if apply_warnings:
+                    log_record["warnings"] = apply_warnings
+                logger.log(log_record)
                 self.progress.emit({"index": idx + 1, "best": best})
 
             self.finished.emit(best)
         except Exception as exc:
+            logger.log(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "eval_index": None,
+                    "design_vars": None,
+                    "objective_value": None,
+                    "solver_status": "fail",
+                    "error": str(exc).splitlines()[0] if str(exc) else "unknown_error",
+                }
+            )
             self.failed.emit(str(exc))
+        finally:
+            logger.close()
