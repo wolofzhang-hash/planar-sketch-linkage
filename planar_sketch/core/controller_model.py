@@ -832,9 +832,30 @@ class ControllerModel:
 
     def check_overconstraint(self) -> Tuple[bool, str]:
         """Check for structural over-constraint (constraint count > DOF)."""
-        n_points = len(self.points)
-        if n_points == 0:
+        summaries = self.constraint_dof_summary()
+        if not summaries:
             return False, "No points"
+
+        details: List[str] = []
+        over_any = False
+        for item in summaries:
+            dof = item["dof"]
+            total = item["total"]
+            over = total > dof
+            over_any = over_any or over
+            details.append(
+                f"component#{item['component']}: constraints={total} > dof={dof} "
+                f"(fixed={item['fixed']}, links={item['links']}, angles={item['angles']}, "
+                f"coincide={item['coincide']}, line={item['point_lines']}, "
+                f"spline={item['point_splines']}, rigid={item['rigid_edges']})"
+            )
+
+        return over_any, " | ".join(details)
+
+    def constraint_dof_summary(self) -> List[Dict[str, int]]:
+        """Return per-component DOF/constraint counts."""
+        if len(self.points) == 0:
+            return []
 
         adjacency: Dict[int, set[int]] = {pid: set() for pid in self.points.keys()}
 
@@ -902,8 +923,7 @@ class ControllerModel:
                         stack.append(nb)
             components.append(comp)
 
-        details: List[str] = []
-        over_any = False
+        summary: List[Dict[str, int]] = []
         for idx, comp in enumerate(components, start=1):
             dof = 2 * len(comp)
             fixed = sum(1 for pid in comp if bool(self.points.get(pid, {}).get("fixed", False)))
@@ -955,15 +975,22 @@ class ControllerModel:
                 + angles
                 + rigid_edges
             )
-            over = total > dof
-            over_any = over_any or over
-            details.append(
-                f"component#{idx}: constraints={total} > dof={dof} "
-                f"(fixed={fixed}, links={links}, angles={angles}, coincide={coincide}, "
-                f"line={point_lines}, spline={point_splines}, rigid={rigid_edges})"
+            summary.append(
+                {
+                    "component": idx,
+                    "dof": dof,
+                    "fixed": fixed,
+                    "links": links,
+                    "angles": angles,
+                    "coincide": coincide,
+                    "point_lines": point_lines,
+                    "point_splines": point_splines,
+                    "rigid_edges": rigid_edges,
+                    "total": total,
+                }
             )
 
-        return over_any, " | ".join(details)
+        return summary
 
     def recompute_from_parameters(self):
         """Recompute all numeric fields that are backed by expressions.
@@ -1726,4 +1753,3 @@ class ControllerModel:
         del self.bodies[bid]
         if self.selected_body_id == bid:
             self.selected_body_id = None
-

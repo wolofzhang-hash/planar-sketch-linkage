@@ -171,6 +171,9 @@ class SimulationPanel(QWidget):
         meas_buttons.addWidget(self.btn_delete_meas)
         measurements_layout.addLayout(meas_buttons)
 
+        self.btn_check_analysis = QPushButton()
+        measurements_layout.addWidget(self.btn_check_analysis)
+
         measurements_layout.addStretch(1)
         loads_tab = QWidget()
         loads_layout = QVBoxLayout(loads_tab)
@@ -232,6 +235,7 @@ class SimulationPanel(QWidget):
         self.btn_clear_output.clicked.connect(self._clear_output)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
         self.btn_delete_meas.clicked.connect(self._delete_selected_measure)
+        self.btn_check_analysis.clicked.connect(self._run_analysis_check)
         self.btn_remove_load.clicked.connect(self._remove_selected_load)
         self.btn_clear_loads.clicked.connect(self._clear_loads)
         self.btn_play.clicked.connect(self.play)
@@ -270,6 +274,7 @@ class SimulationPanel(QWidget):
         self.btn_export.setText(tr(lang, "sim.export_csv"))
         self.btn_save_run.setText(tr(lang, "sim.save_run"))
         self.btn_open_last_run.setText(tr(lang, "sim.open_last_run"))
+        self.btn_check_analysis.setText(tr(lang, "analysis.check"))
         self.btn_clear_meas.setText(tr(lang, "sim.clear"))
         self.btn_delete_meas.setText(tr(lang, "sim.delete"))
         self.lbl_applied_loads.setText(tr(lang, "sim.applied_loads"))
@@ -1255,6 +1260,59 @@ class SimulationPanel(QWidget):
         manager = self._run_manager()
         self.btn_open_last_run.setEnabled(bool(manager.last_run_path()))
         self.btn_save_run.setEnabled(bool(self._last_run_data))
+
+    def _run_analysis_check(self) -> None:
+        self.ctrl.commit_drag_if_any()
+        self.ctrl.recompute_from_parameters()
+        max_err, detail = self.ctrl.max_constraint_error()
+        over, over_detail = self.ctrl.check_overconstraint()
+        summary_lines = self._format_dof_summary()
+        issues = []
+        lang = getattr(self.ctrl, "ui_language", "en")
+        if over:
+            issues.append(tr(lang, "analysis.issue.overconstrained").format(detail=over_detail))
+        if max_err > 1e-6:
+            issues.append(
+                tr(lang, "analysis.issue.constraint_error").format(
+                    value=max_err,
+                    detail=" ".join(f"{k}={v:.4g}" for k, v in detail.items()),
+                )
+            )
+        if not issues:
+            issues.append(tr(lang, "analysis.issue.none"))
+        message = (
+            tr(lang, "analysis.check.summary_title")
+            + "\n"
+            + "\n".join(summary_lines)
+            + "\n\n"
+            + tr(lang, "analysis.check.issues_title")
+            + "\n"
+            + "\n".join(issues)
+        )
+        QMessageBox.information(self, tr(lang, "analysis.check"), message)
+
+    def _format_dof_summary(self) -> List[str]:
+        summaries = self.ctrl.constraint_dof_summary()
+        lang = getattr(self.ctrl, "ui_language", "en")
+        if not summaries:
+            return [tr(lang, "analysis.dof.no_points")]
+        lines: List[str] = []
+        for item in summaries:
+            lines.append(
+                tr(lang, "analysis.dof.component").format(
+                    idx=item["component"],
+                    dof=item["dof"],
+                    total=item["total"],
+                    fixed=item["fixed"],
+                    links=item["links"],
+                    angles=item["angles"],
+                    coincide=item["coincide"],
+                    line=item["point_lines"],
+                    spline=item["point_splines"],
+                    rigid=item["rigid_edges"],
+                )
+            )
+        return lines
 
     def save_last_run(self) -> None:
         if not self._last_run_data:
