@@ -810,6 +810,7 @@ class HeadlessModel:
             if piv is not None and tip is not None:
                 driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
+        translation_targets: Dict[int, float] = {}
         for drv in drive_sources:
             if str(drv.get("type", "angle")) != "translation":
                 continue
@@ -819,7 +820,7 @@ class HeadlessModel:
             pl = self.point_lines[plid]
             base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
             offset = float(drv.get("value", 0.0) or 0.0)
-            pl["s"] = base_s + offset
+            translation_targets[int(plid)] = base_s + offset
 
         for _ in range(int(iters)):
             for drv in drive_sources:
@@ -842,6 +843,32 @@ class HeadlessModel:
                         lock_piv,
                         lock_tip=lock_tip,
                     )
+
+            for plid, target_s in translation_targets.items():
+                pl = self.point_lines.get(plid)
+                if not pl or not bool(pl.get("enabled", True)):
+                    continue
+                p_id = int(pl.get("p", -1))
+                i_id = int(pl.get("i", -1))
+                j_id = int(pl.get("j", -1))
+                if p_id not in self.points or i_id not in self.points or j_id not in self.points:
+                    continue
+                pp = self.points[p_id]
+                pa = self.points[i_id]
+                pb = self.points[j_id]
+                lock_p = bool(pp.get("fixed", False))
+                lock_a = bool(pa.get("fixed", False))
+                lock_b = bool(pb.get("fixed", False))
+                ConstraintSolver.solve_point_on_line_offset(
+                    pp,
+                    pa,
+                    pb,
+                    float(target_s),
+                    lock_p,
+                    lock_a,
+                    lock_b,
+                    tol=1e-6,
+                )
 
             for c in self.coincides.values():
                 if not bool(c.get("enabled", True)):
@@ -870,7 +897,7 @@ class HeadlessModel:
                     pa["x"], pa["y"] = mx, my
                     pb["x"], pb["y"] = mx, my
 
-            for pl in self.point_lines.values():
+            for plid, pl in self.point_lines.items():
                 if not bool(pl.get("enabled", True)):
                     continue
                 p_id = int(pl.get("p", -1))
@@ -884,7 +911,18 @@ class HeadlessModel:
                 lock_p = bool(pp.get("fixed", False)) or (p_id in driven_pids)
                 lock_a = bool(pa.get("fixed", False)) or (i_id in driven_pids)
                 lock_b = bool(pb.get("fixed", False)) or (j_id in driven_pids)
-                if "s" in pl:
+                if plid in translation_targets:
+                    ok = ConstraintSolver.solve_point_on_line_offset(
+                        pp,
+                        pa,
+                        pb,
+                        float(translation_targets[plid]),
+                        lock_p,
+                        lock_a,
+                        lock_b,
+                        tol=1e-6,
+                    )
+                elif "s" in pl:
                     ok = ConstraintSolver.solve_point_on_line_offset(
                         pp,
                         pa,
