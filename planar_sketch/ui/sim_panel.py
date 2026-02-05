@@ -855,7 +855,9 @@ class SimulationPanel(QWidget):
         self._sweep_steps_total = int(step)
         self._sweep_step_index = 0
         self._theta_start = start
-        if len(active_drivers) > 1:
+        has_non_angle_driver = any(d.get("type") != "angle" for d in active_drivers)
+        use_driver_sweep = bool(active_drivers) and (len(active_drivers) > 1 or has_non_angle_driver)
+        if use_driver_sweep:
             driver_sweep = []
             base_steps = []
             for drv in active_drivers:
