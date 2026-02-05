@@ -347,7 +347,14 @@ class SimulationPanel(QWidget):
         return os.getcwd()
 
     def _run_manager(self) -> CaseRunManager:
-        return CaseRunManager(self._project_dir())
+        project_uuid = getattr(self.ctrl, "project_uuid", "") if self.ctrl else ""
+        return CaseRunManager(self._project_dir(), project_uuid=project_uuid)
+
+    def is_running(self) -> bool:
+        return self._timer.isActive()
+
+    def has_unsaved_run(self) -> bool:
+        return bool(self._last_run_data)
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

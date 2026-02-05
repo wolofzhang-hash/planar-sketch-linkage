@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from .controller_common import *
 
 
@@ -1954,164 +1956,218 @@ class ControllerSelection:
             )
 
     def to_dict(self) -> Dict[str, Any]:
+        payload = self.default_project_dict(project_uuid=self._ensure_project_uuid())
+        payload.update(
+            {
+                "display_precision": int(getattr(self, "display_precision", 3)),
+                "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
+                "torque_arrow_width": float(getattr(self, "torque_arrow_width", 1.6)),
+                "parameters": self.parameters.to_list(),
+                "background_image": {
+                    "path": self.background_image.get("path"),
+                    "visible": bool(self.background_image.get("visible", True)),
+                    "opacity": float(self.background_image.get("opacity", 0.6)),
+                    "grayscale": bool(self.background_image.get("grayscale", False)),
+                    "scale": float(self.background_image.get("scale", 1.0)),
+                    "pos": list(self.background_image.get("pos", (0.0, 0.0))),
+                },
+                "points": [
+                    {
+                        "id": pid,
+                        "x": p["x"], "y": p["y"],
+                        "x_expr": (p.get("x_expr") or ""),
+                        "y_expr": (p.get("y_expr") or ""),
+                        "fixed": bool(p.get("fixed", False)),
+                        "hidden": bool(p.get("hidden", False)),
+                        "traj": bool(p.get("traj", False)),
+                    }
+                    for pid, p in sorted(self.points.items(), key=lambda kv: kv[0])
+                ],
+                "constraints": self.constraint_registry.to_list(),
+                "links": [
+                    {
+                        "id": lid, "i": l["i"], "j": l["j"],
+                        "L": l["L"],
+                        "L_expr": (l.get("L_expr") or ""),
+                        "hidden": bool(l.get("hidden", False)),
+                        "ref": bool(l.get("ref", False)),
+                    }
+                    for lid, l in sorted(self.links.items(), key=lambda kv: kv[0])
+                ],
+                "angles": [
+                    {
+                        "id": aid, "i": a["i"], "j": a["j"], "k": a["k"],
+                        "deg": a["deg"],
+                        "deg_expr": (a.get("deg_expr") or ""),
+                        "hidden": bool(a.get("hidden", False)),
+                        "enabled": bool(a.get("enabled", True)),
+                    }
+                    for aid, a in sorted(self.angles.items(), key=lambda kv: kv[0])
+                ],
+                "splines": [
+                    {
+                        "id": sid,
+                        "points": list(s.get("points", [])),
+                        "hidden": bool(s.get("hidden", False)),
+                        "closed": bool(s.get("closed", False)),
+                    }
+                    for sid, s in sorted(self.splines.items(), key=lambda kv: kv[0])
+                ],
+                "coincides": [
+                    {"id": cid, "a": c["a"], "b": c["b"], "hidden": bool(c.get("hidden", False)), "enabled": bool(c.get("enabled", True))}
+                    for cid, c in sorted(self.coincides.items(), key=lambda kv: kv[0])
+                ],
+                "point_lines": [
+                    {
+                        "id": plid,
+                        "p": pl.get("p"),
+                        "i": pl.get("i"),
+                        "j": pl.get("j"),
+                        "hidden": bool(pl.get("hidden", False)),
+                        "enabled": bool(pl.get("enabled", True)),
+                        **({"s": float(pl.get("s", 0.0))} if "s" in pl else {}),
+                        **({"s_expr": str(pl.get("s_expr", ""))} if pl.get("s_expr") else {}),
+                        **({"name": str(pl.get("name", ""))} if pl.get("name") else {}),
+                    }
+                    for plid, pl in sorted(self.point_lines.items(), key=lambda kv: kv[0])
+                ],
+                "point_splines": [
+                    {"id": psid, "p": ps.get("p"), "s": ps.get("s"),
+                     "hidden": bool(ps.get("hidden", False)), "enabled": bool(ps.get("enabled", True))}
+                    for psid, ps in sorted(self.point_splines.items(), key=lambda kv: kv[0])
+                ],
+                "bodies": [
+                    {"id": bid, "name": b.get("name", f"B{bid}"), "points": list(b.get("points", [])),
+                     "hidden": bool(b.get("hidden", False)), "color_name": b.get("color_name", "Blue"),
+                     "rigid_edges": list(b.get("rigid_edges", []))}
+                    for bid, b in sorted(self.bodies.items(), key=lambda kv: kv[0])
+                ],
+                "driver": {
+                    "enabled": bool(self.driver.get("enabled", False)),
+                    "type": str(self.driver.get("type", "angle")),
+                    "pivot": self.driver.get("pivot"),
+                    "tip": self.driver.get("tip"),
+                    "rad": float(self.driver.get("rad", 0.0)),
+                    "plid": self.driver.get("plid"),
+                    "s_base": self.driver.get("s_base"),
+                    "value": self.driver.get("value"),
+                    "sweep_start": self.driver.get("sweep_start"),
+                    "sweep_end": self.driver.get("sweep_end"),
+                },
+                "drivers": [
+                    {
+                        "enabled": bool(d.get("enabled", False)),
+                        "type": str(d.get("type", "angle")),
+                        "pivot": d.get("pivot"),
+                        "tip": d.get("tip"),
+                        "rad": float(d.get("rad", 0.0)),
+                        "plid": d.get("plid"),
+                        "s_base": d.get("s_base"),
+                        "value": d.get("value"),
+                        "sweep_start": d.get("sweep_start"),
+                        "sweep_end": d.get("sweep_end"),
+                    }
+                    for d in self.drivers
+                ],
+                "output": {
+                    "enabled": bool(self.output.get("enabled", False)),
+                    "pivot": self.output.get("pivot"),
+                    "tip": self.output.get("tip"),
+                    "rad": float(self.output.get("rad", 0.0)),
+                },
+                "outputs": [
+                    {
+                        "enabled": bool(o.get("enabled", False)),
+                        "pivot": o.get("pivot"),
+                        "tip": o.get("tip"),
+                        "rad": float(o.get("rad", 0.0)),
+                    }
+                    for o in self.outputs
+                ],
+                "measures": [
+                    {
+                        "type": str(m.get("type", "")),
+                        "name": str(m.get("name", "")),
+                        "pivot": m.get("pivot"),
+                        "tip": m.get("tip"),
+                        "i": m.get("i"),
+                        "j": m.get("j"),
+                        "k": m.get("k"),
+                    }
+                    for m in self.measures
+                ],
+                "loads": [
+                    {
+                        "type": str(ld.get("type", "force")),
+                        "pid": int(ld.get("pid", -1)),
+                        "fx": float(ld.get("fx", 0.0)),
+                        "fy": float(ld.get("fy", 0.0)),
+                        "mz": float(ld.get("mz", 0.0)),
+                    }
+                    for ld in self.loads
+                ],
+                "load_measures": [
+                    {
+                        "type": str(lm.get("type", "joint_load")),
+                        "pid": int(lm.get("pid", -1)),
+                        "component": str(lm.get("component", "mag")),
+                        "name": str(lm.get("name", "")),
+                    }
+                    for lm in self.load_measures
+                ],
+                "sweep": {
+                    "start": float(self.sweep_settings.get("start", 0.0)),
+                    "end": float(self.sweep_settings.get("end", 360.0)),
+                    "step": float(self.sweep_settings.get("step", 200.0)),
+                },
+            }
+        )
+        return payload
+
+    def _ensure_project_uuid(self, candidate: Optional[str] = None) -> str:
+        if candidate and isinstance(candidate, str) and candidate.strip():
+            self.project_uuid = candidate.strip()
+        if not getattr(self, "project_uuid", ""):
+            self.project_uuid = str(uuid.uuid4())
+        return self.project_uuid
+
+    def default_project_dict(self, project_uuid: Optional[str] = None, force_new_uuid: bool = False) -> Dict[str, Any]:
+        if force_new_uuid:
+            uuid_val = str(uuid.uuid4())
+            self.project_uuid = uuid_val
+        else:
+            uuid_val = self._ensure_project_uuid(project_uuid)
         return {
             "version": "2.7.0",
+            "project_uuid": uuid_val,
             "display_precision": int(getattr(self, "display_precision", 3)),
             "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
             "torque_arrow_width": float(getattr(self, "torque_arrow_width", 1.6)),
-            "parameters": self.parameters.to_list(),
+            "parameters": [],
             "background_image": {
-                "path": self.background_image.get("path"),
-                "visible": bool(self.background_image.get("visible", True)),
-                "opacity": float(self.background_image.get("opacity", 0.6)),
-                "grayscale": bool(self.background_image.get("grayscale", False)),
-                "scale": float(self.background_image.get("scale", 1.0)),
-                "pos": list(self.background_image.get("pos", (0.0, 0.0))),
+                "path": None,
+                "visible": True,
+                "opacity": 0.6,
+                "grayscale": False,
+                "scale": 1.0,
+                "pos": [0.0, 0.0],
             },
-            "points": [
-                {
-                    "id": pid,
-                    "x": p["x"], "y": p["y"],
-                    "x_expr": (p.get("x_expr") or ""),
-                    "y_expr": (p.get("y_expr") or ""),
-                    "fixed": bool(p.get("fixed", False)),
-                    "hidden": bool(p.get("hidden", False)),
-                    "traj": bool(p.get("traj", False)),
-                }
-                for pid, p in sorted(self.points.items(), key=lambda kv: kv[0])
-            ],
-            "constraints": self.constraint_registry.to_list(),
-            "links": [
-                {
-                    "id": lid, "i": l["i"], "j": l["j"],
-                    "L": l["L"],
-                    "L_expr": (l.get("L_expr") or ""),
-                    "hidden": bool(l.get("hidden", False)),
-                    "ref": bool(l.get("ref", False)),
-                }
-                for lid, l in sorted(self.links.items(), key=lambda kv: kv[0])
-            ],
-            "angles": [
-                {
-                    "id": aid, "i": a["i"], "j": a["j"], "k": a["k"],
-                    "deg": a["deg"],
-                    "deg_expr": (a.get("deg_expr") or ""),
-                    "hidden": bool(a.get("hidden", False)),
-                    "enabled": bool(a.get("enabled", True)),
-                }
-                for aid, a in sorted(self.angles.items(), key=lambda kv: kv[0])
-            ],
-            "splines": [
-                {
-                    "id": sid,
-                    "points": list(s.get("points", [])),
-                    "hidden": bool(s.get("hidden", False)),
-                    "closed": bool(s.get("closed", False)),
-                }
-                for sid, s in sorted(self.splines.items(), key=lambda kv: kv[0])
-            ],
-            "coincides": [
-                {"id": cid, "a": c["a"], "b": c["b"], "hidden": bool(c.get("hidden", False)), "enabled": bool(c.get("enabled", True))}
-                for cid, c in sorted(self.coincides.items(), key=lambda kv: kv[0])
-            ],
-            "point_lines": [
-                {
-                    "id": plid,
-                    "p": pl.get("p"),
-                    "i": pl.get("i"),
-                    "j": pl.get("j"),
-                    "hidden": bool(pl.get("hidden", False)),
-                    "enabled": bool(pl.get("enabled", True)),
-                    **({"s": float(pl.get("s", 0.0))} if "s" in pl else {}),
-                    **({"s_expr": str(pl.get("s_expr", ""))} if pl.get("s_expr") else {}),
-                    **({"name": str(pl.get("name", ""))} if pl.get("name") else {}),
-                }
-                for plid, pl in sorted(self.point_lines.items(), key=lambda kv: kv[0])
-            ],
-            "point_splines": [
-                {"id": psid, "p": ps.get("p"), "s": ps.get("s"),
-                 "hidden": bool(ps.get("hidden", False)), "enabled": bool(ps.get("enabled", True))}
-                for psid, ps in sorted(self.point_splines.items(), key=lambda kv: kv[0])
-            ],
-            "bodies": [
-                {"id": bid, "name": b.get("name", f"B{bid}"), "points": list(b.get("points", [])),
-                 "hidden": bool(b.get("hidden", False)), "color_name": b.get("color_name", "Blue"),
-                 "rigid_edges": list(b.get("rigid_edges", []))}
-                for bid, b in sorted(self.bodies.items(), key=lambda kv: kv[0])
-            ],
-            "driver": {
-                "enabled": bool(self.driver.get("enabled", False)),
-                "type": str(self.driver.get("type", "angle")),
-                "pivot": self.driver.get("pivot"),
-                "tip": self.driver.get("tip"),
-                "rad": float(self.driver.get("rad", 0.0)),
-                "plid": self.driver.get("plid"),
-                "s_base": self.driver.get("s_base"),
-                "value": self.driver.get("value"),
-                "sweep_start": self.driver.get("sweep_start"),
-                "sweep_end": self.driver.get("sweep_end"),
-            },
-            "drivers": [
-                {
-                    "enabled": bool(d.get("enabled", False)),
-                    "type": str(d.get("type", "angle")),
-                    "pivot": d.get("pivot"),
-                    "tip": d.get("tip"),
-                    "rad": float(d.get("rad", 0.0)),
-                    "plid": d.get("plid"),
-                    "s_base": d.get("s_base"),
-                    "value": d.get("value"),
-                    "sweep_start": d.get("sweep_start"),
-                    "sweep_end": d.get("sweep_end"),
-                }
-                for d in self.drivers
-            ],
-            "output": {
-                "enabled": bool(self.output.get("enabled", False)),
-                "pivot": self.output.get("pivot"),
-                "tip": self.output.get("tip"),
-                "rad": float(self.output.get("rad", 0.0)),
-            },
-            "outputs": [
-                {
-                    "enabled": bool(o.get("enabled", False)),
-                    "pivot": o.get("pivot"),
-                    "tip": o.get("tip"),
-                    "rad": float(o.get("rad", 0.0)),
-                }
-                for o in self.outputs
-            ],
-            "measures": [
-                {
-                    "type": str(m.get("type", "")),
-                    "name": str(m.get("name", "")),
-                    "pivot": m.get("pivot"),
-                    "tip": m.get("tip"),
-                    "i": m.get("i"),
-                    "j": m.get("j"),
-                    "k": m.get("k"),
-                }
-                for m in self.measures
-            ],
-            "loads": [
-                {
-                    "type": str(ld.get("type", "force")),
-                    "pid": int(ld.get("pid", -1)),
-                    "fx": float(ld.get("fx", 0.0)),
-                    "fy": float(ld.get("fy", 0.0)),
-                    "mz": float(ld.get("mz", 0.0)),
-                }
-                for ld in self.loads
-            ],
-            "load_measures": [
-                {
-                    "type": str(lm.get("type", "joint_load")),
-                    "pid": int(lm.get("pid", -1)),
-                    "component": str(lm.get("component", "mag")),
-                    "name": str(lm.get("name", "")),
-                }
-                for lm in self.load_measures
-            ],
+            "points": [],
+            "constraints": [],
+            "links": [],
+            "angles": [],
+            "splines": [],
+            "coincides": [],
+            "point_lines": [],
+            "point_splines": [],
+            "bodies": [],
+            "driver": dict(self._default_driver()),
+            "drivers": [],
+            "output": dict(self._default_output()),
+            "outputs": [],
+            "measures": [],
+            "loads": [],
+            "load_measures": [],
             "sweep": {
                 "start": float(self.sweep_settings.get("start", 0.0)),
                 "end": float(self.sweep_settings.get("end", 360.0)),
@@ -2119,9 +2175,91 @@ class ControllerSelection:
             },
         }
 
+    def merge_project_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        has_uuid = isinstance(data, dict) and str(data.get("project_uuid", "")).strip()
+        base = self.default_project_dict(
+            project_uuid=(data.get("project_uuid") if has_uuid else None),
+            force_new_uuid=not has_uuid,
+        )
+        if not isinstance(data, dict):
+            return base
+        for key, val in data.items():
+            if key in ("background_image", "driver", "output", "sweep") and isinstance(val, dict):
+                base[key] = {**base.get(key, {}), **val}
+            else:
+                base[key] = val
+        return base
+
+    def validate_project_schema(self, data: Any) -> tuple[list[str], list[str]]:
+        warnings: list[str] = []
+        errors: list[str] = []
+        if not isinstance(data, dict):
+            errors.append("Project data must be a JSON object.")
+            return warnings, errors
+        schema_keys = {
+            "version",
+            "project_uuid",
+            "display_precision",
+            "load_arrow_width",
+            "torque_arrow_width",
+            "parameters",
+            "background_image",
+            "points",
+            "constraints",
+            "links",
+            "angles",
+            "splines",
+            "coincides",
+            "point_lines",
+            "point_splines",
+            "bodies",
+            "driver",
+            "drivers",
+            "output",
+            "outputs",
+            "measures",
+            "loads",
+            "load_measures",
+            "sweep",
+        }
+        for key in sorted(schema_keys):
+            if key not in data:
+                warnings.append(f"Missing key: {key}")
+        list_keys = [
+            "points",
+            "constraints",
+            "links",
+            "angles",
+            "splines",
+            "coincides",
+            "point_lines",
+            "point_splines",
+            "bodies",
+            "parameters",
+            "drivers",
+            "outputs",
+            "measures",
+            "loads",
+            "load_measures",
+        ]
+        dict_keys = ["background_image", "driver", "output", "sweep"]
+        for key in list_keys:
+            if key in data and not isinstance(data.get(key), list):
+                errors.append(f"Key '{key}' should be a list.")
+        for key in dict_keys:
+            if key in data and not isinstance(data.get(key), dict):
+                errors.append(f"Key '{key}' should be an object.")
+        if "project_uuid" in data and not isinstance(data.get("project_uuid"), str):
+            errors.append("Key 'project_uuid' should be a string.")
+        return warnings, errors
+
     def load_dict(self, data: Dict[str, Any], clear_undo: bool = True, action: str = "load a new model") -> bool:
         if not self._confirm_stop_replay(action):
             return False
+        if isinstance(data, dict):
+            self._ensure_project_uuid(data.get("project_uuid"))
+        else:
+            self._ensure_project_uuid()
         if hasattr(self.win, "sim_panel"):
             self.win.sim_panel.stop()
             if hasattr(self.win.sim_panel, "animation_tab"):
@@ -2484,5 +2622,3 @@ class ControllerSelection:
         if clear_undo: self.stack.clear()
         self.update_status()
         return True
-
-

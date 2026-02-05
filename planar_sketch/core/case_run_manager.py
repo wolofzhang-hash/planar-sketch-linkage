@@ -46,8 +46,9 @@ class CaseInfo:
 
 
 class CaseRunManager:
-    def __init__(self, project_dir: str):
+    def __init__(self, project_dir: str, project_uuid: Optional[str] = None):
         self.project_dir = project_dir
+        self.project_uuid = str(project_uuid) if project_uuid else ""
         self.cases_dir = os.path.join(project_dir, "cases")
         self.runs_dir = os.path.join(project_dir, "runs")
         _ensure_dir(self.cases_dir)
@@ -59,12 +60,22 @@ class CaseRunManager:
     def _load_index(self) -> Dict[str, Any]:
         payload = _read_json(self._index_path())
         if not payload:
-            payload = {"cases": [], "hash_map": {}}
+            payload = {"cases": [], "hash_map": {}, "project_uuid": self.project_uuid}
         payload.setdefault("cases", [])
         payload.setdefault("hash_map", {})
+        if self.project_uuid:
+            stored_uuid = str(payload.get("project_uuid", "") or "")
+            if stored_uuid and stored_uuid != self.project_uuid:
+                payload = {"cases": [], "hash_map": {}, "project_uuid": self.project_uuid}
+            else:
+                payload["project_uuid"] = self.project_uuid
+        else:
+            payload.setdefault("project_uuid", "")
         return payload
 
     def _save_index(self, payload: Dict[str, Any]) -> None:
+        if self.project_uuid:
+            payload["project_uuid"] = self.project_uuid
         _write_json(self._index_path(), payload)
 
     @staticmethod
@@ -128,6 +139,8 @@ class CaseRunManager:
     def _write_case_spec(self, case_id: str, case_spec: Dict[str, Any], created: str, updated: str, name: str) -> None:
         payload = dict(case_spec)
         payload["schema_version"] = payload.get("schema_version", "1.0")
+        if self.project_uuid:
+            payload["project_uuid"] = self.project_uuid
         payload["case_id"] = case_id
         payload["name"] = name
         payload["created_utc"] = created
@@ -408,7 +421,15 @@ class CaseRunManager:
         try:
             with open(path, "r", encoding="utf-8") as fh:
                 val = fh.read().strip()
-            return val or None
+            if not val:
+                return None
+            if not self.project_uuid:
+                return val
+            case_spec = _read_json(os.path.join(val, "case.json"))
+            stored_uuid = case_spec.get("project_uuid")
+            if stored_uuid and stored_uuid != self.project_uuid:
+                return None
+            return val
         except Exception:
             return None
 
