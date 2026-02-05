@@ -144,7 +144,11 @@ class MainWindow(QMainWindow):
         self.act_cancel_model.triggered.connect(self.ctrl.cancel_model_action)
         self.act_repeat_model = QAction("", self)
         self.act_repeat_model.setShortcut(QKeySequence("F4"))
+        self.act_repeat_model.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         self.act_repeat_model.triggered.connect(self.ctrl.repeat_last_model_action)
+        self.shortcut_repeat_model = QShortcut(QKeySequence("F4"), self)
+        self.shortcut_repeat_model.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.shortcut_repeat_model.activated.connect(self.ctrl.repeat_last_model_action)
         self.act_settings = QAction("", self)
         self.act_settings.triggered.connect(self.open_settings)
 
