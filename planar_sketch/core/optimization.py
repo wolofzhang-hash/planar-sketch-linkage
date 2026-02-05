@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from .expression import evaluate_expression
+from .expression_service import eval_signal_expression
 from .parameters import ParameterRegistry
 from .headless_sim import simulate_case
 
@@ -368,7 +368,7 @@ class OptimizationWorker(QThread):
                         signals = signals_by_case.get(case_id)
                         if not signals:
                             continue
-                        val, err = evaluate_expression(obj.expression, signals)
+                        val, err = eval_signal_expression(obj.expression, signals)
                         if err:
                             val = 1e9
                             score_val = 1e9
@@ -392,7 +392,7 @@ class OptimizationWorker(QThread):
                         signals = signals_by_case.get(case_id)
                         if not signals:
                             continue
-                        val, err = evaluate_expression(con.expression, signals)
+                        val, err = eval_signal_expression(con.expression, signals)
                         if err:
                             violation += 1e6
                             con_vals.append(val)
