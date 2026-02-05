@@ -766,7 +766,7 @@ class SplinesTab(QWidget):
         layout.addLayout(btn_row)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(3)
+        self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
@@ -786,6 +786,7 @@ class SplinesTab(QWidget):
             tr(lang, "table.id"),
             tr(lang, "table.points"),
             tr(lang, "table.hidden"),
+            tr(lang, "table.closed"),
         ])
 
     def _add_spline_from_points(self):
@@ -811,6 +812,7 @@ class SplinesTab(QWidget):
                 pts = ",".join(str(pid) for pid in s.get("points", []))
                 self.table.setItem(r, 1, QTableWidgetItem(pts))
                 self.table.setItem(r, 2, QTableWidgetItem("1" if s.get("hidden", False) else "0"))
+                self.table.setItem(r, 3, QTableWidgetItem("1" if s.get("closed", False) else "0"))
         if keep_selection and self.ctrl.selected_spline_id is not None:
             self.panel.select_spline(self.ctrl.selected_spline_id)
 
@@ -841,6 +843,7 @@ class SplinesTab(QWidget):
         try:
             pts_text = (self.table.item(row, 1).text() if self.table.item(row, 1) else "").strip()
             hidden = (self.table.item(row, 2).text().strip() not in ("0", "", "false", "False", "no", "No"))
+            closed = (self.table.item(row, 3).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
             QMessageBox.warning(self, "Invalid input", str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
@@ -850,6 +853,7 @@ class SplinesTab(QWidget):
             if pts:
                 self.ctrl.cmd_set_spline_points(sid, pts)
             self.ctrl.cmd_set_spline_hidden(sid, hidden)
+            self.ctrl.cmd_set_spline_closed(sid, closed)
             self.panel.defer_refresh_all(keep_selection=True)
         QTimer.singleShot(0, apply)
 

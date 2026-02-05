@@ -224,12 +224,13 @@ class ConstraintSolver:
         lock_controls: list[bool],
         tol: float = 1e-8,
         samples_per_segment: int = 16,
+        closed: bool = False,
     ) -> bool:
         """Enforce point P to lie on a spline defined by control points."""
         if len(control_points) < 2:
             return True
         pts = [(float(cp["x"]), float(cp["y"])) for cp in control_points]
-        samples = build_spline_samples(pts, samples_per_segment=samples_per_segment)
+        samples = build_spline_samples(pts, samples_per_segment=samples_per_segment, closed=closed)
         if len(samples) < 2:
             return True
 

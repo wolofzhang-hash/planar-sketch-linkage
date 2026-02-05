@@ -699,7 +699,14 @@ class SketchController:
                 lock_controls = []
                 for cid in cp_ids:
                     lock_controls.append(bool(self.points[cid].get("fixed", False)) or (drag_pid == cid) or (cid in driven_pids))
-                ok = ConstraintSolver.solve_point_on_spline(pp, cps, lock_p, lock_controls, tol=1e-6)
+                ok = ConstraintSolver.solve_point_on_spline(
+                    pp,
+                    cps,
+                    lock_p,
+                    lock_controls,
+                    tol=1e-6,
+                    closed=bool(spline.get("closed", False)),
+                )
                 if not ok:
                     ps["over"] = True
 
@@ -804,7 +811,7 @@ class SketchController:
                 continue
             if bool(self.points[p_id].get("fixed", False)) and all(bool(self.points[cid].get("fixed", False)) for cid in cp_ids):
                 pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
-                samples = build_spline_samples(pts, samples_per_segment=16)
+                samples = build_spline_samples(pts, samples_per_segment=16, closed=bool(spline.get("closed", False)))
                 if len(samples) >= 2:
                     px, py = float(self.points[p_id]["x"]), float(self.points[p_id]["y"])
                     _cx, _cy, _seg_idx, _t_seg, dist2 = closest_point_on_samples(px, py, samples)
@@ -901,7 +908,7 @@ class SketchController:
             if len(cp_ids) < 2:
                 continue
             pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
-            samples = build_spline_samples(pts, samples_per_segment=16)
+            samples = build_spline_samples(pts, samples_per_segment=16, closed=bool(self.splines[s_id].get("closed", False)))
             if len(samples) < 2:
                 continue
             px, py = float(self.points[p_id]["x"]), float(self.points[p_id]["y"])
@@ -1409,7 +1416,7 @@ class SketchController:
                 continue
             if bool(self.points[pid].get("fixed", False)) and all(bool(self.points[cid].get("fixed", False)) for cid in cp_ids):
                 pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
-                samples = build_spline_samples(pts, samples_per_segment=16)
+                samples = build_spline_samples(pts, samples_per_segment=16, closed=bool(self.splines[sid].get("closed", False)))
                 if len(samples) < 2:
                     continue
                 px, py = float(self.points[pid]["x"]), float(self.points[pid]["y"])
@@ -1716,9 +1723,9 @@ class SketchController:
         ux, uy = abx / ab_len, aby / ab_len
         return (px - ax) * ux + (py - ay) * uy
 
-    def _create_spline(self, sid: int, point_ids: List[int], hidden: bool):
+    def _create_spline(self, sid: int, point_ids: List[int], hidden: bool, closed: bool = False):
         pts = [pid for pid in point_ids if pid in self.points]
-        self.splines[sid] = {"points": pts, "hidden": bool(hidden), "over": False}
+        self.splines[sid] = {"points": pts, "hidden": bool(hidden), "closed": bool(closed), "over": False}
         it = SplineItem(sid, self)
         self.splines[sid]["item"] = it
         self.scene.addItem(it)
@@ -2221,7 +2228,7 @@ class SketchController:
         class AddSpline(Command):
             name = "Add Spline"
             def do(self_):
-                ctrl._create_spline(sid, pts, hidden=False)
+                ctrl._create_spline(sid, pts, hidden=False, closed=False)
                 ctrl.select_spline_single(sid)
                 ctrl.solve_constraints(); ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
@@ -2267,6 +2274,23 @@ class SketchController:
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetSplineHidden())
+
+    def cmd_set_spline_closed(self, sid: int, closed: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if sid not in self.splines:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+        class SetSplineClosed(Command):
+            name = "Set Spline Closed"
+            def do(self_):
+                ctrl.splines[sid]["closed"] = bool(closed)
+                ctrl.solve_constraints(); ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+        self.stack.push(SetSplineClosed())
 
     def cmd_delete_spline(self, sid: int):
         if not self._confirm_stop_replay("modify the model"):
@@ -2617,7 +2641,14 @@ class SketchController:
                 cps = [ctrl.points[cid] for cid in cp_ids]
                 lock_p = bool(pp.get("fixed", False))
                 lock_controls = [bool(ctrl.points[cid].get("fixed", False)) for cid in cp_ids]
-                ConstraintSolver.solve_point_on_spline(pp, cps, lock_p, lock_controls, tol=1e-6)
+                ConstraintSolver.solve_point_on_spline(
+                    pp,
+                    cps,
+                    lock_p,
+                    lock_controls,
+                    tol=1e-6,
+                    closed=bool(ctrl.splines[s].get("closed", False)),
+                )
                 ctrl.solve_constraints(drag_pid=p)
                 ctrl.update_graphics()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
@@ -3222,16 +3253,36 @@ class SketchController:
         seen = set()
         nbrs = [x for x in nbrs if (x not in seen and not seen.add(x))]
 
-        if nbrs:
+        point_line_ids = [plid for plid, pl in self.point_lines.items() if int(pl.get("p", -1)) == pid]
+        if nbrs or point_line_ids:
             m.addSeparator()
             sub_drv = m.addMenu(tr(lang, "context.set_driver"))
 
-            sub_angle = sub_drv.addMenu(tr(lang, "context.angle_pivot_tip"))
-            for nb in nbrs:
-                sub_angle.addAction(
-                    tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                    lambda nb=nb: self.set_driver_angle(pid, nb),
-                )
+            if nbrs:
+                sub_angle = sub_drv.addMenu(tr(lang, "context.angle_pivot_tip"))
+                for nb in nbrs:
+                    sub_angle.addAction(
+                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
+                        lambda nb=nb: self.set_driver_angle(pid, nb),
+                    )
+            if point_line_ids:
+                if nbrs:
+                    sub_drv.addSeparator()
+                if len(point_line_ids) == 1:
+                    plid = point_line_ids[0]
+                    sub_drv.addAction(tr(lang, "context.set_translation_driver"), lambda plid=plid: self.set_driver_translation(plid))
+                else:
+                    sub_trans = sub_drv.addMenu(tr(lang, "context.set_translation_driver"))
+                    for plid in point_line_ids:
+                        pl = self.point_lines.get(plid, {})
+                        sub_trans.addAction(
+                            tr(lang, "context.translation_line").format(
+                                p=pl.get("p"),
+                                i=pl.get("i"),
+                                j=pl.get("j"),
+                            ),
+                            lambda plid=plid: self.set_driver_translation(plid),
+                        )
 
             sub_drv.addSeparator()
             sub_drv.addAction(tr(lang, "context.clear_driver"), self.clear_driver)
@@ -3404,7 +3455,7 @@ class SketchController:
             pass
 
     def update_graphics(self):
-        driver_marker_map: Dict[int, str] = {}
+        driver_marker_map: Dict[int, Dict[str, Any]] = {}
         active_drivers = self._active_drivers()
         show_driver_index = len(active_drivers) > 1
         for idx, drv in enumerate(active_drivers):
@@ -3413,19 +3464,34 @@ class SketchController:
                 plid = drv.get("plid")
                 if plid not in self.point_lines:
                     continue
-                pid = self.point_lines[plid].get("p")
-                label = "⇆" if not show_driver_index else f"⇆{idx + 1}"
+                pl = self.point_lines[plid]
+                pid = pl.get("p")
+                label = "→" if not show_driver_index else f"→{idx + 1}"
+                rotation = 0.0
+                try:
+                    i_id = int(pl.get("i", -1))
+                    j_id = int(pl.get("j", -1))
+                    if i_id in self.points and j_id in self.points:
+                        pa = self.points[i_id]
+                        pb = self.points[j_id]
+                        rotation = math.degrees(math.atan2(float(pb["y"]) - float(pa["y"]), float(pb["x"]) - float(pa["x"])))
+                except Exception:
+                    rotation = 0.0
             elif driver_type == "angle":
                 pid = drv.get("pivot")
                 label = "↻" if not show_driver_index else f"↻{idx + 1}"
+                rotation = 0.0
             else:
                 continue
             if pid is None:
                 continue
             if int(pid) in driver_marker_map:
-                driver_marker_map[int(pid)] = f"{driver_marker_map[int(pid)]},{label}"
+                driver_marker_map[int(pid)] = {
+                    "text": f"{driver_marker_map[int(pid)]['text']},{label}",
+                    "rotation": 0.0,
+                }
             else:
-                driver_marker_map[int(pid)] = label
+                driver_marker_map[int(pid)] = {"text": label, "rotation": rotation}
         output_marker_pid = None
         primary_output = self._primary_output()
         if primary_output and primary_output.get("enabled"):
@@ -3455,9 +3521,11 @@ class SketchController:
             cmark.setVisible(show_constraint)
             dmark: TextMarker = p["driver_marker"]
             if pid in driver_marker_map:
-                dmark.setText(driver_marker_map[pid])
+                dmark.setText(driver_marker_map[pid]["text"])
+                dmark.setRotation(driver_marker_map[pid]["rotation"])
             else:
                 dmark.setText("↻")
+                dmark.setRotation(0.0)
             dmark_bounds = dmark.boundingRect()
             dmark.setPos(p["x"] + 8, p["y"] - dmark_bounds.height() - 4)
             show_driver = (
@@ -3523,7 +3591,7 @@ class SketchController:
             it: SplineItem = s["item"]
             cp_ids = [pid for pid in s.get("points", []) if pid in self.points]
             pts = [(self.points[pid]["x"], self.points[pid]["y"]) for pid in cp_ids]
-            samples = build_spline_samples(pts, samples_per_segment=16)
+            samples = build_spline_samples(pts, samples_per_segment=16, closed=bool(s.get("closed", False)))
             path = QPainterPath()
             if samples:
                 x0, y0 = samples[0][0], samples[0][1]
@@ -3722,6 +3790,7 @@ class SketchController:
                     "id": sid,
                     "points": list(s.get("points", [])),
                     "hidden": bool(s.get("hidden", False)),
+                    "closed": bool(s.get("closed", False)),
                 }
                 for sid, s in sorted(self.splines.items(), key=lambda kv: kv[0])
             ],
@@ -4000,7 +4069,7 @@ class SketchController:
         for s in spls:
             sid = int(s.get("id", -1)); max_sid = max(max_sid, sid)
             pts = list(s.get("points", []))
-            self._create_spline(sid, pts, bool(s.get("hidden", False)))
+            self._create_spline(sid, pts, bool(s.get("hidden", False)), closed=bool(s.get("closed", False)))
         max_bid = -1
         for b in bods:
             bid = int(b["id"]); max_bid = max(max_bid, bid)
@@ -4396,7 +4465,10 @@ class SketchController:
 
             def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
                 px, py = _xy(q, p_id)
-                samples = build_spline_samples([_xy(q, cid) for cid in cp_ids])
+                samples = build_spline_samples(
+                    [_xy(q, cid) for cid in cp_ids],
+                    closed=bool(spline.get("closed", False)),
+                )
                 _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
                 return math.sqrt(dist2)
 
@@ -4665,7 +4737,10 @@ class SketchController:
 
             def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
                 px, py = _xy(q, p_id)
-                samples = build_spline_samples([_xy(q, cid) for cid in cp_ids])
+                samples = build_spline_samples(
+                    [_xy(q, cid) for cid in cp_ids],
+                    closed=bool(spline.get("closed", False)),
+                )
                 _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
                 return math.sqrt(dist2)
 
@@ -5103,11 +5178,12 @@ class SketchController:
                 out.append((nm, abs_deg, "deg"))
 
         for pl in self.point_lines.values():
-            if "s" not in pl:
-                continue
             nm = str(pl.get("name", "")) or self._point_line_offset_name(pl)
             try:
-                sval = float(pl.get("s", 0.0))
+                if "s" in pl:
+                    sval = float(pl.get("s", 0.0))
+                else:
+                    sval = float(self._point_line_current_s(pl))
             except (TypeError, ValueError):
                 sval = None
             if sval is not None and nm in self._sim_zero_meas_len:
