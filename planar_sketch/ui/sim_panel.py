@@ -1015,6 +1015,7 @@ class SimulationPanel(QWidget):
                 else:
                     ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
                 if not ok:
+                    self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
                     if self._driver_sweep:
                         if has_non_angle_driver:
