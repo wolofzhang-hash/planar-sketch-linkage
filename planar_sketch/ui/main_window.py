@@ -235,6 +235,8 @@ class MainWindow(QMainWindow):
         self.act_boundary_add_torque.triggered.connect(self.sim_panel._add_torque_from_selection)
         self.act_boundary_clear_loads = QAction("", self)
         self.act_boundary_clear_loads.triggered.connect(self.sim_panel._clear_loads)
+        self.act_boundary_fix = QAction("", self)
+        self.act_boundary_fix.triggered.connect(self.fix_selected_points)
 
     def _build_toolbars(self) -> None:
         icon_size = QSize(20, 20)
@@ -331,6 +333,8 @@ class MainWindow(QMainWindow):
         self.toolbar_boundary.addAction(self.act_boundary_add_force)
         self.toolbar_boundary.addAction(self.act_boundary_add_torque)
         self.toolbar_boundary.addAction(self.act_boundary_clear_loads)
+        self.toolbar_boundary.addSeparator()
+        self.toolbar_boundary.addAction(self.act_boundary_fix)
 
         self._apply_action_icons()
         self._set_active_ribbon("file")
@@ -462,6 +466,7 @@ class MainWindow(QMainWindow):
         self.act_boundary_add_force.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
         self.act_boundary_add_torque.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.act_boundary_clear_loads.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
+        self.act_boundary_fix.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
 
     def update_model_action_state(self) -> None:
         mode = getattr(self.ctrl, "mode", "Idle")
@@ -529,6 +534,7 @@ class MainWindow(QMainWindow):
         self.act_boundary_add_force.setText(tr(lang, "action.boundary_add_force"))
         self.act_boundary_add_torque.setText(tr(lang, "action.boundary_add_torque"))
         self.act_boundary_clear_loads.setText(tr(lang, "action.boundary_clear_loads"))
+        self.act_boundary_fix.setText(tr(lang, "action.boundary_fix"))
         self.dock.setWindowTitle(tr(lang, "dock.sketch"))
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
@@ -682,19 +688,74 @@ class MainWindow(QMainWindow):
         if self.ctrl.selected_body_id is not None:
             self.ctrl.cmd_delete_body(self.ctrl.selected_body_id); return
 
+    def confirm_unsaved_run(self) -> bool:
+        sim_panel = getattr(self, "sim_panel", None)
+        if not sim_panel or not sim_panel.has_unsaved_run():
+            return True
+        lang = getattr(self.ctrl, "ui_language", "en")
+        reply = QMessageBox.question(
+            self,
+            tr(lang, "prompt.unsaved_run_title"),
+            tr(lang, "prompt.unsaved_run_body"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _confirm_save_allowed(self) -> bool:
+        sim_panel = getattr(self, "sim_panel", None)
+        if sim_panel and sim_panel.is_running():
+            lang = getattr(self.ctrl, "ui_language", "en")
+            QMessageBox.information(
+                self,
+                tr(lang, "prompt.save_blocked_title"),
+                tr(lang, "prompt.save_blocked_body"),
+            )
+            return False
+        return True
+
+    def _report_schema_issues(self, warnings: list[str], errors: list[str], context: str) -> bool:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        if errors:
+            detail = "\n".join(f"- {item}" for item in errors)
+            QMessageBox.critical(
+                self,
+                tr(lang, "schema.errors_title").format(context=context),
+                tr(lang, "schema.errors_body").format(context=context, details=detail),
+            )
+            return False
+        if warnings:
+            detail = "\n".join(f"- {item}" for item in warnings)
+            QMessageBox.warning(
+                self,
+                tr(lang, "schema.warnings_title").format(context=context),
+                tr(lang, "schema.warnings_body").format(context=context, details=detail),
+            )
+        return True
+
+    def fix_selected_points(self) -> None:
+        self.ctrl.commit_drag_if_any()
+        pids = sorted(list(self.ctrl.selected_point_ids))
+        if not pids and self.ctrl.selected_point_id is not None:
+            pids = [self.ctrl.selected_point_id]
+        if not pids:
+            lang = getattr(self.ctrl, "ui_language", "en")
+            QMessageBox.information(
+                self,
+                tr(lang, "prompt.fix_title"),
+                tr(lang, "prompt.select_point_body"),
+            )
+            return
+        for pid in pids:
+            self.ctrl.cmd_set_point_fixed(pid, True)
+        self.ctrl.update_graphics()
+
     def file_new(self, prompt_for_folder: bool = True):
         self.ctrl.commit_drag_if_any()
+        if not self.confirm_unsaved_run():
+            return
         if not self.ctrl.load_dict(
-            {
-                "points": [],
-                "links": [],
-                "angles": [],
-                "splines": [],
-                "point_splines": [],
-                "bodies": [],
-                "parameters": [],
-                "version": "2.7.0",
-            },
+            self.ctrl.default_project_dict(force_new_uuid=True),
             action="start a new file",
         ):
             return
@@ -712,11 +773,17 @@ class MainWindow(QMainWindow):
 
     def file_open(self):
         self.ctrl.commit_drag_if_any()
+        if not self.confirm_unsaved_run():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Open Sketch", "", "Sketch JSON (*.json);;All Files (*)")
         if not path: return
         try:
             with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                raw = json.load(f)
+            warnings, errors = self.ctrl.validate_project_schema(raw)
+            if not self._report_schema_issues(warnings, errors, "open"):
+                return
+            data = self.ctrl.merge_project_dict(raw)
             if not self.ctrl.load_dict(data, action="open a new file"):
                 return
             self._set_project_paths(path)
@@ -728,6 +795,8 @@ class MainWindow(QMainWindow):
 
     def file_save(self):
         self.ctrl.commit_drag_if_any()
+        if not self._confirm_save_allowed():
+            return
         if not self.current_file:
             return self.file_save_as()
         try:
@@ -739,6 +808,8 @@ class MainWindow(QMainWindow):
 
     def file_save_as(self):
         self.ctrl.commit_drag_if_any()
+        if not self._confirm_save_allowed():
+            return
         project_file = self._prompt_project_file("Save Sketch As")
         if not project_file:
             return

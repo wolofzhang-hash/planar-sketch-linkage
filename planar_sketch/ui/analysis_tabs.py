@@ -105,7 +105,8 @@ class AnimationTab(QWidget):
         return os.getcwd()
 
     def _manager(self) -> CaseRunManager:
-        return CaseRunManager(self._project_dir())
+        project_uuid = getattr(self.ctrl, "project_uuid", "") if self.ctrl else ""
+        return CaseRunManager(self._project_dir(), project_uuid=project_uuid)
 
     def _case_label_text(self) -> str:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -249,14 +250,26 @@ class AnimationTab(QWidget):
         if not run:
             QMessageBox.information(self, "Run", "Select a run first.")
             return
+        win = getattr(self.ctrl, "win", None)
+        if win and hasattr(win, "confirm_unsaved_run"):
+            if not win.confirm_unsaved_run():
+                return
         path = os.path.join(run.get("path", ""), "model.json")
         if not os.path.exists(path):
             QMessageBox.warning(self, "Run", "model.json not found.")
             return
         try:
             with open(path, "r", encoding="utf-8") as fh:
-                data = fh.read()
-            if not self.ctrl.load_dict(json.loads(data), action="load a run snapshot"):
+                raw = json.loads(fh.read())
+            warnings, errors = self.ctrl.validate_project_schema(raw)
+            if win and hasattr(win, "_report_schema_issues"):
+                if not win._report_schema_issues(warnings, errors, "load"):
+                    return
+            elif errors:
+                QMessageBox.critical(self, "Run", "\n".join(errors))
+                return
+            data = self.ctrl.merge_project_dict(raw)
+            if not self.ctrl.load_dict(data, action="load a run snapshot"):
                 return
             if self.ctrl.panel:
                 self.ctrl.panel.defer_refresh_all()
@@ -815,7 +828,8 @@ class OptimizationTab(QWidget):
         return os.getcwd()
 
     def _manager(self) -> CaseRunManager:
-        return CaseRunManager(self._project_dir())
+        project_uuid = getattr(self.ctrl, "project_uuid", "") if self.ctrl else ""
+        return CaseRunManager(self._project_dir(), project_uuid=project_uuid)
 
     def _case_label_text(self) -> str:
         lang = getattr(self.ctrl, "ui_language", "en")
