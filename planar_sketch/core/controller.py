@@ -3399,6 +3399,10 @@ class SketchController:
         )
         m.addSeparator()
         m.addAction(tr(lang, "context.set_translation_driver"), lambda: self.set_driver_translation(plid))
+        sub_meas = m.addMenu(tr(lang, "context.add_measurement"))
+        sub_meas.addAction(tr(lang, "context.translation_measurement"), lambda: self.add_measure_translation(plid))
+        sub_meas.addSeparator()
+        sub_meas.addAction(tr(lang, "context.clear_measurements"), self.clear_measures)
         m.addSeparator()
         m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_line(plid))
         m.exec(global_pos)
@@ -5127,6 +5131,16 @@ class SketchController:
         name = f"ang P{int(i_pid)}-P{int(j_pid)}-P{int(k_pid)}"
         self.measures.append({"type": "joint", "i": int(i_pid), "j": int(j_pid), "k": int(k_pid), "name": name})
 
+    def add_measure_translation(self, plid: int):
+        if plid not in self.point_lines:
+            return
+        for m in self.measures:
+            if str(m.get("type", "")).lower() == "translation" and int(m.get("plid", -1)) == int(plid):
+                return
+        pl = self.point_lines[plid]
+        name = str(pl.get("name", "")) or self._point_line_offset_name(pl)
+        self.measures.append({"type": "translation", "plid": int(plid), "name": name})
+
     def clear_measures(self):
         self.measures = []
         self.load_measures = []
@@ -5167,6 +5181,22 @@ class SketchController:
             elif mtype == "joint":
                 ang = self.get_joint_angle_rad(int(m.get("i")), int(m.get("j")), int(m.get("k")))
                 abs_deg = None if ang is None else math.degrees(ang)
+            elif mtype == "translation":
+                try:
+                    plid = int(m.get("plid", -1))
+                except (TypeError, ValueError):
+                    plid = -1
+                pl = self.point_lines.get(plid)
+                if pl is None:
+                    out.append((nm, None, "mm"))
+                else:
+                    nm = str(nm) or str(pl.get("name", "")) or self._point_line_offset_name(pl)
+                    sval = float(self._point_line_current_s(pl))
+                    if nm in self._sim_zero_meas_len:
+                        out.append((nm, sval - float(self._sim_zero_meas_len[nm]), "mm"))
+                    else:
+                        out.append((nm, sval, "mm"))
+                continue
 
             if abs_deg is None:
                 out.append((nm, None, "deg"))
@@ -5176,20 +5206,6 @@ class SketchController:
                 out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm])), "deg"))
             else:
                 out.append((nm, abs_deg, "deg"))
-
-        for pl in self.point_lines.values():
-            nm = str(pl.get("name", "")) or self._point_line_offset_name(pl)
-            try:
-                if "s" in pl:
-                    sval = float(pl.get("s", 0.0))
-                else:
-                    sval = float(self._point_line_current_s(pl))
-            except (TypeError, ValueError):
-                sval = None
-            if sval is not None and nm in self._sim_zero_meas_len:
-                out.append((nm, sval - float(self._sim_zero_meas_len[nm]), "mm"))
-            else:
-                out.append((nm, sval, "mm"))
         return out
 
     def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
