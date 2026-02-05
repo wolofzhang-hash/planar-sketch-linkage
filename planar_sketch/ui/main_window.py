@@ -375,6 +375,8 @@ class MainWindow(QMainWindow):
     def _set_active_ribbon(self, key: str) -> None:
         if not getattr(self, "_toolbars_enabled", True):
             return
+        if getattr(self.ctrl, "mode", "Idle") in ("CreatePoint", "CreateLine", "CreateSpline"):
+            self.ctrl.cancel_model_action()
         self._active_ribbon = key
         toolbars = {
             "file": self.toolbar_file,
