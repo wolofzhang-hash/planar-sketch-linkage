@@ -184,6 +184,7 @@ class HeadlessModel:
             int(s.get("id", -1)): {
                 "points": list(s.get("points", [])),
                 "hidden": bool(s.get("hidden", False)),
+                "closed": bool(s.get("closed", False)),
             }
             for s in spls
         }
@@ -548,9 +549,12 @@ class HeadlessModel:
             if len(cp_ids) < 2:
                 continue
 
-            def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
+            def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids, spline=spline) -> float:
                 px, py = _xy(q, p_id)
-                samples = build_spline_samples([_xy(q, cid) for cid in cp_ids])
+                samples = build_spline_samples(
+                    [_xy(q, cid) for cid in cp_ids],
+                    closed=bool(spline.get("closed", False)),
+                )
                 _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
                 return math.sqrt(dist2)
 
@@ -913,7 +917,14 @@ class HeadlessModel:
                 lock_controls = []
                 for cid in cp_ids:
                     lock_controls.append(bool(self.points[cid].get("fixed", False)) or (cid in driven_pids))
-                ok = ConstraintSolver.solve_point_on_spline(pp, cps, lock_p, lock_controls, tol=1e-6)
+                ok = ConstraintSolver.solve_point_on_spline(
+                    pp,
+                    cps,
+                    lock_p,
+                    lock_controls,
+                    tol=1e-6,
+                    closed=bool(spline.get("closed", False)),
+                )
                 if not ok:
                     ps["over"] = True
 
@@ -1044,7 +1055,7 @@ class HeadlessModel:
             if len(cp_ids) < 2:
                 continue
             pts = [(self.points[cid]["x"], self.points[cid]["y"]) for cid in cp_ids]
-            samples = build_spline_samples(pts, samples_per_segment=16)
+            samples = build_spline_samples(pts, samples_per_segment=16, closed=bool(self.splines[s_id].get("closed", False)))
             if len(samples) < 2:
                 continue
             px, py = float(self.points[p_id]["x"]), float(self.points[p_id]["y"])

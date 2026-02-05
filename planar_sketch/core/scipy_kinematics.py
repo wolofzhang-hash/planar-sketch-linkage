@@ -186,7 +186,11 @@ class SciPyKinematicSolver:
                 if len(cp_ids) < 2:
                     continue
                 pts = [get_xy(pid, x) for pid in cp_ids]
-                samples = build_spline_samples([(float(px), float(py)) for px, py in pts], samples_per_segment=12)
+                samples = build_spline_samples(
+                    [(float(px), float(py)) for px, py in pts],
+                    samples_per_segment=12,
+                    closed=bool(ctrl.splines[s].get("closed", False)),
+                )
                 if len(samples) < 2:
                     continue
                 px, py = get_xy(p, x)

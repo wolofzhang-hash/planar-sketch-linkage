@@ -62,13 +62,32 @@ def catmull_rom_point(p0: tuple[float, float], p1: tuple[float, float], p2: tupl
     return x, y
 
 
-def build_spline_samples(points: List[tuple[float, float]], samples_per_segment: int = 16) -> List[tuple[float, float, int, float]]:
+def build_spline_samples(
+    points: List[tuple[float, float]],
+    samples_per_segment: int = 16,
+    closed: bool = False,
+) -> List[tuple[float, float, int, float]]:
     """Return spline samples as (x, y, segment_index, t_segment)."""
     if len(points) < 2:
         return []
     n = len(points)
     samples: List[tuple[float, float, int, float]] = []
     seg_samples = max(4, int(samples_per_segment))
+    if closed and n >= 3:
+        for i in range(n):
+            p0 = points[(i - 1) % n]
+            p1 = points[i % n]
+            p2 = points[(i + 1) % n]
+            p3 = points[(i + 2) % n]
+            for s in range(seg_samples + 1):
+                if i > 0 and s == 0:
+                    continue
+                if i == n - 1 and s == seg_samples:
+                    continue
+                t = s / seg_samples
+                x, y = catmull_rom_point(p0, p1, p2, p3, t)
+                samples.append((x, y, i, t))
+        return samples
     for i in range(n - 1):
         p0 = points[max(i - 1, 0)]
         p1 = points[i]
