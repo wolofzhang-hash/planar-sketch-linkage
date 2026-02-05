@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..core.case_run_manager import CaseRunManager
-from ..core.expression import evaluate_expression
+from ..core.expression_service import eval_signal_expression
 from ..core.headless_sim import simulate_case
 from ..core.optimization import (
     OptimizationWorker,
@@ -1318,7 +1318,7 @@ class OptimizationTab(QWidget):
                     continue
                 frames, _summary, _status = simulate_case(model_snapshot, case_spec)
                 signals = build_signals(frames, model_snapshot)
-                val, err = evaluate_expression(expr, signals)
+                val, err = eval_signal_expression(expr, signals)
                 if err:
                     return None, err
                 values.append(val)

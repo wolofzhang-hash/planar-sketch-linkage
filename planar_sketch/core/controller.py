@@ -20,8 +20,6 @@ from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog, QGraphicsPixmap
 
 import numpy as np
 
-import numpy as np
-
 from .commands import Command, CommandStack
 from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples
 from .solver import ConstraintSolver
@@ -63,9 +61,15 @@ class SketchController:
         self.point_splines: Dict[int, Dict[str, Any]] = {}
 
         # Parameters + expressions
-        self.parameters = ParameterRegistry()
         self.constraint_registry = ConstraintRegistry(self)
-        self._next_pid = 0; self._next_lid = 0; self._next_aid = 0; self._next_sid = 0; self._next_bid = 0; self._next_cid = 0; self._next_plid = 0; self._next_psid = 0
+        self._next_pid = 0
+        self._next_lid = 0
+        self._next_aid = 0
+        self._next_sid = 0
+        self._next_bid = 0
+        self._next_cid = 0
+        self._next_plid = 0
+        self._next_psid = 0
         self.selected_point_ids: set = set()
         self.selected_point_id: Optional[int] = None
         self.selected_link_id: Optional[int] = None
@@ -151,6 +155,7 @@ class SketchController:
         self._sim_zero_meas_deg: Dict[str, float] = {}
         self._sim_zero_meas_len: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 200.0}
+
 
     def _set_continuous_model_action(self, action: Optional[str]) -> None:
         self._continuous_model_action = action

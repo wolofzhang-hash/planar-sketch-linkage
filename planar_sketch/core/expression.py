@@ -155,7 +155,7 @@ class ExpressionEvaluator(ast.NodeVisitor):
         raise ExpressionError(f"Unsupported expression: {type(node).__name__}")
 
 
-def evaluate_expression(expr: str, signals: Dict[str, Any]) -> Tuple[float, str | None]:
+def eval_signal_expression(expr: str, signals: Dict[str, Any]) -> Tuple[float, str | None]:
     expr = (expr or "").strip()
     if not expr:
         return 0.0, "Empty expression"
@@ -164,3 +164,7 @@ def evaluate_expression(expr: str, signals: Dict[str, Any]) -> Tuple[float, str 
         return evaluator.evaluate(expr), None
     except ExpressionError as exc:
         return 0.0, str(exc)
+
+
+def evaluate_expression(expr: str, signals: Dict[str, Any]) -> Tuple[float, str | None]:
+    return eval_signal_expression(expr, signals)

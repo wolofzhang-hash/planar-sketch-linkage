@@ -16,24 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, Tuple
 
-import sympy as sp
-
-
-_ALLOWED_FUNCS: Dict[str, Any] = {
-    # Basic math
-    "sin": sp.sin,
-    "cos": sp.cos,
-    "tan": sp.tan,
-    "asin": sp.asin,
-    "acos": sp.acos,
-    "atan": sp.atan,
-    "sqrt": sp.sqrt,
-    "abs": sp.Abs,
-    "min": sp.Min,
-    "max": sp.Max,
-    "pi": sp.pi,
-    "E": sp.E,
-}
+from .expression_service import eval_param_expression
 
 
 def _is_valid_param_name(name: str) -> bool:
@@ -86,31 +69,4 @@ class ParameterRegistry:
 
         Returns (value, error_message). If evaluation fails, value is None.
         """
-        expr = (expr or "").strip()
-        if not expr:
-            return None, "Empty expression"
-
-        # Build locals: parameters as Symbols + allowed functions/constants.
-        locals_map: Dict[str, Any] = dict(_ALLOWED_FUNCS)
-        for name in self.params.keys():
-            locals_map[name] = sp.Symbol(name)
-
-        try:
-            e = sp.sympify(expr, locals=locals_map)
-        except Exception as ex:
-            return None, f"Parse error: {ex}"
-
-        # Reject unknown symbols (symbols not in params)
-        free = {str(s) for s in getattr(e, "free_symbols", set())}
-        unknown = sorted([s for s in free if s not in self.params])
-        if unknown:
-            return None, f"Unknown symbol(s): {', '.join(unknown)}"
-
-        try:
-            subs = {sp.Symbol(k): float(v) for k, v in self.params.items()}
-            val = float(e.evalf(subs=subs))
-            if val != val:  # NaN
-                return None, "Expression evaluated to NaN"
-            return val, None
-        except Exception as ex:
-            return None, f"Eval error: {ex}"
+        return eval_param_expression(expr, self.params)
