@@ -579,6 +579,7 @@ class SketchController:
             if piv is not None and tip is not None:
                 driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
+        translation_targets: Dict[int, float] = {}
         for drv in drive_sources:
             if str(drv.get("type", "angle")) != "translation":
                 continue
@@ -588,7 +589,7 @@ class SketchController:
             pl = self.point_lines[plid]
             base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
             offset = float(drv.get("value", 0.0) or 0.0)
-            pl["s"] = base_s + offset
+            translation_targets[int(plid)] = base_s + offset
 
         # PBD-style iterations
         for _ in range(max(1, int(iters))):
@@ -627,6 +628,30 @@ class SketchController:
                         lock_tip=lock_tip,
                     )
 
+            for plid, target_s in translation_targets.items():
+                pl = self.point_lines.get(plid)
+                if not pl or not bool(pl.get("enabled", True)):
+                    continue
+                p_id = int(pl.get("p", -1)); i_id = int(pl.get("i", -1)); j_id = int(pl.get("j", -1))
+                if p_id not in self.points or i_id not in self.points or j_id not in self.points:
+                    continue
+                if drag_pid in (p_id, i_id, j_id):
+                    continue
+                pp = self.points[p_id]; pa = self.points[i_id]; pb = self.points[j_id]
+                lock_p = bool(pp.get("fixed", False)) or (drag_pid == p_id)
+                lock_a = bool(pa.get("fixed", False)) or (drag_pid == i_id)
+                lock_b = bool(pb.get("fixed", False)) or (drag_pid == j_id)
+                ConstraintSolver.solve_point_on_line_offset(
+                    pp,
+                    pa,
+                    pb,
+                    float(target_s),
+                    lock_p,
+                    lock_a,
+                    lock_b,
+                    tol=1e-6,
+                )
+
             # (2) Coincide constraints
             for c in self.coincides.values():
                 if not bool(c.get("enabled", True)):
@@ -656,7 +681,7 @@ class SketchController:
                     pb["x"], pb["y"] = mx, my
 
             # (3) Point-on-line constraints
-            for pl in self.point_lines.values():
+            for plid, pl in self.point_lines.items():
                 if not bool(pl.get("enabled", True)):
                     continue
                 p_id = int(pl.get("p", -1)); i_id = int(pl.get("i", -1)); j_id = int(pl.get("j", -1))
@@ -666,7 +691,18 @@ class SketchController:
                 lock_p = bool(pp.get("fixed", False)) or (drag_pid == p_id) or (p_id in driven_pids)
                 lock_a = bool(pa.get("fixed", False)) or (drag_pid == i_id) or (i_id in driven_pids)
                 lock_b = bool(pb.get("fixed", False)) or (drag_pid == j_id) or (j_id in driven_pids)
-                if "s" in pl:
+                if plid in translation_targets:
+                    ok = ConstraintSolver.solve_point_on_line_offset(
+                        pp,
+                        pa,
+                        pb,
+                        float(translation_targets[plid]),
+                        lock_p,
+                        lock_a,
+                        lock_b,
+                        tol=1e-6,
+                    )
+                elif "s" in pl:
                     ok = ConstraintSolver.solve_point_on_line_offset(
                         pp,
                         pa,
@@ -875,8 +911,23 @@ class SketchController:
                 pa, pb = self.points[a_id], self.points[b_id]
                 max_coin = max(max_coin, math.hypot(pa['x'] - pb['x'], pa['y'] - pb['y']))
 
+        translation_targets: Dict[int, float] = {}
+        for drv in self._active_drivers():
+            if str(drv.get("type", "angle")) != "translation":
+                continue
+            try:
+                plid = int(drv.get("plid", -1))
+            except (TypeError, ValueError):
+                continue
+            if plid not in self.point_lines:
+                continue
+            pl = self.point_lines[plid]
+            base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
+            offset = float(drv.get("value", 0.0) or 0.0)
+            translation_targets[plid] = base_s + offset
+
         # Point-on-line constraints
-        for pl in self.point_lines.values():
+        for plid, pl in self.point_lines.items():
             if not bool(pl.get('enabled', True)):
                 continue
             p_id, i_id, j_id = int(pl.get('p', -1)), int(pl.get('i', -1)), int(pl.get('j', -1))
@@ -888,7 +939,13 @@ class SketchController:
                 abx, aby = bx - ax, by - ay
                 denom = math.hypot(abx, aby)
                 if denom > 1e-12:
-                    if "s" in pl:
+                    if plid in translation_targets:
+                        target_s = float(translation_targets[plid])
+                        ux, uy = abx / denom, aby / denom
+                        target_x = ax + ux * target_s
+                        target_y = ay + uy * target_s
+                        dist = math.hypot(px - target_x, py - target_y)
+                    elif "s" in pl:
                         ux, uy = abx / denom, aby / denom
                         target_x = ax + ux * float(pl.get("s", 0.0))
                         target_y = ay + uy * float(pl.get("s", 0.0))
@@ -3301,6 +3358,26 @@ class SketchController:
                             continue
                         sub_mjoint.addAction(f"A(P{i}-P{pid}-P{k})", lambda i=i, k=k: self.add_measure_joint(i, pid, k))
 
+            if point_line_ids:
+                if len(point_line_ids) == 1:
+                    plid = point_line_ids[0]
+                    sub_meas.addAction(
+                        tr(lang, "context.translation_measurement"),
+                        lambda plid=plid: self.add_measure_translation(plid),
+                    )
+                else:
+                    sub_trans_meas = sub_meas.addMenu(tr(lang, "context.translation_measurement"))
+                    for plid in point_line_ids:
+                        pl = self.point_lines.get(plid, {})
+                        sub_trans_meas.addAction(
+                            tr(lang, "context.translation_line").format(
+                                p=pl.get("p"),
+                                i=pl.get("i"),
+                                j=pl.get("j"),
+                            ),
+                            lambda plid=plid: self.add_measure_translation(plid),
+                        )
+
             sub_load_meas = sub_meas.addMenu(tr(lang, "context.load"))
             sub_load_meas.addAction(tr(lang, "context.joint_load_fx"), lambda: self.add_load_measure_joint(pid, "fx"))
             sub_load_meas.addAction(tr(lang, "context.joint_load_fy"), lambda: self.add_load_measure_joint(pid, "fy"))
@@ -4297,7 +4374,6 @@ class SketchController:
             return
         pl = self.point_lines[plid]
         base_s = self._point_line_current_s(pl)
-        pl["s"] = float(base_s)
         line_len = 0.0
         try:
             i_id = int(pl.get("i", -1))
