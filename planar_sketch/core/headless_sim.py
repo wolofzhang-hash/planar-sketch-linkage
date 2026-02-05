@@ -45,6 +45,7 @@ class HeadlessModel:
         self._sim_zero_input_rad: Optional[float] = None
         self._sim_zero_output_rad: Optional[float] = None
         self._sim_zero_meas_deg: Dict[str, float] = {}
+        self._sim_zero_meas_len: Dict[str, float] = {}
 
         self._load_snapshot(snapshot)
         self._apply_case_spec(case_spec)
@@ -58,6 +59,9 @@ class HeadlessModel:
             "pivot": None,
             "tip": None,
             "rad": 0.0,
+            "plid": None,
+            "s_base": 0.0,
+            "value": 0.0,
         }
 
     @staticmethod
@@ -72,6 +76,9 @@ class HeadlessModel:
             "pivot": data.get("pivot"),
             "tip": data.get("tip"),
             "rad": float(data.get("rad", 0.0) or 0.0),
+            "plid": data.get("plid"),
+            "s_base": float(data.get("s_base", 0.0) or 0.0),
+            "value": float(data.get("value", 0.0) or 0.0),
         }
 
     @staticmethod
@@ -117,6 +124,28 @@ class HeadlessModel:
             }
             for p in data.get("points", []) or []
         }
+
+    def _point_line_current_s(self, pl: Dict[str, Any]) -> float:
+        try:
+            p_id = int(pl.get("p", -1))
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+        except Exception:
+            return 0.0
+        if p_id not in self.points or i_id not in self.points or j_id not in self.points:
+            return 0.0
+        pp = self.points[p_id]
+        pa = self.points[i_id]
+        pb = self.points[j_id]
+        ax, ay = float(pa["x"]), float(pa["y"])
+        bx, by = float(pb["x"]), float(pb["y"])
+        px, py = float(pp["x"]), float(pp["y"])
+        abx, aby = bx - ax, by - ay
+        ab_len = math.hypot(abx, aby)
+        if ab_len < 1e-12:
+            return 0.0
+        ux, uy = abx / ab_len, aby / ab_len
+        return (px - ax) * ux + (py - ay) * uy
 
         constraints = data.get("constraints", None)
         if constraints:
@@ -294,9 +323,14 @@ class HeadlessModel:
         self._sim_zero_input_rad = self._get_input_angle_abs_rad()
         self._sim_zero_output_rad = self._get_output_angle_abs_rad()
         self._sim_zero_meas_deg = {}
+        self._sim_zero_meas_len = {}
         for name, val, unit in self.get_measure_values(abs_values=True):
-            if unit == "deg" and val is not None:
+            if val is None:
+                continue
+            if unit == "deg":
                 self._sim_zero_meas_deg[name] = float(val)
+            elif unit == "mm":
+                self._sim_zero_meas_len[name] = float(val)
 
     @staticmethod
     def _rel_deg(abs_deg: float, base_deg: float) -> float:
@@ -405,7 +439,10 @@ class HeadlessModel:
                 sval = float(pl.get("s", 0.0))
             except (TypeError, ValueError):
                 sval = None
-            out.append((nm, sval, "mm"))
+            if sval is not None and (not abs_values) and nm in self._sim_zero_meas_len:
+                out.append((nm, sval - float(self._sim_zero_meas_len[nm]), "mm"))
+            else:
+                out.append((nm, sval, "mm"))
         return out
 
     def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Any]:
@@ -482,7 +519,22 @@ class HeadlessModel:
                         return 0.0
                     return ((px - ax) * (-aby) + (py - ay) * abx) / denom
 
-                funcs.append(_pol)
+            funcs.append(_pol)
+            if "s" in pl:
+                s_target = float(pl.get("s", 0.0))
+
+                def _pol_s(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_target=s_target) -> float:
+                    px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    return (px - ax) * ux + (py - ay) * uy - s_target
+
+                funcs.append(_pol_s)
 
         for ps in self.point_splines.values():
             if not bool(ps.get("enabled", True)):
@@ -736,6 +788,13 @@ class HeadlessModel:
                 drive_sources.append(entry)
 
         for drv in drive_sources:
+            if str(drv.get("type", "angle")) == "translation":
+                plid = drv.get("plid")
+                if plid in self.point_lines:
+                    p_id = self.point_lines[plid].get("p")
+                    if p_id is not None:
+                        driven_pids.add(int(p_id))
+                continue
             tip = drv.get("tip")
             if tip is not None:
                 driven_pids.add(int(tip))
@@ -747,8 +806,21 @@ class HeadlessModel:
             if piv is not None and tip is not None:
                 driver_length_pairs.add(frozenset({int(piv), int(tip)}))
 
+        for drv in drive_sources:
+            if str(drv.get("type", "angle")) != "translation":
+                continue
+            plid = drv.get("plid")
+            if plid not in self.point_lines:
+                continue
+            pl = self.point_lines[plid]
+            base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
+            offset = float(drv.get("value", 0.0) or 0.0)
+            pl["s"] = base_s + offset
+
         for _ in range(int(iters)):
             for drv in drive_sources:
+                if str(drv.get("type", "angle")) == "translation":
+                    continue
                 piv = drv.get("pivot")
                 tip = drv.get("tip")
                 if piv is None or tip is None:

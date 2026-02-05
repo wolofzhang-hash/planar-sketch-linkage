@@ -42,6 +42,8 @@ class MainWindow(QMainWindow):
         self.sim_dock.setWidget(self.sim_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sim_dock)
         self.setStatusBar(QStatusBar())
+        self.statusBar().setVisible(True)
+        self.statusBar().show()
         self.statusBar().showMessage(tr(self.ctrl.ui_language, "status.idle"))
         self.current_file: Optional[str] = None
         self.project_dir: Optional[str] = None

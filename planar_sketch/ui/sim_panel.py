@@ -291,9 +291,9 @@ class SimulationPanel(QWidget):
         ])
         self.table_drivers.setHorizontalHeaderLabels([
             tr(lang, "sim.table.driver"),
-            tr(lang, "sim.start_deg"),
-            tr(lang, "sim.end_deg"),
-            tr(lang, "sim.table.angle"),
+            tr(lang, "sim.start"),
+            tr(lang, "sim.end"),
+            tr(lang, "sim.table.value"),
         ])
         self.table_outputs.setHorizontalHeaderLabels([
             tr(lang, "sim.table.output"),
@@ -351,21 +351,27 @@ class SimulationPanel(QWidget):
     def _selected_two_points(self) -> Optional[tuple[int, int]]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 2:
-            QMessageBox.information(self, "Selection", "Please select exactly 2 points (Ctrl+Click).")
+            lang = getattr(self.ctrl, "ui_language", "en")
+            if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
+                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_two_points"))
             return None
         return pids[0], pids[1]
 
     def _selected_three_points(self) -> Optional[tuple[int, int, int]]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 3:
-            QMessageBox.information(self, "Selection", "Please select exactly 3 points (Ctrl+Click).")
+            lang = getattr(self.ctrl, "ui_language", "en")
+            if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
+                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_three_points"))
             return None
         return pids[0], pids[1], pids[2]
 
     def _selected_one_point(self) -> Optional[int]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 1:
-            QMessageBox.information(self, "Selection", "Please select exactly 1 point (Ctrl+Click).")
+            lang = getattr(self.ctrl, "ui_language", "en")
+            if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
+                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_one_point"))
             return None
         return pids[0]
 
@@ -407,6 +413,13 @@ class SimulationPanel(QWidget):
             for d in drivers:
                 if d.get("type") == "angle" and d.get("pivot") is not None and d.get("tip") is not None:
                     labels.append(tr(lang, "sim.driver_angle").format(pivot=d["pivot"], tip=d["tip"]))
+                elif d.get("type") == "translation":
+                    plid = d.get("plid")
+                    pl = self.ctrl.point_lines.get(plid, None)
+                    if pl:
+                        labels.append(tr(lang, "sim.driver_translation").format(p=pl.get("p"), i=pl.get("i"), j=pl.get("j")))
+                    else:
+                        labels.append(tr(lang, "sim.driver_translation_invalid"))
                 else:
                     labels.append(tr(lang, "sim.driver_invalid"))
             if len(labels) == 1:
@@ -443,10 +456,16 @@ class SimulationPanel(QWidget):
         lang = getattr(self.ctrl, "ui_language", "en")
         if driver.get("type") == "angle" and driver.get("pivot") is not None and driver.get("tip") is not None:
             return tr(lang, "sim.driver_angle").format(pivot=driver["pivot"], tip=driver["tip"])
+        if driver.get("type") == "translation":
+            plid = driver.get("plid")
+            pl = self.ctrl.point_lines.get(plid, None)
+            if pl:
+                return tr(lang, "sim.driver_translation").format(p=pl.get("p"), i=pl.get("i"), j=pl.get("j"))
+            return tr(lang, "sim.driver_translation_invalid")
         return tr(lang, "sim.driver_invalid")
 
     def _refresh_driver_table(self, drivers: List[Dict[str, Any]]) -> None:
-        angles = self.ctrl.get_driver_angles_deg()
+        values = self.ctrl.get_driver_display_values()
         self.table_drivers.blockSignals(True)
         try:
             self.table_drivers.setRowCount(len(drivers))
@@ -454,12 +473,12 @@ class SimulationPanel(QWidget):
                 label = f"{row + 1}. {self._driver_label(drv)}"
                 start_val = drv.get("sweep_start", self.ctrl.sweep_settings.get("start", 0.0))
                 end_val = drv.get("sweep_end", self.ctrl.sweep_settings.get("end", 360.0))
-                angle_val = angles[row] if row < len(angles) else None
+                value_val, _unit = values[row] if row < len(values) else (None, "")
                 items = [
                     QTableWidgetItem(label),
                     QTableWidgetItem(f"{float(start_val)}"),
                     QTableWidgetItem(f"{float(end_val)}"),
-                    QTableWidgetItem("--" if angle_val is None else self.ctrl.format_number(angle_val)),
+                    QTableWidgetItem("--" if value_val is None else self.ctrl.format_number(value_val)),
                 ]
                 items[0].setFlags(items[0].flags() & ~Qt.ItemFlag.ItemIsEditable)
                 items[3].setFlags(items[3].flags())
@@ -518,21 +537,12 @@ class SimulationPanel(QWidget):
                 self.ctrl.sweep_settings[key.replace("sweep_", "")] = value
             self.refresh_labels()
             return
-        angles = self.ctrl.get_driver_angles_deg()
-        if not angles or row >= len(angles):
+        display_vals = [val if val is not None else 0.0 for val, _unit in self.ctrl.get_driver_display_values()]
+        if row >= len(display_vals):
             self._refresh_driver_table(active_drivers)
             return
-        has_sim_zero = bool(getattr(self.ctrl, "_sim_zero_driver_rad", [])) or getattr(self.ctrl, "_sim_zero_input_rad", None) is not None
-        if has_sim_zero:
-            updated = list(angles)
-            updated[row] = value
-        else:
-            updated = [0.0 for _ in angles]
-            current = angles[row]
-            if current is None:
-                current = 0.0
-            updated[row] = value - float(current)
-        self.ctrl.drive_to_multi_deg(updated, iters=80)
+        display_vals[row] = value
+        self.ctrl.drive_to_multi_values(display_vals, iters=80)
         self.refresh_labels()
 
     def _set_driver_from_selection(self):
@@ -990,24 +1000,35 @@ class SimulationPanel(QWidget):
         tol = 1e-3
         while True:
             pose_before = self.ctrl.snapshot_points()
+            has_non_angle_driver = any(d.get("type") != "angle" for d in self.ctrl._active_drivers())
             if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
                 try:
                     nfev = int(float(self.ed_nfev.text() or "250"))
                 except Exception:
                     nfev = 250
                 if self._driver_sweep:
-                    ok, msg = self.ctrl.drive_to_multi_deg_scipy(driver_targets, max_nfev=nfev)
+                    if has_non_angle_driver:
+                        self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
+                        ok, msg = True, ""
+                    else:
+                        ok, msg = self.ctrl.drive_to_multi_deg_scipy(driver_targets, max_nfev=nfev)
                 else:
                     ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
                 if not ok:
                     # Fallback to PBD so the UI stays responsive
                     if self._driver_sweep:
-                        self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
+                        if has_non_angle_driver:
+                            self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
+                        else:
+                            self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
                     else:
                         self.ctrl.drive_to_deg(theta_target, iters=iters)
             else:
                 if self._driver_sweep:
-                    self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
+                    if has_non_angle_driver:
+                        self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
+                    else:
+                        self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
                 else:
                     self.ctrl.drive_to_deg(theta_target, iters=iters)
 
@@ -1132,12 +1153,19 @@ class SimulationPanel(QWidget):
 
         if self._driver_sweep:
             targets = [float(entry.get("end", last_ok)) for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep)]
+            has_non_angle_driver = any(d.get("type") != "angle" for d in self.ctrl._active_drivers())
             if nfev is not None:
-                ok, _msg = self.ctrl.drive_to_multi_deg_scipy(targets, max_nfev=nfev)
-                if not ok:
-                    self.ctrl.drive_to_multi_deg(targets, iters=iters)
+                if has_non_angle_driver:
+                    self.ctrl.drive_to_multi_values(targets, iters=iters)
+                else:
+                    ok, _msg = self.ctrl.drive_to_multi_deg_scipy(targets, max_nfev=nfev)
+                    if not ok:
+                        self.ctrl.drive_to_multi_deg(targets, iters=iters)
             else:
-                self.ctrl.drive_to_multi_deg(targets, iters=iters)
+                if has_non_angle_driver:
+                    self.ctrl.drive_to_multi_values(targets, iters=iters)
+                else:
+                    self.ctrl.drive_to_multi_deg(targets, iters=iters)
             self._driver_last_ok = list(targets)
         else:
             target = float(self._theta_end)

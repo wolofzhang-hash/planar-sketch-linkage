@@ -149,6 +149,7 @@ class SketchController:
         self._sim_zero_output_rad: Optional[float] = None
         self._sim_zero_driver_rad: List[Optional[float]] = []
         self._sim_zero_meas_deg: Dict[str, float] = {}
+        self._sim_zero_meas_len: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 200.0}
 
     def _set_continuous_model_action(self, action: Optional[str]) -> None:
@@ -175,6 +176,9 @@ class SketchController:
             "type": "angle",
             "pivot": None, "tip": None,
             "rad": 0.0,
+            "plid": None,
+            "s_base": 0.0,
+            "value": 0.0,
             "sweep_start": None,
             "sweep_end": None,
         }
@@ -198,6 +202,9 @@ class SketchController:
             "pivot": data.get("pivot"),
             "tip": data.get("tip"),
             "rad": float(data.get("rad", 0.0) or 0.0),
+            "plid": data.get("plid"),
+            "s_base": float(data.get("s_base", 0.0) or 0.0),
+            "value": float(data.get("value", 0.0) or 0.0),
             "sweep_start": sweep_start,
             "sweep_end": sweep_end,
         }
@@ -248,37 +255,38 @@ class SketchController:
         )
 
     def status_text(self) -> str:
+        lang = getattr(self, "ui_language", "en")
         if self.mode == "CreateLine":
             if self._continuous_model_action == "CreateLine":
-                return "Create Line (continuous): select 2 points (LMB)."
-            return "Create Line: select 2 points (LMB)."
+                return tr(lang, "status.create_line_continuous")
+            return tr(lang, "status.create_line")
         if self.mode == "CreatePoint":
             if self._continuous_model_action == "CreatePoint":
-                return "Create Point (continuous): click to place points."
-            return "Create Point: click to place a point."
+                return tr(lang, "status.create_point_continuous")
+            return tr(lang, "status.create_point")
         if self.mode == "Coincide":
             if self._co_master is None:
-                return "Coincide: select the point to constrain."
-            return f"Coincide: select a point/line/spline for P{int(self._co_master)}."
+                return tr(lang, "status.coincide_pick_master")
+            return tr(lang, "status.coincide_pick_target").format(master=int(self._co_master))
         if self.mode == "PointOnLine":
             if self._pol_master is None:
-                return "Point On Line: select the point (RMB on point -> Point On Line...)."
+                return tr(lang, "status.point_on_line_pick_point")
             if len(self._pol_line_sel) == 0:
-                return f"Point On Line: select line point #1 (for P{int(self._pol_master)})."
+                return tr(lang, "status.point_on_line_pick_line_1").format(master=int(self._pol_master))
             if len(self._pol_line_sel) == 1:
-                return f"Point On Line: select line point #2 (for P{int(self._pol_master)})."
-            return "Point On Line: selecting..."
+                return tr(lang, "status.point_on_line_pick_line_2").format(master=int(self._pol_master))
+            return tr(lang, "status.point_on_line_selecting")
         if self.mode == "PointOnSpline":
             if self._pos_master is None:
-                return "Point On Spline: select the point (RMB on point -> Point On Spline...)."
-            return f"Point On Spline: select a spline for P{int(self._pos_master)}."
+                return tr(lang, "status.point_on_spline_pick_point")
+            return tr(lang, "status.point_on_spline_pick_spline").format(master=int(self._pos_master))
         if self.mode == "BackgroundImagePick":
             if len(self._background_pick_points) == 0:
-                return "Background Image: click the first reference point."
+                return tr(lang, "status.background_pick_first")
             if len(self._background_pick_points) == 1:
-                return "Background Image: click the second reference point."
-            return "Background Image: configuring..."
-        return "Idle | BoxSelect: drag LMB on empty. Ctrl+Box toggles. Ctrl+Click toggles points."
+                return tr(lang, "status.background_pick_second")
+            return tr(lang, "status.background_configuring")
+        return tr(lang, "status.idle_help")
 
     def format_number(self, value: Optional[float], unit: str = "", default: str = "--") -> str:
         if value is None:
@@ -552,6 +560,13 @@ class SketchController:
                 drive_sources.append(entry)
 
         for drv in drive_sources:
+            if str(drv.get("type", "angle")) == "translation":
+                plid = drv.get("plid")
+                if plid in self.point_lines:
+                    p_id = self.point_lines[plid].get("p")
+                    if p_id is not None:
+                        driven_pids.add(int(p_id))
+                continue
             tip = drv.get("tip")
             if tip is not None:
                 driven_pids.add(int(tip))
@@ -563,6 +578,17 @@ class SketchController:
             tip = drv.get("tip")
             if piv is not None and tip is not None:
                 driver_length_pairs.add(frozenset({int(piv), int(tip)}))
+
+        for drv in drive_sources:
+            if str(drv.get("type", "angle")) != "translation":
+                continue
+            plid = drv.get("plid")
+            if plid not in self.point_lines:
+                continue
+            pl = self.point_lines[plid]
+            base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
+            offset = float(drv.get("value", 0.0) or 0.0)
+            pl["s"] = base_s + offset
 
         # PBD-style iterations
         for _ in range(max(1, int(iters))):
@@ -580,6 +606,8 @@ class SketchController:
                     tp["y"] = float(tp["y"]) + a * (ty - float(tp["y"]))
             # (1) Hard drivers first
             for drv in drive_sources:
+                if str(drv.get("type", "angle")) == "translation":
+                    continue
                 piv = drv.get("pivot")
                 tip = drv.get("tip")
                 if piv is None or tip is None:
@@ -1568,6 +1596,13 @@ class SketchController:
             if dtype == "angle":
                 if self._safe_int(drv.get("pivot", -1)) in pids or self._safe_int(drv.get("tip", -1)) in pids:
                     continue
+            elif dtype == "translation":
+                plid = self._safe_int(drv.get("plid", -1))
+                if plid not in self.point_lines:
+                    continue
+                pl = self.point_lines.get(plid, {})
+                if self._safe_int(pl.get("p", -1)) in pids:
+                    continue
             kept_drivers.append(drv)
         if len(kept_drivers) != len(self.drivers):
             self.drivers = kept_drivers
@@ -1658,6 +1693,28 @@ class SketchController:
         except Exception:
             return "point line s"
         return f"s P{p} on (P{i}-P{j})"
+
+    def _point_line_current_s(self, pl: Dict[str, Any]) -> float:
+        try:
+            p_id = int(pl.get("p", -1))
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+        except Exception:
+            return 0.0
+        if p_id not in self.points or i_id not in self.points or j_id not in self.points:
+            return 0.0
+        pp = self.points[p_id]
+        pa = self.points[i_id]
+        pb = self.points[j_id]
+        ax, ay = float(pa["x"]), float(pa["y"])
+        bx, by = float(pb["x"]), float(pb["y"])
+        px, py = float(pp["x"]), float(pp["y"])
+        abx, aby = bx - ax, by - ay
+        ab_len = math.hypot(abx, aby)
+        if ab_len < 1e-12:
+            return 0.0
+        ux, uy = abx / ab_len, aby / ab_len
+        return (px - ax) * ux + (py - ay) * uy
 
     def _create_spline(self, sid: int, point_ids: List[int], hidden: bool):
         pts = [pid for pid in point_ids if pid in self.points]
@@ -3065,11 +3122,15 @@ class SketchController:
     def _add_angle_from_selection(self):
         ids = self._selected_points_for_angle()
         if len(ids) < 3:
-            QMessageBox.information(self.win, "Need 3 points", "Select 3 points (2nd is vertex).")
+            lang = getattr(self, "ui_language", "en")
+            if self.win and self.win.statusBar():
+                self.win.statusBar().showMessage(tr(lang, "status.select_three_points"))
             return
         i, j, k = ids[0], ids[1], ids[2]
         if len({i, j, k}) < 3:
-            QMessageBox.information(self.win, "Need 3 points", "Select 3 distinct points (2nd is vertex).")
+            lang = getattr(self, "ui_language", "en")
+            if self.win and self.win.statusBar():
+                self.win.statusBar().showMessage(tr(lang, "status.select_three_distinct"))
             return
         pi, pj, pk = self.points[i], self.points[j], self.points[k]
         v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
@@ -3097,18 +3158,14 @@ class SketchController:
                 if len(others) == 2:
                     i, j = int(others[0]), int(others[1])
         if p is None or i is None or j is None:
-            QMessageBox.information(
-                self.win,
-                "Selection",
-                "Select a line (or two points) for A,B and a point P before adding Point on Line (s).",
-            )
+            lang = getattr(self, "ui_language", "en")
+            if self.win and self.win.statusBar():
+                self.win.statusBar().showMessage(tr(lang, "status.select_point_line"))
             return
         if p == i or p == j:
-            QMessageBox.information(
-                self.win,
-                "Selection",
-                "Point P must be distinct from the line endpoints.",
-            )
+            lang = getattr(self, "ui_language", "en")
+            if self.win and self.win.statusBar():
+                self.win.statusBar().showMessage(tr(lang, "status.point_distinct"))
             return
         self.cmd_add_point_line_offset(p, i, j, s=0.0)
 
@@ -3290,6 +3347,8 @@ class SketchController:
             lambda: self.cmd_set_point_line_enabled(plid, not pl.get("enabled", True)),
         )
         m.addSeparator()
+        m.addAction(tr(lang, "context.set_translation_driver"), lambda: self.set_driver_translation(plid))
+        m.addSeparator()
         m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_line(plid))
         m.exec(global_pos)
         self.update_status()
@@ -3350,12 +3409,19 @@ class SketchController:
         show_driver_index = len(active_drivers) > 1
         for idx, drv in enumerate(active_drivers):
             driver_type = str(drv.get("type", "angle"))
-            if driver_type != "angle":
+            if driver_type == "translation":
+                plid = drv.get("plid")
+                if plid not in self.point_lines:
+                    continue
+                pid = self.point_lines[plid].get("p")
+                label = "⇆" if not show_driver_index else f"⇆{idx + 1}"
+            elif driver_type == "angle":
+                pid = drv.get("pivot")
+                label = "↻" if not show_driver_index else f"↻{idx + 1}"
+            else:
                 continue
-            pid = drv.get("pivot")
             if pid is None:
                 continue
-            label = "↻" if not show_driver_index else f"↻{idx + 1}"
             if int(pid) in driver_marker_map:
                 driver_marker_map[int(pid)] = f"{driver_marker_map[int(pid)]},{label}"
             else:
@@ -3694,6 +3760,9 @@ class SketchController:
                 "pivot": self.driver.get("pivot"),
                 "tip": self.driver.get("tip"),
                 "rad": float(self.driver.get("rad", 0.0)),
+                "plid": self.driver.get("plid"),
+                "s_base": self.driver.get("s_base"),
+                "value": self.driver.get("value"),
                 "sweep_start": self.driver.get("sweep_start"),
                 "sweep_end": self.driver.get("sweep_end"),
             },
@@ -3704,6 +3773,9 @@ class SketchController:
                     "pivot": d.get("pivot"),
                     "tip": d.get("tip"),
                     "rad": float(d.get("rad", 0.0)),
+                    "plid": d.get("plid"),
+                    "s_base": d.get("s_base"),
+                    "value": d.get("value"),
                     "sweep_start": d.get("sweep_start"),
                     "sweep_end": d.get("sweep_end"),
                 }
@@ -4146,6 +4218,35 @@ class SketchController:
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
 
+    def set_driver_translation(self, plid: int):
+        """Set a translational driver for a point-on-line (s) constraint."""
+        if plid not in self.point_lines:
+            return
+        pl = self.point_lines[plid]
+        base_s = self._point_line_current_s(pl)
+        pl["s"] = float(base_s)
+        line_len = 0.0
+        try:
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+            if i_id in self.points and j_id in self.points:
+                pa = self.points[i_id]
+                pb = self.points[j_id]
+                line_len = math.hypot(float(pb["x"]) - float(pa["x"]), float(pb["y"]) - float(pa["y"]))
+        except Exception:
+            line_len = 0.0
+        driver = self._normalize_driver({
+            "enabled": True,
+            "type": "translation",
+            "plid": int(plid),
+            "s_base": float(base_s),
+            "value": 0.0,
+            "sweep_start": 0.0,
+            "sweep_end": float(line_len),
+        })
+        self.drivers.insert(0, driver)
+        self._sync_primary_driver()
+
     def clear_driver(self):
         self.drivers = []
         self._sim_zero_driver_rad = []
@@ -4533,6 +4634,21 @@ class SketchController:
                 return ((px - ax) * (-aby) + (py - ay) * abx) / denom
 
             _add(_pol, "passive", {"type": "point_line", "p": p_id, "i": i_id, "j": j_id})
+            if "s" in pl:
+                s_target = float(pl.get("s", 0.0))
+
+                def _pol_s(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_target=s_target) -> float:
+                    px, py = _xy(q, p_id)
+                    ax, ay = _xy(q, i_id)
+                    bx, by = _xy(q, j_id)
+                    abx, aby = bx - ax, by - ay
+                    denom = math.hypot(abx, aby)
+                    if denom < 1e-9:
+                        return 0.0
+                    ux, uy = abx / denom, aby / denom
+                    return (px - ax) * ux + (py - ay) * uy - s_target
+
+                _add(_pol_s, "passive", {"type": "point_line_s", "p": p_id, "i": i_id, "j": j_id})
 
         # Point-on-spline constraints (distance to closest sampled point)
         for ps in self.point_splines.values():
@@ -4994,7 +5110,10 @@ class SketchController:
                 sval = float(pl.get("s", 0.0))
             except (TypeError, ValueError):
                 sval = None
-            out.append((nm, sval, "mm"))
+            if sval is not None and nm in self._sim_zero_meas_len:
+                out.append((nm, sval - float(self._sim_zero_meas_len[nm]), "mm"))
+            else:
+                out.append((nm, sval, "mm"))
         return out
 
     def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
@@ -5126,6 +5245,34 @@ class SketchController:
                 result.append(self._rel_deg(abs_deg, math.degrees(base_rad)))
         return result
 
+    def get_driver_display_values(self) -> List[tuple[Optional[float], str]]:
+        """Return driver values for display (value, unit)."""
+        out: List[tuple[Optional[float], str]] = []
+        drivers = self._active_drivers()
+        for idx, drv in enumerate(drivers):
+            dtype = str(drv.get("type", "angle"))
+            if dtype == "angle":
+                ang = self._get_driver_angle_abs_rad(drv)
+                if ang is None:
+                    out.append((None, "deg"))
+                    continue
+                abs_deg = math.degrees(ang)
+                base_rad: Optional[float] = None
+                if self._sim_zero_driver_rad and idx < len(self._sim_zero_driver_rad):
+                    base_rad = self._sim_zero_driver_rad[idx]
+                elif idx == 0 and self._sim_zero_input_rad is not None:
+                    base_rad = self._sim_zero_input_rad
+                if base_rad is None:
+                    out.append((abs_deg, "deg"))
+                else:
+                    out.append((self._rel_deg(abs_deg, math.degrees(base_rad)), "deg"))
+                continue
+            if dtype == "translation":
+                out.append((float(drv.get("value", 0.0) or 0.0), "mm"))
+                continue
+            out.append((None, ""))
+        return out
+
     def get_output_angle_deg(self) -> Optional[float]:
         """Current output angle in degrees (relative to Play-start if available)."""
         ang = self._get_output_angle_abs_rad()
@@ -5210,6 +5357,41 @@ class SketchController:
         if self.panel:
             self.panel.defer_refresh_all()
 
+    def drive_to_multi_values(self, values: List[float], iters: int = 80):
+        """Drive multiple active drivers to target values (deg or mm) and solve constraints."""
+        active_drivers = self._active_drivers()
+        if not active_drivers:
+            return
+        for idx, drv in enumerate(active_drivers):
+            if idx >= len(values):
+                break
+            dtype = str(drv.get("type", "angle"))
+            if dtype == "angle":
+                target_deg = float(values[idx])
+                base_rad: Optional[float] = None
+                if idx < len(self._sim_zero_driver_rad) and self._sim_zero_driver_rad[idx] is not None:
+                    base_rad = self._sim_zero_driver_rad[idx]
+                elif idx == 0 and self._sim_zero_input_rad is not None:
+                    base_rad = self._sim_zero_input_rad
+                if base_rad is None:
+                    drv["rad"] = math.radians(target_deg)
+                else:
+                    drv["rad"] = float(base_rad) + math.radians(target_deg)
+            elif dtype == "translation":
+                offset = float(values[idx])
+                drv["value"] = offset
+                plid = drv.get("plid")
+                if plid in self.point_lines:
+                    pl = self.point_lines[plid]
+                    base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
+                    pl["s"] = base_s + offset
+        self._sync_primary_driver()
+        self.solve_constraints(iters=iters)
+        self.update_graphics()
+        self.append_trajectories()
+        if self.panel:
+            self.panel.defer_refresh_all()
+
     # ---- Pose snapshots ----
     def capture_initial_pose_if_needed(self):
         if self._pose_initial is None:
@@ -5231,10 +5413,15 @@ class SketchController:
             self._sync_primary_output()
 
         self._sim_zero_meas_deg = {}
+        self._sim_zero_meas_len = {}
         for (nm, val, unit) in self.get_measure_values():
             # At this moment get_measure_values returns ABS (since _sim_zero_meas_deg is cleared)
-            if unit == "deg" and val is not None:
+            if val is None:
+                continue
+            if unit == "deg":
                 self._sim_zero_meas_deg[str(nm)] = float(val)
+            elif unit == "mm":
+                self._sim_zero_meas_len[str(nm)] = float(val)
 
     def update_sim_start_pose_snapshot(self):
         """Update the stored sweep start pose without touching the relative-zero angles."""
