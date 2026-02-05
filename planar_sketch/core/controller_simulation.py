@@ -1092,7 +1092,13 @@ class ControllerSimulation:
                     out.append((self._rel_deg(abs_deg, math.degrees(base_rad)), "deg"))
                 continue
             if dtype == "translation":
-                out.append((float(drv.get("value", 0.0) or 0.0), "mm"))
+                plid = drv.get("plid")
+                pl = self.point_lines.get(plid) if plid in self.point_lines else None
+                if pl is None:
+                    base_s = float(drv.get("s_base", 0.0) or 0.0)
+                    out.append((base_s + float(drv.get("value", 0.0) or 0.0), "mm"))
+                else:
+                    out.append((float(pl.get("s", self._point_line_current_s(pl)) or 0.0), "mm"))
                 continue
             out.append((None, ""))
         return out
@@ -1202,13 +1208,15 @@ class ControllerSimulation:
                 else:
                     drv["rad"] = float(base_rad) + math.radians(target_deg)
             elif dtype == "translation":
-                offset = float(values[idx])
-                drv["value"] = offset
+                target_s = float(values[idx])
                 plid = drv.get("plid")
-                if plid in self.point_lines:
-                    pl = self.point_lines[plid]
+                pl = self.point_lines.get(plid) if plid in self.point_lines else None
+                if pl is None:
+                    base_s = float(drv.get("s_base", 0.0) or 0.0)
+                else:
                     base_s = float(drv.get("s_base", self._point_line_current_s(pl)) or 0.0)
-                    pl["s"] = base_s + offset
+                    pl["s"] = target_s
+                drv["value"] = target_s - base_s
         self._sync_primary_driver()
         self.solve_constraints(iters=iters)
         self.update_graphics()
