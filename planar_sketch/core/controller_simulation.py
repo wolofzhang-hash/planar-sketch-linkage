@@ -81,24 +81,26 @@ class ControllerSimulation:
     def add_load_torque(self, pid: int, mz: float):
         self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
 
-    def add_load_spring(self, pid: int, ref_pid: int, k: float):
+    def add_load_spring(self, pid: int, ref_pid: int, k: float, f0: float):
         self.loads.append({
             "type": "spring",
             "pid": int(pid),
             "ref_pid": int(ref_pid),
             "k": float(k),
+            "f0": float(f0),
             "fx": 0.0,
             "fy": 0.0,
             "mz": 0.0,
         })
 
-    def add_load_torsion_spring(self, pid: int, ref_pid: int, k: float, theta0: float):
+    def add_load_torsion_spring(self, pid: int, ref_pid: int, k: float, theta0: float, m0: float):
         self.loads.append({
             "type": "torsion_spring",
             "pid": int(pid),
             "ref_pid": int(ref_pid),
             "k": float(k),
             "theta0": float(theta0),
+            "m0": float(m0),
             "fx": 0.0,
             "fy": 0.0,
             "mz": 0.0,
@@ -140,7 +142,10 @@ class ControllerSimulation:
         k, ok = QInputDialog.getDouble(self.win, "Spring", "k (force per length)", 0.0, decimals=4)
         if not ok:
             return
-        self.add_load_spring(pid, int(ref_pid), k)
+        f0, ok = QInputDialog.getDouble(self.win, "Spring", "Initial load (force)", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_spring(pid, int(ref_pid), k, f0)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 
@@ -158,7 +163,10 @@ class ControllerSimulation:
         k, ok = QInputDialog.getDouble(self.win, "Torsion Spring", "k (torque per rad)", 0.0, decimals=4)
         if not ok:
             return
-        self.add_load_torsion_spring(pid, int(ref_pid), k, float(theta0))
+        m0, ok = QInputDialog.getDouble(self.win, "Torsion Spring", "Initial load (torque)", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_torsion_spring(pid, int(ref_pid), k, float(theta0), m0)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 
@@ -435,6 +443,7 @@ class ControllerSimulation:
             pid = int(load.get("pid", -1))
             ref_pid = int(load.get("ref_pid", -1))
             k = float(load.get("k", 0.0))
+            f0 = float(load.get("f0", 0.0))
             if pid not in self.points or ref_pid not in self.points:
                 return 0.0, 0.0, 0.0
             if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
@@ -445,12 +454,22 @@ class ControllerSimulation:
             else:
                 dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
                 dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            return k * dx, k * dy, 0.0
+            fx = k * dx
+            fy = k * dy
+            if abs(f0) > 0.0:
+                denom = math.hypot(dx, dy)
+                if denom > 1e-12:
+                    ux = dx / denom
+                    uy = dy / denom
+                    fx += f0 * ux
+                    fy += f0 * uy
+            return fx, fy, 0.0
         if ltype == "torsion_spring":
             pid = int(load.get("pid", -1))
             ref_pid = int(load.get("ref_pid", -1))
             k = float(load.get("k", 0.0))
             theta0 = float(load.get("theta0", 0.0))
+            m0 = float(load.get("m0", 0.0))
             if pid not in self.points or ref_pid not in self.points:
                 return 0.0, 0.0, 0.0
             if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
@@ -465,7 +484,7 @@ class ControllerSimulation:
                 return 0.0, 0.0, 0.0
             theta = math.atan2(dy, dx)
             delta = self._wrap_angle(theta - theta0)
-            return 0.0, 0.0, k * delta
+            return 0.0, 0.0, k * delta + m0
         fx = float(load.get("fx", 0.0))
         fy = float(load.get("fy", 0.0))
         mz = float(load.get("mz", 0.0))

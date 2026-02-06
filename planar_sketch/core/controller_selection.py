@@ -2523,14 +2523,16 @@ class ControllerSelection:
             elif ltype == "spring":
                 ref_pid = int(ld.get("ref_pid", -1))
                 k = float(ld.get("k", 0.0))
+                f0 = float(ld.get("f0", 0.0))
                 if ref_pid in self.points:
-                    self.add_load_spring(pid, ref_pid, k)
+                    self.add_load_spring(pid, ref_pid, k, f0)
             elif ltype == "torsion_spring":
                 ref_pid = int(ld.get("ref_pid", -1))
                 k = float(ld.get("k", 0.0))
                 theta0 = float(ld.get("theta0", 0.0))
+                m0 = float(ld.get("m0", 0.0))
                 if ref_pid in self.points:
-                    self.add_load_torsion_spring(pid, ref_pid, k, theta0)
+                    self.add_load_torsion_spring(pid, ref_pid, k, theta0, m0)
             else:
                 self.add_load_force(pid, fx, fy)
 
