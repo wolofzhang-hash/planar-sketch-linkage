@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QFileDialog,
     QCheckBox,
+    QSizePolicy,
 )
 
 from ..core.case_run_manager import CaseRunManager
@@ -781,27 +782,23 @@ class OptimizationTab(QWidget):
         self.ed_seed = QLineEdit("")
         self.ed_seed.setMaximumWidth(120)
         row.addWidget(self.ed_seed)
+        self.chk_debug_log = QCheckBox("")
+        self.lbl_debug_log_path = QLabel("")
+        self.ed_debug_log_path = QLineEdit("")
+        row.addWidget(self.chk_debug_log)
+        row.addWidget(self.lbl_debug_log_path)
+        row.addWidget(self.ed_debug_log_path)
         self.input_fields = [self.ed_evals, self.ed_seed]
         row.addStretch(1)
         layout.addLayout(row)
 
-        log_row = QHBoxLayout()
-        self.chk_debug_log = QCheckBox("")
-        log_row.addWidget(self.chk_debug_log)
-        self.lbl_debug_log_path = QLabel("")
-        log_row.addWidget(self.lbl_debug_log_path)
-        self.ed_debug_log_path = QLineEdit("")
-        log_row.addWidget(self.ed_debug_log_path)
-        log_row.addStretch(1)
-        layout.addLayout(log_row)
-
         btn_row = QHBoxLayout()
         self.btn_run = QPushButton("")
         self.btn_stop = QPushButton("")
-        self.btn_apply_best = QPushButton("")
         btn_row.addWidget(self.btn_run)
         btn_row.addWidget(self.btn_stop)
-        btn_row.addWidget(self.btn_apply_best)
+        self.btn_apply_selected = QPushButton("")
+        btn_row.addWidget(self.btn_apply_selected)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
@@ -810,12 +807,15 @@ class OptimizationTab(QWidget):
 
         self.table_best = QTableWidget(0, 3)
         self.table_best.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table_best.verticalHeader().setVisible(False)
-        layout.addWidget(self.table_best)
+        self.table_best.verticalHeader().setVisible(True)
+        self.table_best.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_best.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table_best.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        layout.addWidget(self.table_best, 1)
 
         self.btn_run.clicked.connect(self.run_optimization)
         self.btn_stop.clicked.connect(self.stop_optimization)
-        self.btn_apply_best.clicked.connect(self.apply_best)
+        self.btn_apply_selected.clicked.connect(self.apply_selected)
         self.btn_stop.setEnabled(False)
         return group
 
@@ -895,8 +895,9 @@ class OptimizationTab(QWidget):
         for row in range(self.table_vars.rowCount()):
             self._update_current_value(row)
         if self.table_best.rowCount() == 0:
-            self.table_best.setRowCount(1)
+            self.table_best.setRowCount(2)
         self._refresh_best_objective_display()
+        self._refresh_initial_row()
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -918,7 +919,7 @@ class OptimizationTab(QWidget):
         self.ed_debug_log_path.setPlaceholderText("logs/optimization_debug.log")
         self.btn_run.setText(tr(lang, "analysis.run"))
         self.btn_stop.setText(tr(lang, "analysis.stop"))
-        self.btn_apply_best.setText(tr(lang, "analysis.apply_best"))
+        self.btn_apply_selected.setText(tr(lang, "analysis.apply_selected"))
         self._set_progress_label(self._progress_value)
         self.table_vars.setHorizontalHeaderLabels(
             [
@@ -1198,6 +1199,8 @@ class OptimizationTab(QWidget):
         headers = [tr(lang, "analysis.best_objective")] + self._best_var_names
         self.table_best.setColumnCount(len(headers))
         self.table_best.setHorizontalHeaderLabels(headers)
+        self.table_best.setRowCount(2)
+        self.table_best.setVerticalHeaderLabels([tr(lang, "analysis.initial_values"), tr(lang, "analysis.best_values")])
 
     def _on_variable_type_changed(self, var_type: str) -> None:
         combo = self.sender()
@@ -1582,6 +1585,8 @@ class OptimizationTab(QWidget):
         if variables is None:
             return
         self._set_best_table_headers([var.name for var in variables if var.enabled])
+        self._refresh_initial_row()
+        self._refresh_best_objective_display()
         objectives = self._collect_objectives()
         constraints = self._collect_constraints()
 
@@ -1649,16 +1654,16 @@ class OptimizationTab(QWidget):
         QMessageBox.warning(self, "Optimization", f"Failed: {msg}")
 
     def _update_best_table(self, payload: Dict[str, Any]) -> None:
-        self.table_best.setRowCount(1)
+        self.table_best.setRowCount(2)
         obj_val = payload.get("objective")
         obj_item = QTableWidgetItem("--" if obj_val is None else f"{obj_val:.4f}")
         obj_item.setFlags(obj_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-        self.table_best.setItem(0, 0, obj_item)
+        self.table_best.setItem(1, 0, obj_item)
         for idx, key in enumerate(self._best_var_names, start=1):
             val = self._best_vars.get(key)
             item = QTableWidgetItem("--" if val is None else f"{val:.4f}")
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_best.setItem(0, idx, item)
+            self.table_best.setItem(1, idx, item)
 
     def _refresh_best_objective_display(self) -> None:
         objectives = self._collect_objectives()
@@ -1674,11 +1679,28 @@ class OptimizationTab(QWidget):
         obj_item.setFlags(obj_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
         self.table_best.setItem(0, 0, obj_item)
 
-    def apply_best(self) -> None:
-        if not self._best_vars:
-            QMessageBox.information(self, "Optimization", "No best solution yet.")
+    def _refresh_initial_row(self) -> None:
+        for idx, key in enumerate(self._best_var_names, start=1):
+            val = self._get_variable_value(key)
+            item = QTableWidgetItem("--" if val is None else f"{val:.4f}")
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table_best.setItem(0, idx, item)
+
+    def apply_selected(self) -> None:
+        row = self.table_best.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Optimization", "Select a row to apply.")
             return
-        for name, val in self._best_vars.items():
+        if row == 0:
+            selected_vars = {name: self._get_variable_value(name) for name in self._best_var_names}
+        else:
+            if not self._best_vars:
+                QMessageBox.information(self, "Optimization", "No best solution yet.")
+                return
+            selected_vars = dict(self._best_vars)
+        for name, val in selected_vars.items():
+            if val is None:
+                continue
             if not name.startswith("P") or "." not in name:
                 if name.startswith("Link") and name.endswith(".L"):
                     lid_str = name[len("Link") : -len(".L")]
