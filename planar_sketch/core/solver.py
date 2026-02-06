@@ -138,28 +138,35 @@ class ConstraintSolver:
         if dx * dx + dy * dy <= tol * tol:
             return True
 
-        if lock_p and lock_a and lock_b:
-            return False
+        if lock_p:
+            if lock_a and lock_b:
+                return False
+            if lock_a and not lock_b:
+                apx, apy = px - ax, py - ay
+                ap2 = apx * apx + apy * apy
+                if ap2 < 1e-18:
+                    return True
+                t = ((bx - ax) * apx + (by - ay) * apy) / ap2
+                b["x"] = ax + t * apx
+                b["y"] = ay + t * apy
+                return True
+            if lock_b and not lock_a:
+                bpx, bpy = px - bx, py - by
+                bp2 = bpx * bpx + bpy * bpy
+                if bp2 < 1e-18:
+                    return True
+                t = ((ax - bx) * bpx + (ay - by) * bpy) / bp2
+                a["x"] = bx + t * bpx
+                a["y"] = by + t * bpy
+                return True
+            a["x"] = ax + dx
+            a["y"] = ay + dy
+            b["x"] = bx + dx
+            b["y"] = by + dy
+            return True
 
-        w_p = 0.0 if lock_p else 1.0
-        w_a = 0.0 if lock_a else 1.0
-        w_b = 0.0 if lock_b else 1.0
-        w = w_p + w_a + w_b
-        if w <= 0.0:
-            return False
-
-        # Move P towards its projection, while translating the line (A,B) oppositely.
-        # This converges well over iterations even when only one endpoint is free.
-        if w_p > 0.0:
-            p["x"] = px + (w_p / w) * dx
-            p["y"] = py + (w_p / w) * dy
-        if w_a > 0.0:
-            a["x"] = ax - (w_a / w) * dx
-            a["y"] = ay - (w_a / w) * dy
-        if w_b > 0.0:
-            b["x"] = bx - (w_b / w) * dx
-            b["y"] = by - (w_b / w) * dy
-
+        p["x"] = projx
+        p["y"] = projy
         return True
 
     @staticmethod
@@ -195,25 +202,40 @@ class ConstraintSolver:
         if dx * dx + dy * dy <= tol * tol:
             return True
 
-        if lock_p and lock_a and lock_b:
-            return False
+        if lock_p:
+            if lock_a and lock_b:
+                return False
+            if lock_a and not lock_b:
+                apx, apy = px - ax, py - ay
+                ap_len = math.hypot(apx, apy)
+                if ap_len < 1e-12:
+                    return abs(float(s)) <= tol
+                ux, uy = apx / ap_len, apy / ap_len
+                proj = (bx - ax) * ux + (by - ay) * uy
+                b["x"] = ax + proj * ux
+                b["y"] = ay + proj * uy
+                return abs(ap_len - float(s)) <= tol
+            if lock_b and not lock_a:
+                bpx, bpy = bx - px, by - py
+                bp_len = math.hypot(bpx, bpy)
+                if bp_len < 1e-12:
+                    return False
+                ux, uy = bpx / bp_len, bpy / bp_len
+                a["x"] = px - ux * float(s)
+                a["y"] = py - uy * float(s)
+                return True
+            if ab_len < 1e-12:
+                ux, uy = 1.0, 0.0
+            else:
+                ux, uy = abx / ab_len, aby / ab_len
+            a["x"] = px - ux * float(s)
+            a["y"] = py - uy * float(s)
+            b["x"] = a["x"] + ux * ab_len
+            b["y"] = a["y"] + uy * ab_len
+            return True
 
-        w_p = 0.0 if lock_p else 1.0
-        w_a = 0.0 if lock_a else 1.0
-        w_b = 0.0 if lock_b else 1.0
-        w = w_p + w_a + w_b
-        if w <= 0.0:
-            return False
-
-        if w_p > 0.0:
-            p["x"] = px + (w_p / w) * dx
-            p["y"] = py + (w_p / w) * dy
-        if w_a > 0.0:
-            a["x"] = ax - (w_a / w) * dx
-            a["y"] = ay - (w_a / w) * dy
-        if w_b > 0.0:
-            b["x"] = bx - (w_b / w) * dx
-            b["y"] = by - (w_b / w) * dy
+        p["x"] = target_x
+        p["y"] = target_y
         return True
 
     @staticmethod
