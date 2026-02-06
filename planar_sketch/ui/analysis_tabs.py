@@ -978,6 +978,155 @@ class OptimizationTab(QWidget):
             self.add_objective_row(direction="min", expression="max(load.P9.Mag)")
         self._set_best_table_headers(self._collect_enabled_variable_names())
 
+    def export_settings(self) -> Dict[str, Any]:
+        variables: List[Dict[str, Any]] = []
+        for row in range(self.table_vars.rowCount()):
+            enabled_item = self.table_vars.item(row, 0)
+            enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
+            case_combo = self.table_vars.cellWidget(row, 1)
+            case_id = case_combo.currentData() if isinstance(case_combo, QComboBox) else None
+            type_combo = self.table_vars.cellWidget(row, 2)
+            var_type = type_combo.currentText() if isinstance(type_combo, QComboBox) else ""
+            name_combo = self.table_vars.cellWidget(row, 3)
+            name = name_combo.currentText() if isinstance(name_combo, QComboBox) else ""
+            lower_item = self.table_vars.item(row, 5)
+            upper_item = self.table_vars.item(row, 6)
+            variables.append(
+                {
+                    "enabled": enabled,
+                    "case_id": case_id,
+                    "var_type": var_type,
+                    "name": name,
+                    "lower": lower_item.text() if lower_item else "",
+                    "upper": upper_item.text() if upper_item else "",
+                }
+            )
+
+        objectives: List[Dict[str, Any]] = []
+        for row in range(self.table_obj.rowCount()):
+            enabled_item = self.table_obj.item(row, 0)
+            enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
+            case_combo = self.table_obj.cellWidget(row, 1)
+            case_id = case_combo.currentData() if isinstance(case_combo, QComboBox) else None
+            direction_combo = self.table_obj.cellWidget(row, 2)
+            direction = direction_combo.currentText() if isinstance(direction_combo, QComboBox) else "min"
+            expr_item = self.table_obj.item(row, 3)
+            objectives.append(
+                {
+                    "enabled": enabled,
+                    "case_id": case_id,
+                    "direction": direction,
+                    "expression": expr_item.text() if expr_item else "",
+                }
+            )
+
+        constraints: List[Dict[str, Any]] = []
+        for row in range(self.table_con.rowCount()):
+            enabled_item = self.table_con.item(row, 0)
+            enabled = enabled_item.checkState() == Qt.CheckState.Checked if enabled_item else True
+            case_combo = self.table_con.cellWidget(row, 1)
+            case_id = case_combo.currentData() if isinstance(case_combo, QComboBox) else None
+            expr_item = self.table_con.item(row, 2)
+            comparator_combo = self.table_con.cellWidget(row, 3)
+            comparator = comparator_combo.currentText() if isinstance(comparator_combo, QComboBox) else "<="
+            limit_item = self.table_con.item(row, 4)
+            constraints.append(
+                {
+                    "enabled": enabled,
+                    "case_id": case_id,
+                    "expression": expr_item.text() if expr_item else "",
+                    "comparator": comparator,
+                    "limit": limit_item.text() if limit_item else "",
+                }
+            )
+
+        return {
+            "evals": self.ed_evals.text(),
+            "seed": self.ed_seed.text(),
+            "debug_log": {
+                "enabled": bool(self.chk_debug_log.isChecked()),
+                "path": self.ed_debug_log_path.text(),
+            },
+            "variables": variables,
+            "objectives": objectives,
+            "constraints": constraints,
+        }
+
+    def apply_settings(self, settings: Dict[str, Any]) -> None:
+        if not isinstance(settings, dict) or not settings:
+            return
+        self.table_vars.setRowCount(0)
+        self.table_obj.setRowCount(0)
+        self.table_con.setRowCount(0)
+
+        for var in settings.get("variables", []) or []:
+            name = var.get("name")
+            self.add_variable_row(name)
+            row = self.table_vars.rowCount() - 1
+            enabled_item = self.table_vars.item(row, 0)
+            if enabled_item:
+                enabled_item.setCheckState(Qt.CheckState.Checked if var.get("enabled", True) else Qt.CheckState.Unchecked)
+            self._set_case_combo_value(self.table_vars.cellWidget(row, 1), var.get("case_id"))
+            type_combo = self.table_vars.cellWidget(row, 2)
+            if isinstance(type_combo, QComboBox) and var.get("var_type"):
+                type_combo.setCurrentText(str(var.get("var_type")))
+                self._apply_variable_type(row, type_combo.currentText())
+            name_combo = self.table_vars.cellWidget(row, 3)
+            if isinstance(name_combo, QComboBox) and name:
+                opts = [name_combo.itemText(i) for i in range(name_combo.count())]
+                if name not in opts:
+                    name_combo.addItem(name)
+                name_combo.setCurrentText(name)
+            lower_item = self.table_vars.item(row, 5)
+            upper_item = self.table_vars.item(row, 6)
+            if lower_item is not None:
+                lower_item.setText(str(var.get("lower", "")))
+            if upper_item is not None:
+                upper_item.setText(str(var.get("upper", "")))
+            self._update_current_value(row)
+
+        for obj in settings.get("objectives", []) or []:
+            self.add_objective_row(direction=str(obj.get("direction", "min")), expression=str(obj.get("expression", "")))
+            row = self.table_obj.rowCount() - 1
+            enabled_item = self.table_obj.item(row, 0)
+            if enabled_item:
+                enabled_item.setCheckState(Qt.CheckState.Checked if obj.get("enabled", True) else Qt.CheckState.Unchecked)
+            self._set_case_combo_value(self.table_obj.cellWidget(row, 1), obj.get("case_id"))
+
+        for con in settings.get("constraints", []) or []:
+            self.add_constraint_row(
+                expression=str(con.get("expression", "")),
+                comparator=str(con.get("comparator", "<=")),
+                limit=str(con.get("limit", "")),
+            )
+            row = self.table_con.rowCount() - 1
+            enabled_item = self.table_con.item(row, 0)
+            if enabled_item:
+                enabled_item.setCheckState(Qt.CheckState.Checked if con.get("enabled", True) else Qt.CheckState.Unchecked)
+            self._set_case_combo_value(self.table_con.cellWidget(row, 1), con.get("case_id"))
+
+        if "evals" in settings:
+            self.ed_evals.setText(str(settings.get("evals", "")))
+        if "seed" in settings:
+            self.ed_seed.setText(str(settings.get("seed", "")))
+        debug_log = settings.get("debug_log", {}) or {}
+        self.chk_debug_log.setChecked(bool(debug_log.get("enabled", False)))
+        self.ed_debug_log_path.setText(str(debug_log.get("path", "")))
+
+        self._set_best_table_headers(self._collect_enabled_variable_names())
+        self.refresh_model_values()
+
+    def _set_case_combo_value(self, combo: Optional[QComboBox], case_id: Any) -> None:
+        if not isinstance(combo, QComboBox):
+            return
+        combo.blockSignals(True)
+        if case_id is None:
+            combo.setCurrentIndex(0)
+        else:
+            idx = combo.findData(case_id)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+        combo.blockSignals(False)
+
     def _variable_type_options(self) -> List[str]:
         return ["Coordinate", "Length", "Parameter", "Constraint", "All"]
 
