@@ -861,15 +861,25 @@ class SimulationPanel(QWidget):
         item = self.table_friction.item(row, col)
         if item is None:
             return
-        try:
-            value = float(item.text())
-        except ValueError:
-            self._refresh_friction_table()
+        raw = item.text().strip()
+        key_map = {
+            1: ("mu", "mu_expr"),
+            2: ("diameter", "diameter_expr"),
+        }
+        key_num, key_expr = key_map.get(col, ("", ""))
+        if not key_num:
             return
-        if col == 1:
-            self.ctrl.friction_joints[row]["mu"] = value
-        elif col == 2:
-            self.ctrl.friction_joints[row]["diameter"] = value
+        try:
+            value = float(raw)
+        except ValueError:
+            if not raw:
+                self._refresh_friction_table()
+                return
+            self.ctrl.friction_joints[row][key_expr] = raw
+            self.ctrl.recompute_from_parameters()
+        else:
+            self.ctrl.friction_joints[row][key_num] = value
+            self.ctrl.friction_joints[row][key_expr] = ""
         self.refresh_labels()
 
     def _refresh_load_tables(self):
@@ -945,12 +955,14 @@ class SimulationPanel(QWidget):
                 pid = entry.get("pid", "--")
                 mu = entry.get("mu", 0.0)
                 diameter = entry.get("diameter", 0.0)
+                mu_expr = entry.get("mu_expr", "")
+                diameter_expr = entry.get("diameter_expr", "")
                 local_load = entry.get("local_load", None)
                 torque = entry.get("torque", None)
                 items = [
                     QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
-                    QTableWidgetItem(self.ctrl.format_number(mu)),
-                    QTableWidgetItem(self.ctrl.format_number(diameter)),
+                    QTableWidgetItem(mu_expr if mu_expr else self.ctrl.format_number(mu)),
+                    QTableWidgetItem(diameter_expr if diameter_expr else self.ctrl.format_number(diameter)),
                     QTableWidgetItem("--" if local_load is None else self.ctrl.format_number(local_load)),
                     QTableWidgetItem("--" if torque is None else self.ctrl.format_number(torque)),
                 ]

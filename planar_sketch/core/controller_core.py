@@ -121,6 +121,7 @@ class ControllerCore:
         # Display items for load arrows.
         self._load_arrow_items: List[ForceArrowItem] = []
         self._torque_arrow_items: List[TorqueArrowItem] = []
+        self._friction_torque_arrow_items: List[TorqueArrowItem] = []
         self._last_joint_loads: List[Dict[str, Any]] = []
         self._last_quasistatic_summary: Dict[str, Any] = {}
         # Pose snapshots for "reset to initial".

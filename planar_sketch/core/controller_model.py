@@ -1068,6 +1068,23 @@ class ControllerModel:
                 pl["s_expr_error"] = True
                 pl["s_expr_error_msg"] = str(err)
 
+        # Friction joints: mu_expr / diameter_expr
+        for fj in self.friction_joints:
+            for key_num, key_expr in (("mu", "mu_expr"), ("diameter", "diameter_expr")):
+                expr = fj.get(key_expr, "")
+                if not expr:
+                    fj.pop(f"{key_expr}_error", None)
+                    fj.pop(f"{key_expr}_error_msg", None)
+                    continue
+                val, err = self.parameters.eval_expr(str(expr))
+                if err is None and val is not None:
+                    fj[key_num] = float(val)
+                    fj.pop(f"{key_expr}_error", None)
+                    fj.pop(f"{key_expr}_error_msg", None)
+                else:
+                    fj[f"{key_expr}_error"] = True
+                    fj[f"{key_expr}_error_msg"] = str(err)
+
     # --- Parameter commands (Undo/Redo) ---
     def cmd_set_param(self, name: str, value: float):
         if not self._confirm_stop_replay("modify the model"):
