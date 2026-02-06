@@ -2380,6 +2380,7 @@ class ControllerSelection:
             self.scene.blockSignals(False)
         self._load_arrow_items = []
         self._torque_arrow_items = []
+        self._friction_torque_arrow_items = []
         self._last_joint_loads = []
         # Load parameters early so expression fields can be evaluated during/after construction.
         self.parameters.load_list(list(data.get("parameters", []) or []))
