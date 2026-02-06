@@ -221,7 +221,33 @@ class SimulationPanel(QWidget):
 
         loads_layout.addStretch(1)
 
+        friction_tab = QWidget()
+        friction_layout = QVBoxLayout(friction_tab)
+        self.lbl_friction = QLabel()
+        friction_layout.addWidget(self.lbl_friction)
+        self.table_friction = QTableWidget(0, 5)
+        self.table_friction.setHorizontalHeaderLabels([])
+        self.table_friction.verticalHeader().setVisible(False)
+        self.table_friction.setEditTriggers(
+            QTableWidget.EditTrigger.DoubleClicked | QTableWidget.EditTrigger.SelectedClicked
+        )
+        self.table_friction.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_friction.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table_friction.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        friction_layout.addWidget(self.table_friction)
+
+        friction_buttons = QHBoxLayout()
+        self.btn_add_friction = QPushButton()
+        self.btn_remove_friction = QPushButton()
+        self.btn_clear_friction = QPushButton()
+        friction_buttons.addWidget(self.btn_add_friction)
+        friction_buttons.addWidget(self.btn_remove_friction)
+        friction_buttons.addWidget(self.btn_clear_friction)
+        friction_layout.addLayout(friction_buttons)
+        friction_layout.addStretch(1)
+
         self.tabs.addTab(loads_tab, "")
+        self.tabs.addTab(friction_tab, "")
         self.tabs.addTab(measurements_tab, "")
         self.tabs.addTab(main_tab, "")
         self.animation_tab = AnimationTab(self.ctrl, on_active_case_changed=self._on_active_case_changed)
@@ -238,6 +264,9 @@ class SimulationPanel(QWidget):
         self.btn_check_analysis.clicked.connect(self._run_analysis_check)
         self.btn_remove_load.clicked.connect(self._remove_selected_load)
         self.btn_clear_loads.clicked.connect(self._clear_loads)
+        self.btn_add_friction.clicked.connect(self._add_friction_from_selection)
+        self.btn_remove_friction.clicked.connect(self._remove_selected_friction)
+        self.btn_clear_friction.clicked.connect(self._clear_friction)
         self.btn_play.clicked.connect(self.play)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_reset_pose.clicked.connect(self.reset_pose)
@@ -247,6 +276,7 @@ class SimulationPanel(QWidget):
 
         self.table_drivers.cellChanged.connect(self._on_driver_table_changed)
         self.table_loads.cellChanged.connect(self._on_load_table_changed)
+        self.table_friction.cellChanged.connect(self._on_friction_table_changed)
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
         self.apply_sweep_settings(self.ctrl.sweep_settings)
 
@@ -258,10 +288,11 @@ class SimulationPanel(QWidget):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.title.setText(tr(lang, "panel.analysis_title"))
         self.tabs.setTabText(0, tr(lang, "tab.loads"))
-        self.tabs.setTabText(1, tr(lang, "tab.measurements"))
-        self.tabs.setTabText(2, tr(lang, "tab.simulation"))
-        self.tabs.setTabText(3, tr(lang, "tab.animation"))
-        self.tabs.setTabText(4, tr(lang, "tab.optimization"))
+        self.tabs.setTabText(1, tr(lang, "tab.friction"))
+        self.tabs.setTabText(2, tr(lang, "tab.measurements"))
+        self.tabs.setTabText(3, tr(lang, "tab.simulation"))
+        self.tabs.setTabText(4, tr(lang, "tab.animation"))
+        self.tabs.setTabText(5, tr(lang, "tab.optimization"))
         self.lbl_step.setText(tr(lang, "sim.step_deg"))
         self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
         self.chk_scipy.setText(tr(lang, "sim.use_scipy"))
@@ -281,6 +312,10 @@ class SimulationPanel(QWidget):
         self.btn_remove_load.setText(tr(lang, "sim.remove_selected"))
         self.btn_clear_loads.setText(tr(lang, "sim.clear"))
         self.lbl_joint_loads.setText(tr(lang, "sim.joint_loads"))
+        self.lbl_friction.setText(tr(lang, "sim.friction_joints"))
+        self.btn_add_friction.setText(tr(lang, "button.add_selected"))
+        self.btn_remove_friction.setText(tr(lang, "sim.remove_selected"))
+        self.btn_clear_friction.setText(tr(lang, "sim.clear"))
         self.chk_reset_before_run.setText(tr(lang, "sim.reset_before_run"))
         self.table_meas.setHorizontalHeaderLabels([
             tr(lang, "sim.table.type"),
@@ -312,6 +347,13 @@ class SimulationPanel(QWidget):
             tr(lang, "sim.table.fx"),
             tr(lang, "sim.table.fy"),
             tr(lang, "sim.table.mag"),
+        ])
+        self.table_friction.setHorizontalHeaderLabels([
+            tr(lang, "sim.table.point"),
+            tr(lang, "sim.table.mu"),
+            tr(lang, "sim.table.diameter"),
+            tr(lang, "sim.table.local_load"),
+            tr(lang, "sim.table.friction_torque"),
         ])
         if hasattr(self, "animation_tab"):
             self.animation_tab.apply_language()
@@ -464,6 +506,7 @@ class SimulationPanel(QWidget):
         self._refresh_driver_table(drivers)
         self._refresh_output_table(outputs)
         self._refresh_load_tables()
+        self._refresh_friction_table()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.refresh_active_case()
 
@@ -735,6 +778,25 @@ class SimulationPanel(QWidget):
         self.ctrl.remove_load_at(row)
         self.refresh_labels()
 
+    def _add_friction_from_selection(self):
+        pid = self._selected_one_point()
+        if pid is None:
+            return
+        self.ctrl.add_friction_joint(pid, 0.0, 0.0)
+        self.refresh_labels()
+
+    def _clear_friction(self):
+        self.ctrl.clear_friction_joints()
+        self.refresh_labels()
+
+    def _remove_selected_friction(self):
+        row = self.table_friction.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "Friction", "Select a friction row to remove.")
+            return
+        self.ctrl.remove_friction_joint_at(row)
+        self.refresh_labels()
+
     def _on_load_table_changed(self, row: int, col: int) -> None:
         if col not in (2, 3, 4, 5, 6, 7):
             return
@@ -789,6 +851,25 @@ class SimulationPanel(QWidget):
                     self.ctrl.loads[row]["theta0"] = float(theta0)
         else:
             return
+        self.refresh_labels()
+
+    def _on_friction_table_changed(self, row: int, col: int) -> None:
+        if col not in (1, 2):
+            return
+        if row < 0 or row >= len(self.ctrl.friction_joints):
+            return
+        item = self.table_friction.item(row, col)
+        if item is None:
+            return
+        try:
+            value = float(item.text())
+        except ValueError:
+            self._refresh_friction_table()
+            return
+        if col == 1:
+            self.ctrl.friction_joints[row]["mu"] = value
+        elif col == 2:
+            self.ctrl.friction_joints[row]["diameter"] = value
         self.refresh_labels()
 
     def _refresh_load_tables(self):
@@ -854,6 +935,31 @@ class SimulationPanel(QWidget):
                 self.table_joint_loads.setItem(row, col, item)
 
         self._refresh_measure_table()
+
+    def _refresh_friction_table(self) -> None:
+        rows = self.ctrl.get_friction_table()
+        self.table_friction.blockSignals(True)
+        try:
+            self.table_friction.setRowCount(len(rows))
+            for row, entry in enumerate(rows):
+                pid = entry.get("pid", "--")
+                mu = entry.get("mu", 0.0)
+                diameter = entry.get("diameter", 0.0)
+                local_load = entry.get("local_load", None)
+                torque = entry.get("torque", None)
+                items = [
+                    QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
+                    QTableWidgetItem(self.ctrl.format_number(mu)),
+                    QTableWidgetItem(self.ctrl.format_number(diameter)),
+                    QTableWidgetItem("--" if local_load is None else self.ctrl.format_number(local_load)),
+                    QTableWidgetItem("--" if torque is None else self.ctrl.format_number(torque)),
+                ]
+                for col, item in enumerate(items):
+                    if col in (0, 3, 4):
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.table_friction.setItem(row, col, item)
+        finally:
+            self.table_friction.blockSignals(False)
     # ---- sweep ----
     def play(self):
         if not self.ctrl.drivers and not self.ctrl.outputs:
@@ -1277,6 +1383,7 @@ class SimulationPanel(QWidget):
                 "treat_point_spline_as_soft": bool(has_point_spline),
             },
             "loads": list(self.ctrl.loads),
+            "friction_joints": list(self.ctrl.friction_joints),
             "measurements": {
                 "signals": signals,
                 "measures": list(self.ctrl.measures),

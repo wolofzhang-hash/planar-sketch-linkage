@@ -113,6 +113,49 @@ class ControllerSimulation:
     def clear_loads(self):
         self.loads = []
 
+    # ---- Joint friction ----
+    def add_friction_joint(self, pid: int, mu: float = 0.0, diameter: float = 0.0):
+        if pid not in self.points:
+            return
+        self.friction_joints.append({
+            "pid": int(pid),
+            "mu": float(mu),
+            "diameter": float(diameter),
+        })
+
+    def remove_friction_joint_at(self, index: int):
+        if 0 <= index < len(self.friction_joints):
+            del self.friction_joints[index]
+
+    def clear_friction_joints(self):
+        self.friction_joints = []
+
+    def get_friction_table(self, use_cached_loads: bool = True) -> List[Dict[str, Any]]:
+        if use_cached_loads and self._last_joint_loads:
+            joint_loads = list(self._last_joint_loads)
+        else:
+            joint_loads = self.compute_quasistatic_joint_loads()
+        load_map = {
+            int(jl.get("pid", -1)): float(jl.get("mag", 0.0))
+            for jl in joint_loads
+            if int(jl.get("pid", -1)) >= 0
+        }
+        rows: List[Dict[str, Any]] = []
+        for item in self.friction_joints:
+            pid = int(item.get("pid", -1))
+            mu = float(item.get("mu", 0.0))
+            diameter = float(item.get("diameter", 0.0))
+            local_load = load_map.get(pid)
+            torque = None if local_load is None else float(local_load) * mu * diameter
+            rows.append({
+                "pid": pid,
+                "mu": mu,
+                "diameter": diameter,
+                "local_load": local_load,
+                "torque": torque,
+            })
+        return rows
+
     def _prompt_add_force(self, pid: int):
         fx, ok = QInputDialog.getDouble(self.win, "Force X", f"P{pid} Fx", 0.0, decimals=4)
         if not ok:
