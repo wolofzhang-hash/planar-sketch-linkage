@@ -114,7 +114,7 @@ class ControllerCore:
         self.measures: List[Dict[str, Any]] = []
         # Load measurements: a list of {type,name,...} items.
         self.load_measures: List[Dict[str, Any]] = []
-        # Quasi-static loads: list of {type,pid,fx,fy,mz}
+        # Quasi-static loads: list of {type,pid,fx,fy,mz,ref_pid,k,theta0}
         self.loads: List[Dict[str, Any]] = []
         # Display items for load arrows.
         self._load_arrow_items: List[ForceArrowItem] = []
@@ -132,4 +132,3 @@ class ControllerCore:
         self._sim_zero_meas_deg: Dict[str, float] = {}
         self._sim_zero_meas_len: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 200.0}
-

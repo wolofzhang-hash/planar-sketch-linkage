@@ -178,7 +178,7 @@ class SimulationPanel(QWidget):
         loads_tab = QWidget()
         loads_layout = QVBoxLayout(loads_tab)
 
-        self.table_loads = QTableWidget(0, 5)
+        self.table_loads = QTableWidget(0, 7)
         self.table_loads.setHorizontalHeaderLabels([])
         self.table_loads.verticalHeader().setVisible(False)
         self.table_loads.setEditTriggers(
@@ -293,6 +293,8 @@ class SimulationPanel(QWidget):
             tr(lang, "sim.table.fx"),
             tr(lang, "sim.table.fy"),
             tr(lang, "sim.table.mz"),
+            tr(lang, "sim.table.k"),
+            tr(lang, "sim.table.ref"),
         ])
         self.table_drivers.setHorizontalHeaderLabels([
             tr(lang, "sim.table.driver"),
@@ -733,23 +735,52 @@ class SimulationPanel(QWidget):
         self.refresh_labels()
 
     def _on_load_table_changed(self, row: int, col: int) -> None:
-        if col not in (2, 3, 4):
+        if col not in (2, 3, 4, 5, 6):
             return
         if row < 0 or row >= len(self.ctrl.loads):
             return
         item = self.table_loads.item(row, col)
         if item is None:
             return
-        key_map = {2: "fx", 3: "fy", 4: "mz"}
-        key = key_map.get(col)
-        if key is None:
+        load = self.ctrl.loads[row]
+        ltype = str(load.get("type", "force")).lower()
+        if col in (2, 3, 4) and ltype in ("force", "torque"):
+            key_map = {2: "fx", 3: "fy", 4: "mz"}
+            key = key_map.get(col)
+            if key is None:
+                return
+            try:
+                value = float(item.text())
+            except ValueError:
+                self._refresh_load_tables()
+                return
+            self.ctrl.loads[row][key] = value
+        elif col == 5 and ltype in ("spring", "torsion_spring"):
+            try:
+                value = float(item.text())
+            except ValueError:
+                self._refresh_load_tables()
+                return
+            self.ctrl.loads[row]["k"] = value
+        elif col == 6 and ltype in ("spring", "torsion_spring"):
+            try:
+                raw = item.text().strip()
+                if raw.lower().startswith("p"):
+                    raw = raw[1:]
+                value = int(raw)
+            except ValueError:
+                self._refresh_load_tables()
+                return
+            if value not in self.ctrl.points:
+                self._refresh_load_tables()
+                return
+            self.ctrl.loads[row]["ref_pid"] = value
+            if ltype == "torsion_spring":
+                theta0 = self.ctrl.get_angle_rad(int(load.get("pid", -1)), value)
+                if theta0 is not None:
+                    self.ctrl.loads[row]["theta0"] = float(theta0)
+        else:
             return
-        try:
-            value = float(item.text())
-        except ValueError:
-            self._refresh_load_tables()
-            return
-        self.ctrl.loads[row][key] = value
         self.refresh_labels()
 
     def _refresh_load_tables(self):
@@ -761,18 +792,24 @@ class SimulationPanel(QWidget):
             for row, ld in enumerate(loads):
                 pid = ld.get("pid", "--")
                 ltype = str(ld.get("type", "force"))
-                fx = ld.get("fx", 0.0)
-                fy = ld.get("fy", 0.0)
-                mz = ld.get("mz", 0.0)
+                fx, fy, mz = self.ctrl._resolve_load_components(ld)
+                k = ld.get("k", "")
+                ref_pid = ld.get("ref_pid", "")
                 items = [
                     QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
                     QTableWidgetItem(ltype),
                     QTableWidgetItem(self.ctrl.format_number(fx)),
                     QTableWidgetItem(self.ctrl.format_number(fy)),
                     QTableWidgetItem(self.ctrl.format_number(mz)),
+                    QTableWidgetItem("" if k == "" else self.ctrl.format_number(k)),
+                    QTableWidgetItem("" if ref_pid == "" else f"P{ref_pid}"),
                 ]
                 for col, item in enumerate(items):
                     if col in (0, 1):
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    elif ltype.lower() in ("force", "torque") and col in (5, 6):
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    elif ltype.lower() not in ("force", "torque") and col in (2, 3, 4):
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     self.table_loads.setItem(row, col, item)
         finally:

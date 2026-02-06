@@ -1535,6 +1535,8 @@ class ControllerSelection:
             sub_load = m.addMenu(tr(lang, "context.loads"))
             sub_load.addAction(tr(lang, "context.add_force"), lambda: self._prompt_add_force(pid))
             sub_load.addAction(tr(lang, "context.add_torque"), lambda: self._prompt_add_torque(pid))
+            sub_load.addAction(tr(lang, "context.add_spring"), lambda: self._prompt_add_spring(pid))
+            sub_load.addAction(tr(lang, "context.add_torsion_spring"), lambda: self._prompt_add_torsion_spring(pid))
             sub_load.addSeparator()
             sub_load.addAction(tr(lang, "context.clear_loads"), self.clear_loads)
 
@@ -1847,31 +1849,20 @@ class ControllerSelection:
         load_vectors: List[Dict[str, float]] = []
         torque_vectors: List[Dict[str, float]] = []
         for ld in self.loads:
-            if str(ld.get("type", "force")).lower() != "force":
-                if str(ld.get("type", "")).lower() == "torque":
-                    pid = int(ld.get("pid", -1))
-                    if pid not in self.points:
-                        continue
-                    if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
-                        continue
-                    mz = float(ld.get("mz", 0.0))
-                    if abs(mz) < 1e-12:
-                        continue
-                    p = self.points[pid]
-                    torque_vectors.append({
-                        "x": p["x"],
-                        "y": p["y"],
-                        "mz": mz,
-                        "label": self.format_number(mz),
-                    })
-                continue
             pid = int(ld.get("pid", -1))
             if pid not in self.points:
                 continue
             if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
                 continue
-            fx = float(ld.get("fx", 0.0))
-            fy = float(ld.get("fy", 0.0))
+            fx, fy, mz = self._resolve_load_components(ld)
+            if abs(mz) > 1e-12:
+                p = self.points[pid]
+                torque_vectors.append({
+                    "x": p["x"],
+                    "y": p["y"],
+                    "mz": mz,
+                    "label": self.format_number(mz),
+                })
             if abs(fx) + abs(fy) < 1e-12:
                 continue
             p = self.points[pid]
@@ -2529,6 +2520,17 @@ class ControllerSelection:
             mz = float(ld.get("mz", 0.0))
             if ltype == "torque":
                 self.add_load_torque(pid, mz)
+            elif ltype == "spring":
+                ref_pid = int(ld.get("ref_pid", -1))
+                k = float(ld.get("k", 0.0))
+                if ref_pid in self.points:
+                    self.add_load_spring(pid, ref_pid, k)
+            elif ltype == "torsion_spring":
+                ref_pid = int(ld.get("ref_pid", -1))
+                k = float(ld.get("k", 0.0))
+                theta0 = float(ld.get("theta0", 0.0))
+                if ref_pid in self.points:
+                    self.add_load_torsion_spring(pid, ref_pid, k, theta0)
             else:
                 self.add_load_force(pid, fx, fy)
 
