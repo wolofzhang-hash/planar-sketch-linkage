@@ -2008,6 +2008,24 @@ class ControllerSelection:
 
     def to_dict(self) -> Dict[str, Any]:
         payload = self.default_project_dict(project_uuid=self._ensure_project_uuid())
+        simulation_settings = dict(getattr(self, "simulation_settings", {}) or {})
+        optimization_settings = dict(getattr(self, "optimization_settings", {}) or {})
+        measurement_settings = {
+            "measures": list(self.measures),
+            "load_measures": list(self.load_measures),
+        }
+        win = getattr(self, "win", None)
+        sim_panel = getattr(win, "sim_panel", None) if win else None
+        if sim_panel is not None:
+            if hasattr(sim_panel, "get_simulation_settings"):
+                simulation_settings = sim_panel.get_simulation_settings()
+            opt_tab = getattr(sim_panel, "optimization_tab", None)
+            if opt_tab is not None and hasattr(opt_tab, "export_settings"):
+                optimization_settings = opt_tab.export_settings()
+        if simulation_settings:
+            self.simulation_settings = dict(simulation_settings)
+        if optimization_settings:
+            self.optimization_settings = dict(optimization_settings)
         payload.update(
             {
                 "display_precision": int(getattr(self, "display_precision", 3)),
@@ -2181,6 +2199,9 @@ class ControllerSelection:
                     "end": float(self.sweep_settings.get("end", 360.0)),
                     "step": float(self.sweep_settings.get("step", 200.0)),
                 },
+                "measurement_settings": measurement_settings,
+                "simulation_settings": simulation_settings,
+                "optimization_settings": optimization_settings,
             }
         )
         return payload
@@ -2235,6 +2256,12 @@ class ControllerSelection:
                 "end": float(self.sweep_settings.get("end", 360.0)),
                 "step": float(self.sweep_settings.get("step", 200.0)),
             },
+            "measurement_settings": {
+                "measures": [],
+                "load_measures": [],
+            },
+            "simulation_settings": dict(getattr(self, "simulation_settings", {}) or {}),
+            "optimization_settings": dict(getattr(self, "optimization_settings", {}) or {}),
         }
 
     def merge_project_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2246,7 +2273,15 @@ class ControllerSelection:
         if not isinstance(data, dict):
             return base
         for key, val in data.items():
-            if key in ("background_image", "driver", "output", "sweep") and isinstance(val, dict):
+            if key in (
+                "background_image",
+                "driver",
+                "output",
+                "sweep",
+                "measurement_settings",
+                "simulation_settings",
+                "optimization_settings",
+            ) and isinstance(val, dict):
                 base[key] = {**base.get(key, {}), **val}
             else:
                 base[key] = val
@@ -2284,6 +2319,9 @@ class ControllerSelection:
             "load_measures",
             "friction_joints",
             "sweep",
+            "measurement_settings",
+            "simulation_settings",
+            "optimization_settings",
         }
         for key in sorted(schema_keys):
             if key not in data:
@@ -2306,7 +2344,15 @@ class ControllerSelection:
             "load_measures",
             "friction_joints",
         ]
-        dict_keys = ["background_image", "driver", "output", "sweep"]
+        dict_keys = [
+            "background_image",
+            "driver",
+            "output",
+            "sweep",
+            "measurement_settings",
+            "simulation_settings",
+            "optimization_settings",
+        ]
         for key in list_keys:
             if key in data and not isinstance(data.get(key), list):
                 errors.append(f"Key '{key}' should be a list.")
@@ -2370,6 +2416,18 @@ class ControllerSelection:
         self.sweep_settings = {"start": sweep_start, "end": sweep_end, "step": sweep_step}
         if hasattr(self.win, "sim_panel"):
             self.win.sim_panel.apply_sweep_settings(self.sweep_settings)
+        raw_sim_settings = data.get("simulation_settings", {}) or {}
+        try:
+            max_nfev = int(float(raw_sim_settings.get("max_nfev", 250)))
+        except Exception:
+            max_nfev = 250
+        self.simulation_settings = {
+            "use_scipy": bool(raw_sim_settings.get("use_scipy", True)),
+            "max_nfev": max_nfev,
+            "reset_before_run": bool(raw_sim_settings.get("reset_before_run", True)),
+        }
+        raw_opt_settings = data.get("optimization_settings", {}) or {}
+        self.optimization_settings = dict(raw_opt_settings) if isinstance(raw_opt_settings, dict) else {}
         self.scene.blockSignals(True)
         try:
             self.scene.clear()
@@ -2428,12 +2486,13 @@ class ControllerSelection:
         output = data.get("output", {}) or {}
         drivers_list = data.get("drivers", None)
         outputs_list = data.get("outputs", None)
-        measures = data.get("measures", []) or []
+        measurement_settings = data.get("measurement_settings", {}) or {}
+        measures = measurement_settings.get("measures", data.get("measures", []) or []) or []
         self.display_precision = int(data.get("display_precision", getattr(self, "display_precision", 3)))
         self.load_arrow_width = float(data.get("load_arrow_width", getattr(self, "load_arrow_width", 1.6)))
         self.torque_arrow_width = float(data.get("torque_arrow_width", getattr(self, "torque_arrow_width", 1.6)))
         loads = data.get("loads", []) or []
-        load_measures = data.get("load_measures", []) or []
+        load_measures = measurement_settings.get("load_measures", data.get("load_measures", []) or []) or []
         friction_joints = data.get("friction_joints", []) or []
         bg_path = self.background_image.get("path")
         if bg_path:
@@ -2720,6 +2779,11 @@ class ControllerSelection:
         self._next_sid = max(max_sid + 1, 0)
         self._next_bid = max(max_bid + 1, 0)
         self.mode = "Idle"; self._line_sel = []; self._co_master = None; self._pol_master = None; self._pol_line_sel = []; self._pos_master = None
+        if hasattr(self.win, "sim_panel"):
+            self.win.sim_panel.apply_simulation_settings(self.simulation_settings)
+            opt_tab = getattr(self.win.sim_panel, "optimization_tab", None)
+            if opt_tab is not None and hasattr(opt_tab, "apply_settings"):
+                opt_tab.apply_settings(self.optimization_settings)
         self.solve_constraints(); self.update_graphics()
         if self.panel: self.panel.defer_refresh_all()
         if clear_undo: self.stack.clear()

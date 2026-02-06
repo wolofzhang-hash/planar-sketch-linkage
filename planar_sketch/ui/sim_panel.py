@@ -278,7 +278,11 @@ class SimulationPanel(QWidget):
         self.table_loads.cellChanged.connect(self._on_load_table_changed)
         self.table_friction.cellChanged.connect(self._on_friction_table_changed)
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
+        self.chk_scipy.stateChanged.connect(self._on_simulation_settings_changed)
+        self.ed_nfev.editingFinished.connect(self._on_simulation_settings_changed)
+        self.chk_reset_before_run.stateChanged.connect(self._on_simulation_settings_changed)
         self.apply_sweep_settings(self.ctrl.sweep_settings)
+        self.apply_simulation_settings(self.ctrl.simulation_settings)
 
         self.apply_language()
         self.refresh_labels()
@@ -440,6 +444,41 @@ class SimulationPanel(QWidget):
             step_val = 200
         step_val = max(step_val, 1)
         self.ed_step.setText(f"{step_val}")
+
+    def get_simulation_settings(self) -> Dict[str, Any]:
+        try:
+            max_nfev = int(float(self.ed_nfev.text() or "250"))
+        except Exception:
+            max_nfev = 250
+        if max_nfev <= 0:
+            max_nfev = 250
+        return {
+            "use_scipy": bool(self.chk_scipy.isChecked()),
+            "max_nfev": max_nfev,
+            "reset_before_run": bool(self.chk_reset_before_run.isChecked()),
+        }
+
+    def apply_simulation_settings(self, settings: Dict[str, Any]) -> None:
+        use_scipy = bool(settings.get("use_scipy", True))
+        reset_before = bool(settings.get("reset_before_run", True))
+        try:
+            max_nfev = int(float(settings.get("max_nfev", 250)))
+        except Exception:
+            max_nfev = 250
+        if max_nfev <= 0:
+            max_nfev = 250
+        self.chk_scipy.setChecked(use_scipy)
+        self.ed_nfev.setText(str(max_nfev))
+        self.chk_reset_before_run.setChecked(reset_before)
+        self._sync_simulation_settings_from_fields()
+
+    def _sync_simulation_settings_from_fields(self) -> None:
+        if not hasattr(self.ctrl, "simulation_settings"):
+            return
+        self.ctrl.simulation_settings = self.get_simulation_settings()
+
+    def _on_simulation_settings_changed(self) -> None:
+        self._sync_simulation_settings_from_fields()
 
     def _sync_sweep_settings_from_fields(self) -> None:
         try:

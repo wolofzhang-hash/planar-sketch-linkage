@@ -135,3 +135,16 @@ class ControllerCore:
         self._sim_zero_meas_deg: Dict[str, float] = {}
         self._sim_zero_meas_len: Dict[str, float] = {}
         self.sweep_settings: Dict[str, float] = {"start": 0.0, "end": 360.0, "step": 200.0}
+        self.simulation_settings: Dict[str, Any] = {
+            "use_scipy": True,
+            "max_nfev": 250,
+            "reset_before_run": True,
+        }
+        self.optimization_settings: Dict[str, Any] = {
+            "evals": 50,
+            "seed": "",
+            "debug_log": {"enabled": False, "path": ""},
+            "variables": [],
+            "objectives": [],
+            "constraints": [],
+        }
