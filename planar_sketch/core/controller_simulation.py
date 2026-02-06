@@ -121,6 +121,8 @@ class ControllerSimulation:
             "pid": int(pid),
             "mu": float(mu),
             "diameter": float(diameter),
+            "mu_expr": "",
+            "diameter_expr": "",
         })
 
     def remove_friction_joint_at(self, index: int):
@@ -145,12 +147,16 @@ class ControllerSimulation:
             pid = int(item.get("pid", -1))
             mu = float(item.get("mu", 0.0))
             diameter = float(item.get("diameter", 0.0))
+            mu_expr = str(item.get("mu_expr", "") or "")
+            diameter_expr = str(item.get("diameter_expr", "") or "")
             local_load = load_map.get(pid)
             torque = None if local_load is None else float(local_load) * mu * diameter
             rows.append({
                 "pid": pid,
                 "mu": mu,
                 "diameter": diameter,
+                "mu_expr": mu_expr,
+                "diameter_expr": diameter_expr,
                 "local_load": local_load,
                 "torque": torque,
             })
@@ -212,6 +218,17 @@ class ControllerSimulation:
         if not ok:
             return
         self.add_load_torsion_spring(pid, int(ref_pid), k, float(theta0), load)
+        if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel.refresh_labels()
+
+    def _prompt_add_friction(self, pid: int):
+        mu, ok = QInputDialog.getDouble(self.win, "Friction", f"P{pid} μ", 0.0, decimals=4)
+        if not ok:
+            return
+        diameter, ok = QInputDialog.getDouble(self.win, "Friction", f"P{pid} Diameter", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_friction_joint(pid, mu, diameter)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 

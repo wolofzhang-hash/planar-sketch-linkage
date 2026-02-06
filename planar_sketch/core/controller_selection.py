@@ -1535,6 +1535,7 @@ class ControllerSelection:
             sub_load = m.addMenu(tr(lang, "context.loads"))
             sub_load.addAction(tr(lang, "context.add_force"), lambda: self._prompt_add_force(pid))
             sub_load.addAction(tr(lang, "context.add_torque"), lambda: self._prompt_add_torque(pid))
+            sub_load.addAction(tr(lang, "context.add_friction"), lambda: self._prompt_add_friction(pid))
             if nbrs:
                 sub_spring = sub_load.addMenu(tr(lang, "context.add_spring"))
                 for nb in nbrs:
@@ -1858,10 +1859,13 @@ class ControllerSelection:
                 item.setVisible(False)
             for item in self._torque_arrow_items:
                 item.setVisible(False)
+            for item in self._friction_torque_arrow_items:
+                item.setVisible(False)
             return
 
         load_vectors: List[Dict[str, float]] = []
         torque_vectors: List[Dict[str, float]] = []
+        friction_torque_vectors: List[Dict[str, float]] = []
         for ld in self.loads:
             pid = int(ld.get("pid", -1))
             if pid not in self.points:
@@ -1887,6 +1891,23 @@ class ControllerSelection:
                 "fx": fx,
                 "fy": fy,
                 "label": self.format_number(mag),
+            })
+
+        for entry in self.get_friction_table():
+            pid = int(entry.get("pid", -1))
+            if pid not in self.points:
+                continue
+            if self.is_point_effectively_hidden(pid) or (not self.show_points_geometry):
+                continue
+            torque = entry.get("torque", None)
+            if torque is None or abs(torque) <= 1e-12:
+                continue
+            p = self.points[pid]
+            friction_torque_vectors.append({
+                "x": p["x"],
+                "y": p["y"],
+                "mz": float(torque),
+                "label": self.format_number(abs(float(torque))),
             })
 
         for jl in self._last_joint_loads:
@@ -1957,6 +1978,31 @@ class ControllerSelection:
                 vec["y"],
                 vec["mz"],
                 scale=torque_scale,
+                label=str(vec.get("label", "")),
+            )
+
+        friction_needed = len(friction_torque_vectors)
+        while len(self._friction_torque_arrow_items) < friction_needed:
+            item = TorqueArrowItem(QColor(60, 180, 80))
+            item.set_line_width(self.torque_arrow_width * 0.8)
+            self._friction_torque_arrow_items.append(item)
+            self.scene.addItem(item)
+        friction_mags = [abs(vec["mz"]) for vec in friction_torque_vectors]
+        max_friction = max(friction_mags) if friction_mags else 0.0
+        friction_target_radius = 18.0
+        friction_scale = (friction_target_radius / max_friction) if max_friction > 1e-9 else 1.0
+        friction_scale = max(0.2, min(3.0, friction_scale))
+        for idx, item in enumerate(self._friction_torque_arrow_items):
+            if idx >= friction_needed:
+                item.setVisible(False)
+                continue
+            item.set_line_width(self.torque_arrow_width * 0.8)
+            vec = friction_torque_vectors[idx]
+            item.set_torque(
+                vec["x"],
+                vec["y"],
+                vec["mz"],
+                scale=friction_scale,
                 label=str(vec.get("label", "")),
             )
 
@@ -2125,6 +2171,8 @@ class ControllerSelection:
                         "pid": int(fj.get("pid", -1)),
                         "mu": float(fj.get("mu", 0.0)),
                         "diameter": float(fj.get("diameter", 0.0)),
+                        "mu_expr": str(fj.get("mu_expr", "") or ""),
+                        "diameter_expr": str(fj.get("diameter_expr", "") or ""),
                     }
                     for fj in self.friction_joints
                 ],
@@ -2590,10 +2638,14 @@ class ControllerSelection:
                 diameter = float(fj.get("diameter", 0.0))
             except Exception:
                 diameter = 0.0
+            mu_expr = str(fj.get("mu_expr", "") or "")
+            diameter_expr = str(fj.get("diameter_expr", "") or "")
             self.friction_joints.append({
                 "pid": pid,
                 "mu": mu,
                 "diameter": diameter,
+                "mu_expr": mu_expr,
+                "diameter_expr": diameter_expr,
             })
         
         # --- Coincide constraints ---
