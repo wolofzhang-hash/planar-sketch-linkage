@@ -356,6 +356,7 @@ class OptimizationWorker(QThread):
                     summaries[case_id] = summary
                     statuses[case_id] = status
 
+                objective_records: List[Dict[str, Any]] = []
                 obj_vals = []
                 obj_display_vals = []
                 obj_score = 0.0
@@ -364,6 +365,7 @@ class OptimizationWorker(QThread):
                         continue
                     case_vals = []
                     case_display_vals = []
+                    case_ids = obj.case_ids or all_case_ids
                     for case_id in obj.case_ids or all_case_ids:
                         signals = signals_by_case.get(case_id)
                         if not signals:
@@ -376,32 +378,60 @@ class OptimizationWorker(QThread):
                             score_val = -val if obj.direction == "max" else val
                         case_vals.append(score_val)
                         case_display_vals.append(val)
-                    if case_vals:
-                        obj_vals.append(sum(case_vals) / float(len(case_vals)))
-                    if case_display_vals:
-                        obj_display_vals.append(sum(case_display_vals) / float(len(case_display_vals)))
+                    avg_score = sum(case_vals) / float(len(case_vals)) if case_vals else None
+                    avg_display = sum(case_display_vals) / float(len(case_display_vals)) if case_display_vals else None
+                    if avg_score is not None:
+                        obj_vals.append(avg_score)
+                    if avg_display is not None:
+                        obj_display_vals.append(avg_display)
+                    objective_records.append(
+                        {
+                            "expression": obj.expression,
+                            "direction": obj.direction,
+                            "case_ids": list(case_ids),
+                            "values": case_display_vals,
+                            "value": avg_display,
+                            "score": avg_score,
+                        }
+                    )
                 base_score = obj_vals[0] if obj_vals else 0.0
                 base_display = obj_display_vals[0] if obj_display_vals else 0.0
 
                 violation = 0.0
                 con_vals = []
+                constraint_records: List[Dict[str, Any]] = []
                 for con in self.constraints:
                     if not con.enabled:
                         continue
-                    for case_id in con.case_ids or all_case_ids:
+                    case_values = []
+                    case_ids = con.case_ids or all_case_ids
+                    for case_id in case_ids:
                         signals = signals_by_case.get(case_id)
                         if not signals:
                             continue
                         val, err = eval_signal_expression(con.expression, signals)
                         if err:
                             violation += 1e6
-                            con_vals.append(val)
+                            case_values.append(val)
                             continue
-                        con_vals.append(val)
+                        case_values.append(val)
                         if con.comparator == "<=":
                             violation += max(0.0, val - con.limit)
                         else:
                             violation += max(0.0, con.limit - val)
+                    avg_val = sum(case_values) / float(len(case_values)) if case_values else None
+                    if avg_val is not None:
+                        con_vals.append(avg_val)
+                    constraint_records.append(
+                        {
+                            "expression": con.expression,
+                            "comparator": con.comparator,
+                            "limit": con.limit,
+                            "case_ids": list(case_ids),
+                            "values": case_values,
+                            "value": avg_val,
+                        }
+                    )
 
                 penalty = violation * 1e6
                 obj_score = base_score + penalty
@@ -430,9 +460,11 @@ class OptimizationWorker(QThread):
                     "cases": status_list,
                     "design_vars": candidate,
                     "objective_value": base_display,
+                    "objectives": objective_records,
                     "objective_score": obj_score,
                     "penalty": penalty,
                     "constraint_violation": violation,
+                    "constraints": constraint_records,
                     "solver_status": "success" if overall_success else "fail",
                 }
                 if apply_warnings:
