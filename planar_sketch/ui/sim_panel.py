@@ -178,7 +178,7 @@ class SimulationPanel(QWidget):
         loads_tab = QWidget()
         loads_layout = QVBoxLayout(loads_tab)
 
-        self.table_loads = QTableWidget(0, 7)
+        self.table_loads = QTableWidget(0, 8)
         self.table_loads.setHorizontalHeaderLabels([])
         self.table_loads.verticalHeader().setVisible(False)
         self.table_loads.setEditTriggers(
@@ -294,6 +294,7 @@ class SimulationPanel(QWidget):
             tr(lang, "sim.table.fy"),
             tr(lang, "sim.table.mz"),
             tr(lang, "sim.table.k"),
+            tr(lang, "sim.table.load"),
             tr(lang, "sim.table.ref"),
         ])
         self.table_drivers.setHorizontalHeaderLabels([
@@ -735,7 +736,7 @@ class SimulationPanel(QWidget):
         self.refresh_labels()
 
     def _on_load_table_changed(self, row: int, col: int) -> None:
-        if col not in (2, 3, 4, 5, 6):
+        if col not in (2, 3, 4, 5, 6, 7):
             return
         if row < 0 or row >= len(self.ctrl.loads):
             return
@@ -763,6 +764,13 @@ class SimulationPanel(QWidget):
                 return
             self.ctrl.loads[row]["k"] = value
         elif col == 6 and ltype in ("spring", "torsion_spring"):
+            try:
+                value = float(item.text())
+            except ValueError:
+                self._refresh_load_tables()
+                return
+            self.ctrl.loads[row]["load"] = value
+        elif col == 7 and ltype in ("spring", "torsion_spring"):
             try:
                 raw = item.text().strip()
                 if raw.lower().startswith("p"):
@@ -794,6 +802,7 @@ class SimulationPanel(QWidget):
                 ltype = str(ld.get("type", "force"))
                 fx, fy, mz = self.ctrl._resolve_load_components(ld)
                 k = ld.get("k", "")
+                preload = ld.get("load", "")
                 ref_pid = ld.get("ref_pid", "")
                 items = [
                     QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
@@ -802,12 +811,13 @@ class SimulationPanel(QWidget):
                     QTableWidgetItem(self.ctrl.format_number(fy)),
                     QTableWidgetItem(self.ctrl.format_number(mz)),
                     QTableWidgetItem("" if k == "" else self.ctrl.format_number(k)),
+                    QTableWidgetItem("" if preload == "" else self.ctrl.format_number(preload)),
                     QTableWidgetItem("" if ref_pid == "" else f"P{ref_pid}"),
                 ]
                 for col, item in enumerate(items):
                     if col in (0, 1):
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    elif ltype.lower() in ("force", "torque") and col in (5, 6):
+                    elif ltype.lower() in ("force", "torque") and col in (5, 6, 7):
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     elif ltype.lower() not in ("force", "torque") and col in (2, 3, 4):
                         item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
