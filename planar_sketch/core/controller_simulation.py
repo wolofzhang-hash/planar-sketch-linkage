@@ -22,6 +22,8 @@ class ControllerSimulation:
         ang = self.get_angle_rad(int(pivot_pid), int(tip_pid))
         if ang is not None:
             driver["rad"] = float(ang)
+            self._sim_zero_input_rad = float(ang)
+            self._sim_zero_driver_rad = [float(ang)]
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
 
