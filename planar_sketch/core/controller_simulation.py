@@ -26,6 +26,7 @@ class ControllerSimulation:
             self._sim_zero_driver_rad = [float(ang)]
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
+        self.update_sim_start_pose_snapshot()
 
     def set_driver_translation(self, plid: int):
         """Set a translational driver for a point-on-line (s) constraint."""
@@ -54,11 +55,13 @@ class ControllerSimulation:
         })
         self.drivers.insert(0, driver)
         self._sync_primary_driver()
+        self.update_sim_start_pose_snapshot()
 
     def clear_driver(self):
         self.drivers = []
         self._sim_zero_driver_rad = []
         self._sync_primary_driver()
+        self.update_sim_start_pose_snapshot()
 
     def set_output(self, pivot_pid: int, tip_pid: int):
         """Set the output measurement angle (pivot -> tip)."""
