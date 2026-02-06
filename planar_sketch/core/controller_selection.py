@@ -2652,21 +2652,49 @@ class ControllerSelection:
             fx = float(ld.get("fx", 0.0))
             fy = float(ld.get("fy", 0.0))
             mz = float(ld.get("mz", 0.0))
+            fx_expr = str(ld.get("fx_expr", "") or "")
+            fy_expr = str(ld.get("fy_expr", "") or "")
+            mz_expr = str(ld.get("mz_expr", "") or "")
+            k_expr = str(ld.get("k_expr", "") or "")
+            load_expr = str(ld.get("load_expr", "") or "")
             if ltype == "torque":
                 self.add_load_torque(pid, mz)
+                self.loads[-1].update({
+                    "fx": fx,
+                    "fy": fy,
+                    "fx_expr": fx_expr,
+                    "fy_expr": fy_expr,
+                    "mz_expr": mz_expr,
+                })
             elif ltype == "spring":
                 ref_pid = int(ld.get("ref_pid", -1))
                 k = float(ld.get("k", 0.0))
+                preload = float(ld.get("load", 0.0))
                 if ref_pid in self.points:
-                    self.add_load_spring(pid, ref_pid, k)
+                    self.add_load_spring(pid, ref_pid, k, preload)
+                    self.loads[-1].update({
+                        "k_expr": k_expr,
+                        "load_expr": load_expr,
+                    })
             elif ltype == "torsion_spring":
                 ref_pid = int(ld.get("ref_pid", -1))
                 k = float(ld.get("k", 0.0))
                 theta0 = float(ld.get("theta0", 0.0))
+                preload = float(ld.get("load", 0.0))
                 if ref_pid in self.points:
-                    self.add_load_torsion_spring(pid, ref_pid, k, theta0)
+                    self.add_load_torsion_spring(pid, ref_pid, k, theta0, preload)
+                    self.loads[-1].update({
+                        "k_expr": k_expr,
+                        "load_expr": load_expr,
+                    })
             else:
                 self.add_load_force(pid, fx, fy)
+                self.loads[-1].update({
+                    "mz": mz,
+                    "fx_expr": fx_expr,
+                    "fy_expr": fy_expr,
+                    "mz_expr": mz_expr,
+                })
 
         self.load_measures = []
         for lm in load_measures:

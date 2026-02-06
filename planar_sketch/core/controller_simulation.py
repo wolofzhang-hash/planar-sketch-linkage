@@ -76,10 +76,28 @@ class ControllerSimulation:
 
     # ---- Quasi-static loads ----
     def add_load_force(self, pid: int, fx: float, fy: float):
-        self.loads.append({"type": "force", "pid": int(pid), "fx": float(fx), "fy": float(fy), "mz": 0.0})
+        self.loads.append({
+            "type": "force",
+            "pid": int(pid),
+            "fx": float(fx),
+            "fy": float(fy),
+            "mz": 0.0,
+            "fx_expr": "",
+            "fy_expr": "",
+            "mz_expr": "",
+        })
 
     def add_load_torque(self, pid: int, mz: float):
-        self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
+        self.loads.append({
+            "type": "torque",
+            "pid": int(pid),
+            "fx": 0.0,
+            "fy": 0.0,
+            "mz": float(mz),
+            "fx_expr": "",
+            "fy_expr": "",
+            "mz_expr": "",
+        })
 
     def add_load_spring(self, pid: int, ref_pid: int, k: float, load: float = 0.0):
         self.loads.append({
@@ -91,6 +109,8 @@ class ControllerSimulation:
             "fx": 0.0,
             "fy": 0.0,
             "mz": 0.0,
+            "k_expr": "",
+            "load_expr": "",
         })
 
     def add_load_torsion_spring(self, pid: int, ref_pid: int, k: float, theta0: float, load: float = 0.0):
@@ -104,6 +124,8 @@ class ControllerSimulation:
             "fx": 0.0,
             "fy": 0.0,
             "mz": 0.0,
+            "k_expr": "",
+            "load_expr": "",
         })
 
     def remove_load_at(self, index: int):
@@ -551,10 +573,28 @@ class ControllerSimulation:
 
     # ---- Quasi-static loads ----
     def add_load_force(self, pid: int, fx: float, fy: float):
-        self.loads.append({"type": "force", "pid": int(pid), "fx": float(fx), "fy": float(fy), "mz": 0.0})
+        self.loads.append({
+            "type": "force",
+            "pid": int(pid),
+            "fx": float(fx),
+            "fy": float(fy),
+            "mz": 0.0,
+            "fx_expr": "",
+            "fy_expr": "",
+            "mz_expr": "",
+        })
 
     def add_load_torque(self, pid: int, mz: float):
-        self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
+        self.loads.append({
+            "type": "torque",
+            "pid": int(pid),
+            "fx": 0.0,
+            "fy": 0.0,
+            "mz": float(mz),
+            "fx_expr": "",
+            "fy_expr": "",
+            "mz_expr": "",
+        })
 
     def clear_loads(self):
         self.loads = []
