@@ -2120,6 +2120,14 @@ class ControllerSelection:
                     }
                     for lm in self.load_measures
                 ],
+                "friction_joints": [
+                    {
+                        "pid": int(fj.get("pid", -1)),
+                        "mu": float(fj.get("mu", 0.0)),
+                        "diameter": float(fj.get("diameter", 0.0)),
+                    }
+                    for fj in self.friction_joints
+                ],
                 "sweep": {
                     "start": float(self.sweep_settings.get("start", 0.0)),
                     "end": float(self.sweep_settings.get("end", 360.0)),
@@ -2173,6 +2181,7 @@ class ControllerSelection:
             "measures": [],
             "loads": [],
             "load_measures": [],
+            "friction_joints": [],
             "sweep": {
                 "start": float(self.sweep_settings.get("start", 0.0)),
                 "end": float(self.sweep_settings.get("end", 360.0)),
@@ -2225,6 +2234,7 @@ class ControllerSelection:
             "measures",
             "loads",
             "load_measures",
+            "friction_joints",
             "sweep",
         }
         for key in sorted(schema_keys):
@@ -2246,6 +2256,7 @@ class ControllerSelection:
             "measures",
             "loads",
             "load_measures",
+            "friction_joints",
         ]
         dict_keys = ["background_image", "driver", "output", "sweep"]
         for key in list_keys:
@@ -2374,6 +2385,7 @@ class ControllerSelection:
         self.torque_arrow_width = float(data.get("torque_arrow_width", getattr(self, "torque_arrow_width", 1.6)))
         loads = data.get("loads", []) or []
         load_measures = data.get("load_measures", []) or []
+        friction_joints = data.get("friction_joints", []) or []
         bg_path = self.background_image.get("path")
         if bg_path:
             image = QImage(bg_path)
@@ -2560,6 +2572,28 @@ class ControllerSelection:
                 "pid": int(pid),
                 "component": comp,
                 "name": name,
+            })
+
+        self.friction_joints = []
+        for fj in friction_joints:
+            try:
+                pid = int(fj.get("pid", -1))
+            except Exception:
+                continue
+            if pid not in self.points:
+                continue
+            try:
+                mu = float(fj.get("mu", 0.0))
+            except Exception:
+                mu = 0.0
+            try:
+                diameter = float(fj.get("diameter", 0.0))
+            except Exception:
+                diameter = 0.0
+            self.friction_joints.append({
+                "pid": pid,
+                "mu": mu,
+                "diameter": diameter,
             })
         
         # --- Coincide constraints ---

@@ -114,6 +114,8 @@ class ControllerCore:
         self.measures: List[Dict[str, Any]] = []
         # Load measurements: a list of {type,name,...} items.
         self.load_measures: List[Dict[str, Any]] = []
+        # Joint friction definitions: list of {pid, mu, diameter}
+        self.friction_joints: List[Dict[str, Any]] = []
         # Quasi-static loads: list of {type,pid,fx,fy,mz,ref_pid,k,theta0}
         self.loads: List[Dict[str, Any]] = []
         # Display items for load arrows.

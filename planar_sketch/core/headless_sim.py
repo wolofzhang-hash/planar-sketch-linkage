@@ -41,6 +41,7 @@ class HeadlessModel:
         self.measures: List[Dict[str, Any]] = []
         self.loads: List[Dict[str, Any]] = []
         self.load_measures: List[Dict[str, Any]] = []
+        self.friction_joints: List[Dict[str, Any]] = []
 
         self._sim_zero_input_rad: Optional[float] = None
         self._sim_zero_output_rad: Optional[float] = None
@@ -291,6 +292,7 @@ class HeadlessModel:
         self.measures = list(data.get("measures", []) or [])
         self.loads = list(data.get("loads", []) or [])
         self.load_measures = list(data.get("load_measures", []) or [])
+        self.friction_joints = list(data.get("friction_joints", []) or [])
 
     def _apply_case_spec(self, case_spec: Dict[str, Any]) -> None:
         driver = case_spec.get("driver")
@@ -312,6 +314,9 @@ class HeadlessModel:
         loads = case_spec.get("loads")
         if isinstance(loads, list):
             self.loads = [dict(ld) for ld in loads]
+        friction_joints = case_spec.get("friction_joints")
+        if isinstance(friction_joints, list):
+            self.friction_joints = [dict(fj) for fj in friction_joints]
         measurements = case_spec.get("measurements", {}) or {}
         measures = measurements.get("measures")
         if isinstance(measures, list):

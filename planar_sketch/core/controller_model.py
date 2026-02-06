@@ -1515,6 +1515,7 @@ class ControllerModel:
             return
         self.loads = [ld for ld in self.loads if self._safe_int(ld.get("pid", -1)) not in pids]
         self.load_measures = [lm for lm in self.load_measures if self._safe_int(lm.get("pid", -1)) not in pids]
+        self.friction_joints = [fj for fj in self.friction_joints if self._safe_int(fj.get("pid", -1)) not in pids]
         removed_meas_names: List[str] = []
         kept_measures: List[Dict[str, Any]] = []
         for m in self.measures:
