@@ -662,11 +662,11 @@ class HeadlessModel:
             if pid not in self.points:
                 continue
             idx = idx_map[pid]
-            fx = float(load.get("fx", 0.0))
-            fy = float(load.get("fy", 0.0))
+            fx, fy, mz = self._resolve_load_components(load, q, idx_map)
             f_ext[2 * idx] += fx
             f_ext[2 * idx + 1] += fy
-            torque_map[pid] = torque_map.get(pid, 0.0) + float(load.get("mz", 0.0))
+            if abs(mz) > 0.0:
+                torque_map[pid] = torque_map.get(pid, 0.0) + float(mz)
 
         funcs = self._build_quasistatic_constraints(point_ids)
         if not funcs:
@@ -707,6 +707,57 @@ class HeadlessModel:
             mag = math.hypot(fx, fy)
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
         return joint_loads
+
+    @staticmethod
+    def _wrap_angle(angle: float) -> float:
+        return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _resolve_load_components(
+        self,
+        load: Dict[str, Any],
+        qvec: Optional[np.ndarray] = None,
+        idx_map: Optional[Dict[int, int]] = None,
+    ) -> tuple[float, float, float]:
+        ltype = str(load.get("type", "force")).lower()
+        if ltype == "spring":
+            pid = int(load.get("pid", -1))
+            ref_pid = int(load.get("ref_pid", -1))
+            k = float(load.get("k", 0.0))
+            if pid not in self.points or ref_pid not in self.points:
+                return 0.0, 0.0, 0.0
+            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
+                i = idx_map[pid]
+                j = idx_map[ref_pid]
+                dx = float(qvec[2 * j]) - float(qvec[2 * i])
+                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
+            else:
+                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
+                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
+            return k * dx, k * dy, 0.0
+        if ltype == "torsion_spring":
+            pid = int(load.get("pid", -1))
+            ref_pid = int(load.get("ref_pid", -1))
+            k = float(load.get("k", 0.0))
+            theta0 = float(load.get("theta0", 0.0))
+            if pid not in self.points or ref_pid not in self.points:
+                return 0.0, 0.0, 0.0
+            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
+                i = idx_map[pid]
+                j = idx_map[ref_pid]
+                dx = float(qvec[2 * j]) - float(qvec[2 * i])
+                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
+            else:
+                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
+                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
+            if abs(dx) + abs(dy) < 1e-12:
+                return 0.0, 0.0, 0.0
+            theta = math.atan2(dy, dx)
+            delta = self._wrap_angle(theta - theta0)
+            return 0.0, 0.0, k * delta
+        fx = float(load.get("fx", 0.0))
+        fy = float(load.get("fy", 0.0))
+        mz = float(load.get("mz", 0.0))
+        return fx, fy, mz
 
     def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
         out: List[tuple[str, Optional[float]]] = []

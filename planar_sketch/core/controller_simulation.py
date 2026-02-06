@@ -81,6 +81,29 @@ class ControllerSimulation:
     def add_load_torque(self, pid: int, mz: float):
         self.loads.append({"type": "torque", "pid": int(pid), "fx": 0.0, "fy": 0.0, "mz": float(mz)})
 
+    def add_load_spring(self, pid: int, ref_pid: int, k: float):
+        self.loads.append({
+            "type": "spring",
+            "pid": int(pid),
+            "ref_pid": int(ref_pid),
+            "k": float(k),
+            "fx": 0.0,
+            "fy": 0.0,
+            "mz": 0.0,
+        })
+
+    def add_load_torsion_spring(self, pid: int, ref_pid: int, k: float, theta0: float):
+        self.loads.append({
+            "type": "torsion_spring",
+            "pid": int(pid),
+            "ref_pid": int(ref_pid),
+            "k": float(k),
+            "theta0": float(theta0),
+            "fx": 0.0,
+            "fy": 0.0,
+            "mz": 0.0,
+        })
+
     def remove_load_at(self, index: int):
         if 0 <= index < len(self.loads):
             del self.loads[index]
@@ -104,6 +127,38 @@ class ControllerSimulation:
         if not ok:
             return
         self.add_load_torque(pid, mz)
+        if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel.refresh_labels()
+
+    def _prompt_add_spring(self, pid: int):
+        ref_pid, ok = QInputDialog.getInt(self.win, "Spring", "Direction point ID", 0)
+        if not ok:
+            return
+        if int(ref_pid) not in self.points:
+            QMessageBox.information(self.win, "Spring", f"Point P{ref_pid} not found.")
+            return
+        k, ok = QInputDialog.getDouble(self.win, "Spring", "k (force per length)", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_spring(pid, int(ref_pid), k)
+        if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel.refresh_labels()
+
+    def _prompt_add_torsion_spring(self, pid: int):
+        ref_pid, ok = QInputDialog.getInt(self.win, "Torsion Spring", "Reference point ID", 0)
+        if not ok:
+            return
+        if int(ref_pid) not in self.points:
+            QMessageBox.information(self.win, "Torsion Spring", f"Point P{ref_pid} not found.")
+            return
+        theta0 = self.get_angle_rad(int(pid), int(ref_pid))
+        if theta0 is None:
+            QMessageBox.information(self.win, "Torsion Spring", "Reference angle is not defined.")
+            return
+        k, ok = QInputDialog.getDouble(self.win, "Torsion Spring", "k (torque per rad)", 0.0, decimals=4)
+        if not ok:
+            return
+        self.add_load_torsion_spring(pid, int(ref_pid), k, float(theta0))
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 
@@ -317,11 +372,11 @@ class ControllerSimulation:
             if pid not in self.points:
                 continue
             idx = idx_map[pid]
-            fx = float(load.get("fx", 0.0))
-            fy = float(load.get("fy", 0.0))
+            fx, fy, mz = self._resolve_load_components(load, q, idx_map)
             f_ext[2 * idx] += fx
             f_ext[2 * idx + 1] += fy
-            torque_map[pid] = torque_map.get(pid, 0.0) + float(load.get("mz", 0.0))
+            if abs(mz) > 0.0:
+                torque_map[pid] = torque_map.get(pid, 0.0) + float(mz)
 
         funcs = self._build_quasistatic_constraints(point_ids)
         if not funcs:
@@ -364,6 +419,57 @@ class ControllerSimulation:
             mag = math.sqrt(fx * fx + fy * fy + fz * fz)
             out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
         return out
+
+    @staticmethod
+    def _wrap_angle(angle: float) -> float:
+        return (angle + math.pi) % (2.0 * math.pi) - math.pi
+
+    def _resolve_load_components(
+        self,
+        load: Dict[str, Any],
+        qvec: Optional[np.ndarray] = None,
+        idx_map: Optional[Dict[int, int]] = None,
+    ) -> tuple[float, float, float]:
+        ltype = str(load.get("type", "force")).lower()
+        if ltype == "spring":
+            pid = int(load.get("pid", -1))
+            ref_pid = int(load.get("ref_pid", -1))
+            k = float(load.get("k", 0.0))
+            if pid not in self.points or ref_pid not in self.points:
+                return 0.0, 0.0, 0.0
+            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
+                i = idx_map[pid]
+                j = idx_map[ref_pid]
+                dx = float(qvec[2 * j]) - float(qvec[2 * i])
+                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
+            else:
+                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
+                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
+            return k * dx, k * dy, 0.0
+        if ltype == "torsion_spring":
+            pid = int(load.get("pid", -1))
+            ref_pid = int(load.get("ref_pid", -1))
+            k = float(load.get("k", 0.0))
+            theta0 = float(load.get("theta0", 0.0))
+            if pid not in self.points or ref_pid not in self.points:
+                return 0.0, 0.0, 0.0
+            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
+                i = idx_map[pid]
+                j = idx_map[ref_pid]
+                dx = float(qvec[2 * j]) - float(qvec[2 * i])
+                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
+            else:
+                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
+                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
+            if abs(dx) + abs(dy) < 1e-12:
+                return 0.0, 0.0, 0.0
+            theta = math.atan2(dy, dx)
+            delta = self._wrap_angle(theta - theta0)
+            return 0.0, 0.0, k * delta
+        fx = float(load.get("fx", 0.0))
+        fy = float(load.get("fy", 0.0))
+        mz = float(load.get("mz", 0.0))
+        return fx, fy, mz
 
     # ---- Quasi-static loads ----
     def add_load_force(self, pid: int, fx: float, fy: float):
@@ -642,9 +748,7 @@ class ControllerSimulation:
             if pid not in idx_map:
                 continue
             idx = idx_map[pid]
-            fx = float(load.get("fx", 0.0))
-            fy = float(load.get("fy", 0.0))
-            mz = float(load.get("mz", 0.0))
+            fx, fy, mz = self._resolve_load_components(load, q, idx_map)
             f_ext[2 * idx] += fx
             f_ext[2 * idx + 1] += fy
             if abs(fx) > 0.0 or abs(fy) > 0.0:
