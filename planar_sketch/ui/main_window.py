@@ -7,7 +7,7 @@ import json
 import os
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker
+from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
@@ -181,6 +181,9 @@ class MainWindow(QMainWindow):
         self.menu_background_action = mb.addAction("")
         self.menu_background_action.setCheckable(True)
         self.menu_background_action.triggered.connect(lambda: self._set_active_ribbon("background"))
+        self.menu_help_action = mb.addAction("")
+        self.menu_help_action.setCheckable(True)
+        self.menu_help_action.triggered.connect(lambda: self._set_active_ribbon("help"))
         self.act_pm = QAction("", self, checkable=True); self.act_pm.setChecked(True)
         self.act_pm.triggered.connect(lambda c: self._toggle_pm(c))
         self.act_dm = QAction("", self, checkable=True); self.act_dm.setChecked(True)
@@ -239,6 +242,11 @@ class MainWindow(QMainWindow):
         self.act_boundary_clear_loads.triggered.connect(self.sim_panel._clear_loads)
         self.act_boundary_fix = QAction("", self)
         self.act_boundary_fix.triggered.connect(self.fix_selected_points)
+
+        self.act_help_manual = QAction("", self)
+        self.act_help_manual.triggered.connect(self.open_help_manual)
+        self.act_help_about = QAction("", self)
+        self.act_help_about.triggered.connect(self.show_about_dialog)
 
     def _build_toolbars(self) -> None:
         icon_size = QSize(20, 20)
@@ -339,6 +347,15 @@ class MainWindow(QMainWindow):
         self.toolbar_boundary.addSeparator()
         self.toolbar_boundary.addAction(self.act_boundary_fix)
 
+        self.toolbar_help = QToolBar(self)
+        self.toolbar_help.setIconSize(icon_size)
+        self.toolbar_help.setMovable(False)
+        self.toolbar_help.setFloatable(False)
+        self.toolbar_help.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar_help)
+        self.toolbar_help.addAction(self.act_help_manual)
+        self.toolbar_help.addAction(self.act_help_about)
+
         self._apply_action_icons()
         self._set_active_ribbon("file")
 
@@ -374,6 +391,7 @@ class MainWindow(QMainWindow):
             self.toolbar_background,
             self.toolbar_analysis,
             self.toolbar_boundary,
+            self.toolbar_help,
         ):
             toolbar.setVisible(visible)
         if visible:
@@ -393,6 +411,7 @@ class MainWindow(QMainWindow):
             "background": self.toolbar_background,
             "analysis": self.toolbar_analysis,
             "boundary": self.toolbar_boundary,
+            "help": self.toolbar_help,
         }
         for name, toolbar in toolbars.items():
             toolbar.setVisible(name == key)
@@ -404,6 +423,7 @@ class MainWindow(QMainWindow):
             ("view", self.menu_view_action),
             ("background", self.menu_background_action),
             ("analysis", self.menu_analysis_action),
+            ("help", self.menu_help_action),
         ):
             action.setChecked(name == key)
 
@@ -473,6 +493,8 @@ class MainWindow(QMainWindow):
         self.act_boundary_add_torque.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_BrowserReload))
         self.act_boundary_clear_loads.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_TrashIcon))
         self.act_boundary_fix.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
+        self.act_help_manual.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
+        self.act_help_about.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
 
     def update_model_action_state(self) -> None:
         mode = getattr(self.ctrl, "mode", "Idle")
@@ -492,6 +514,7 @@ class MainWindow(QMainWindow):
         self.menu_view_action.setText(tr(lang, "menu.view"))
         self.menu_background_action.setText(tr(lang, "menu.background_image"))
         self.menu_analysis_action.setText(tr(lang, "menu.analysis"))
+        self.menu_help_action.setText(tr(lang, "menu.help"))
         if hasattr(self, "toolbar_file"):
             self.toolbar_file.setWindowTitle(tr(lang, "menu.file"))
             self.toolbar_edit.setWindowTitle(tr(lang, "menu.edit"))
@@ -500,6 +523,7 @@ class MainWindow(QMainWindow):
             self.toolbar_view.setWindowTitle(tr(lang, "menu.view"))
             self.toolbar_background.setWindowTitle(tr(lang, "menu.background_image"))
             self.toolbar_analysis.setWindowTitle(tr(lang, "menu.analysis"))
+            self.toolbar_help.setWindowTitle(tr(lang, "menu.help"))
         self.act_file_new.setText(tr(lang, "action.new"))
         self.act_file_open.setText(tr(lang, "action.open"))
         self.act_file_save.setText(tr(lang, "action.save"))
@@ -542,6 +566,8 @@ class MainWindow(QMainWindow):
         self.act_boundary_add_torque.setText(tr(lang, "action.boundary_add_torque"))
         self.act_boundary_clear_loads.setText(tr(lang, "action.boundary_clear_loads"))
         self.act_boundary_fix.setText(tr(lang, "action.boundary_fix"))
+        self.act_help_manual.setText(tr(lang, "action.help_manual"))
+        self.act_help_about.setText(tr(lang, "action.help_about"))
         self.dock.setWindowTitle(tr(lang, "dock.sketch"))
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
@@ -606,6 +632,22 @@ class MainWindow(QMainWindow):
         self.ctrl.show_splines_geometry = False
         self.ctrl.update_graphics()
         self.panel.defer_refresh_all(keep_selection=True)
+
+    def open_help_manual(self) -> None:
+        from PyQt6.QtGui import QDesktopServices
+        app_dir = QCoreApplication.applicationDirPath()
+        help_path = os.path.join(app_dir, "help.pdf")
+        if not os.path.exists(help_path):
+            QMessageBox.information(self, tr(self.ctrl.ui_language, "menu.help"), tr(self.ctrl.ui_language, "help.missing"))
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(help_path))
+
+    def show_about_dialog(self) -> None:
+        QMessageBox.information(
+            self,
+            tr(self.ctrl.ui_language, "action.help_about"),
+            tr(self.ctrl.ui_language, "help.copyright"),
+        )
 
     def update_undo_redo_actions(self):
         self.act_undo.setEnabled(self.ctrl.stack.can_undo())
