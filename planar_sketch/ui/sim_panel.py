@@ -1356,6 +1356,7 @@ class SimulationPanel(QWidget):
                     detail.get("angle", 0.0),
                     detail.get("coincide", 0.0),
                     detail.get("point_line", 0.0),
+                    detail.get("point_spline", 0.0),
                 )
                 if hard_err > tol:
                     # rollback to previous pose
