@@ -130,10 +130,11 @@ class ControllerSimulation:
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 
-    def _prompt_add_spring(self, pid: int):
-        ref_pid, ok = QInputDialog.getInt(self.win, "Spring", "Direction point ID", 0)
-        if not ok:
-            return
+    def _prompt_add_spring(self, pid: int, ref_pid: Optional[int] = None):
+        if ref_pid is None:
+            ref_pid, ok = QInputDialog.getInt(self.win, "Spring", "Direction point ID", 0)
+            if not ok:
+                return
         if int(ref_pid) not in self.points:
             QMessageBox.information(self.win, "Spring", f"Point P{ref_pid} not found.")
             return
@@ -144,10 +145,11 @@ class ControllerSimulation:
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
             self.win.sim_panel.refresh_labels()
 
-    def _prompt_add_torsion_spring(self, pid: int):
-        ref_pid, ok = QInputDialog.getInt(self.win, "Torsion Spring", "Reference point ID", 0)
-        if not ok:
-            return
+    def _prompt_add_torsion_spring(self, pid: int, ref_pid: Optional[int] = None):
+        if ref_pid is None:
+            ref_pid, ok = QInputDialog.getInt(self.win, "Torsion Spring", "Reference point ID", 0)
+            if not ok:
+                return
         if int(ref_pid) not in self.points:
             QMessageBox.information(self.win, "Torsion Spring", f"Point P{ref_pid} not found.")
             return

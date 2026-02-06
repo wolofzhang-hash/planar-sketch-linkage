@@ -1535,8 +1535,22 @@ class ControllerSelection:
             sub_load = m.addMenu(tr(lang, "context.loads"))
             sub_load.addAction(tr(lang, "context.add_force"), lambda: self._prompt_add_force(pid))
             sub_load.addAction(tr(lang, "context.add_torque"), lambda: self._prompt_add_torque(pid))
-            sub_load.addAction(tr(lang, "context.add_spring"), lambda: self._prompt_add_spring(pid))
-            sub_load.addAction(tr(lang, "context.add_torsion_spring"), lambda: self._prompt_add_torsion_spring(pid))
+            if nbrs:
+                sub_spring = sub_load.addMenu(tr(lang, "context.add_spring"))
+                for nb in nbrs:
+                    sub_spring.addAction(
+                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
+                        lambda nb=nb: self._prompt_add_spring(pid, nb),
+                    )
+                sub_torsion = sub_load.addMenu(tr(lang, "context.add_torsion_spring"))
+                for nb in nbrs:
+                    sub_torsion.addAction(
+                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
+                        lambda nb=nb: self._prompt_add_torsion_spring(pid, nb),
+                    )
+            else:
+                sub_load.addAction(tr(lang, "context.add_spring"), lambda: self._prompt_add_spring(pid))
+                sub_load.addAction(tr(lang, "context.add_torsion_spring"), lambda: self._prompt_add_torsion_spring(pid))
             sub_load.addSeparator()
             sub_load.addAction(tr(lang, "context.clear_loads"), self.clear_loads)
 
