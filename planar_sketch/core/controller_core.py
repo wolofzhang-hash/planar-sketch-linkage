@@ -99,6 +99,11 @@ class ControllerCore:
         self._continuous_model_action: Optional[str] = None
         self._last_scene_pos: Optional[Tuple[float, float]] = None
         self._last_point_pos: Optional[Tuple[float, float]] = None
+        self._graphics_update_in_progress = False
+        self._graphics_update_pending = False
+        self._graphics_update_scheduled = False
+        self._graphics_update_last = 0.0
+        self._graphics_update_min_interval = 1.0 / 60.0
 
         # --- Linkage-style simulation configuration ---
         # Driver: world-angle of a pivot->tip direction.
