@@ -21,6 +21,10 @@ class SketchPanel(QWidget):
         self.ctrl = ctrl
         self.ctrl.panel = self
         self.sync_guard = False
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setSingleShot(True)
+        self._refresh_timer.timeout.connect(self._perform_refresh_all)
+        self._refresh_keep_selection = False
         layout = QVBoxLayout(self)
         self.title = QLabel()
         self.title.setStyleSheet("font-weight: 600;")
@@ -62,7 +66,15 @@ class SketchPanel(QWidget):
         self.bodies_tab.apply_language()
 
     def defer_refresh_all(self, keep_selection=False):
-        QTimer.singleShot(0, lambda: self.refresh_all(keep_selection=keep_selection))
+        if keep_selection:
+            self._refresh_keep_selection = True
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start(0)
+
+    def _perform_refresh_all(self):
+        keep_selection = self._refresh_keep_selection
+        self._refresh_keep_selection = False
+        self.refresh_all(keep_selection=keep_selection)
 
     def refresh_all(self, keep_selection=False):
         self.params_tab.refresh(keep_selection=keep_selection)
