@@ -723,6 +723,7 @@ class HeadlessModel:
             pid = int(load.get("pid", -1))
             ref_pid = int(load.get("ref_pid", -1))
             k = float(load.get("k", 0.0))
+            preload = float(load.get("load", 0.0))
             if pid not in self.points or ref_pid not in self.points:
                 return 0.0, 0.0, 0.0
             if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
@@ -733,12 +734,19 @@ class HeadlessModel:
             else:
                 dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
                 dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            return k * dx, k * dy, 0.0
+            fx = k * dx
+            fy = k * dy
+            if abs(dx) + abs(dy) > 1e-12 and abs(preload) > 0.0:
+                norm = math.hypot(dx, dy)
+                fx += preload * dx / norm
+                fy += preload * dy / norm
+            return fx, fy, 0.0
         if ltype == "torsion_spring":
             pid = int(load.get("pid", -1))
             ref_pid = int(load.get("ref_pid", -1))
             k = float(load.get("k", 0.0))
             theta0 = float(load.get("theta0", 0.0))
+            preload = float(load.get("load", 0.0))
             if pid not in self.points or ref_pid not in self.points:
                 return 0.0, 0.0, 0.0
             if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
@@ -753,7 +761,7 @@ class HeadlessModel:
                 return 0.0, 0.0, 0.0
             theta = math.atan2(dy, dx)
             delta = self._wrap_angle(theta - theta0)
-            return 0.0, 0.0, k * delta
+            return 0.0, 0.0, k * delta + preload
         fx = float(load.get("fx", 0.0))
         fy = float(load.get("fy", 0.0))
         mz = float(load.get("mz", 0.0))
