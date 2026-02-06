@@ -509,6 +509,7 @@ class SimulationPanel(QWidget):
         self._refresh_friction_table()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.refresh_active_case()
+            self.optimization_tab.refresh_model_values()
 
     def _driver_label(self, driver: Dict[str, Any]) -> str:
         lang = getattr(self.ctrl, "ui_language", "en")

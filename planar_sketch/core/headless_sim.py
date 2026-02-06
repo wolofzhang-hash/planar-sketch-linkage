@@ -126,28 +126,6 @@ class HeadlessModel:
             for p in data.get("points", []) or []
         }
 
-    def _point_line_current_s(self, pl: Dict[str, Any]) -> float:
-        try:
-            p_id = int(pl.get("p", -1))
-            i_id = int(pl.get("i", -1))
-            j_id = int(pl.get("j", -1))
-        except Exception:
-            return 0.0
-        if p_id not in self.points or i_id not in self.points or j_id not in self.points:
-            return 0.0
-        pp = self.points[p_id]
-        pa = self.points[i_id]
-        pb = self.points[j_id]
-        ax, ay = float(pa["x"]), float(pa["y"])
-        bx, by = float(pb["x"]), float(pb["y"])
-        px, py = float(pp["x"]), float(pp["y"])
-        abx, aby = bx - ax, by - ay
-        ab_len = math.hypot(abx, aby)
-        if ab_len < 1e-12:
-            return 0.0
-        ux, uy = abx / ab_len, aby / ab_len
-        return (px - ax) * ux + (py - ay) * uy
-
         constraints = data.get("constraints", None)
         if constraints:
             lks, angs, spls, coincs, pls, pss = ConstraintRegistry.split_constraints(constraints)
@@ -293,6 +271,28 @@ class HeadlessModel:
         self.loads = list(data.get("loads", []) or [])
         self.load_measures = list(data.get("load_measures", []) or [])
         self.friction_joints = list(data.get("friction_joints", []) or [])
+
+    def _point_line_current_s(self, pl: Dict[str, Any]) -> float:
+        try:
+            p_id = int(pl.get("p", -1))
+            i_id = int(pl.get("i", -1))
+            j_id = int(pl.get("j", -1))
+        except Exception:
+            return 0.0
+        if p_id not in self.points or i_id not in self.points or j_id not in self.points:
+            return 0.0
+        pp = self.points[p_id]
+        pa = self.points[i_id]
+        pb = self.points[j_id]
+        ax, ay = float(pa["x"]), float(pa["y"])
+        bx, by = float(pb["x"]), float(pb["y"])
+        px, py = float(pp["x"]), float(pp["y"])
+        abx, aby = bx - ax, by - ay
+        ab_len = math.hypot(abx, aby)
+        if ab_len < 1e-12:
+            return 0.0
+        ux, uy = abx / ab_len, aby / ab_len
+        return (px - ax) * ux + (py - ay) * uy
 
     def _apply_case_spec(self, case_spec: Dict[str, Any]) -> None:
         driver = case_spec.get("driver")
