@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from .controller_common import *
@@ -1690,6 +1691,38 @@ class ControllerSelection:
             pass
 
     def update_graphics(self):
+        if self._graphics_update_in_progress:
+            self._graphics_update_pending = True
+            return
+        now = time.monotonic()
+        min_interval = self._graphics_update_min_interval
+        elapsed = now - self._graphics_update_last
+        if min_interval > 0.0 and elapsed < min_interval:
+            if not self._graphics_update_scheduled:
+                delay_ms = max(1, int((min_interval - elapsed) * 1000))
+                self._graphics_update_scheduled = True
+                QTimer.singleShot(delay_ms, self._flush_graphics_update)
+            self._graphics_update_pending = True
+            return
+        self._flush_graphics_update()
+
+    def _flush_graphics_update(self):
+        if self._graphics_update_in_progress:
+            self._graphics_update_pending = True
+            return
+        self._graphics_update_scheduled = False
+        self._graphics_update_pending = False
+        self._graphics_update_in_progress = True
+        try:
+            self._do_update_graphics()
+        finally:
+            self._graphics_update_in_progress = False
+            self._graphics_update_last = time.monotonic()
+            if self._graphics_update_pending:
+                self._graphics_update_pending = False
+                self.update_graphics()
+
+    def _do_update_graphics(self):
         driver_marker_map: Dict[int, Dict[str, Any]] = {}
         active_drivers = self._active_drivers()
         show_driver_index = len(active_drivers) > 1

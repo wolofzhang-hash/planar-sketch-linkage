@@ -7,7 +7,7 @@ import json
 import math
 from typing import Dict, Any, Optional, List, Tuple, Callable
 
-from PyQt6.QtCore import QPointF, Qt
+from PyQt6.QtCore import QPointF, Qt, QTimer
 from PyQt6.QtGui import QPainterPath, QColor, QImage, QPixmap
 from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog, QGraphicsPixmapItem, QMessageBox
 
