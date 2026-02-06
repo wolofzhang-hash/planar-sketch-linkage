@@ -23,12 +23,14 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QDialog
 )
 
 from .analysis_tabs import AnimationTab, OptimizationTab
+from .expression_builder import ExpressionBuilderDialog
 from .i18n import tr
 from ..core.case_run_manager import CaseRunManager
+from ..core.expression_service import eval_signal_expression
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -140,12 +142,14 @@ class SimulationPanel(QWidget):
         self.btn_stop = QPushButton()
         self.btn_reset_pose = QPushButton()
         self.btn_export = QPushButton()
+        self.btn_check_analysis = QPushButton()
         self.btn_save_run = QPushButton()
         self.btn_open_last_run = QPushButton()
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
         btns.addWidget(self.btn_export)
+        btns.addWidget(self.btn_check_analysis)
         btns.addWidget(self.btn_save_run)
         btns.addWidget(self.btn_open_last_run)
         main_layout.addLayout(btns)
@@ -165,14 +169,13 @@ class SimulationPanel(QWidget):
         self._measure_row_map: List[Dict[str, Any]] = []
 
         meas_buttons = QHBoxLayout()
+        self.btn_add_meas_expr = QPushButton()
         self.btn_clear_meas = QPushButton()
         self.btn_delete_meas = QPushButton()
+        meas_buttons.addWidget(self.btn_add_meas_expr)
         meas_buttons.addWidget(self.btn_clear_meas)
         meas_buttons.addWidget(self.btn_delete_meas)
         measurements_layout.addLayout(meas_buttons)
-
-        self.btn_check_analysis = QPushButton()
-        measurements_layout.addWidget(self.btn_check_analysis)
 
         measurements_layout.addStretch(1)
         loads_tab = QWidget()
@@ -259,6 +262,7 @@ class SimulationPanel(QWidget):
         # Signals
         self.btn_clear_driver.clicked.connect(self._clear_driver)
         self.btn_clear_output.clicked.connect(self._clear_output)
+        self.btn_add_meas_expr.clicked.connect(self._add_expression_measurement)
         self.btn_clear_meas.clicked.connect(self._clear_measures)
         self.btn_delete_meas.clicked.connect(self._delete_selected_measure)
         self.btn_check_analysis.clicked.connect(self._run_analysis_check)
@@ -310,6 +314,7 @@ class SimulationPanel(QWidget):
         self.btn_save_run.setText(tr(lang, "sim.save_run"))
         self.btn_open_last_run.setText(tr(lang, "sim.open_last_run"))
         self.btn_check_analysis.setText(tr(lang, "analysis.check"))
+        self.btn_add_meas_expr.setText(tr(lang, "sim.add_expression_measurement"))
         self.btn_clear_meas.setText(tr(lang, "sim.clear"))
         self.btn_delete_meas.setText(tr(lang, "sim.delete"))
         self.lbl_applied_loads.setText(tr(lang, "sim.applied_loads"))
@@ -692,6 +697,69 @@ class SimulationPanel(QWidget):
             return
         i, j, k = tri
         self.ctrl.add_measure_joint(i, j, k)
+        self.refresh_labels()
+
+    def _measurement_expression_functions(self) -> Dict[str, List[str]]:
+        return {
+            "Functions": ["max(", "min(", "mean(", "rms(", "abs(", "first(", "last("],
+            "Operators": ["+", "-", "*", "/", "(", ")", ","],
+        }
+
+    def _measurement_expression_tokens(self) -> Dict[str, List[str]]:
+        measurements = [name for name, _val, _unit in self.ctrl.get_measure_values()]
+        load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
+        groups: Dict[str, List[str]] = {}
+        if measurements:
+            groups["Measurements"] = sorted({str(item) for item in measurements if str(item).strip()})
+        if load_measures:
+            groups["Load Measurements"] = sorted({str(item) for item in load_measures if str(item).strip()})
+        return groups
+
+    def _measurement_expression_signals(self) -> Dict[str, float]:
+        signals: Dict[str, float] = {}
+        for nm, val, _unit in self.ctrl.get_measure_values():
+            if nm and val is not None:
+                signals[str(nm)] = float(val)
+        for nm, val in self.ctrl.get_load_measure_values():
+            if nm and val is not None:
+                signals[str(nm)] = float(val)
+        return signals
+
+    def _add_expression_measurement(self) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        signals = self._measurement_expression_signals()
+        token_groups = self._measurement_expression_tokens()
+        tokens: Any = token_groups if token_groups else []
+        dialog = ExpressionBuilderDialog(
+            self,
+            initial="",
+            tokens=tokens,
+            functions=self._measurement_expression_functions(),
+            evaluator=lambda expr: eval_signal_expression(expr, signals),
+            title=tr(lang, "analysis.expression_builder"),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        expr = dialog.expression().strip()
+        if not expr:
+            return
+        name, ok = QInputDialog.getText(
+            self,
+            tr(lang, "sim.measure_expression_title"),
+            tr(lang, "sim.measure_expression_name"),
+            text=expr,
+        )
+        if not ok or not name.strip():
+            return
+        unit, ok = QInputDialog.getText(
+            self,
+            tr(lang, "sim.measure_expression_title"),
+            tr(lang, "sim.measure_expression_unit"),
+            text="",
+        )
+        if not ok:
+            return
+        self.ctrl.add_measure_expression(name.strip(), expr, unit.strip())
         self.refresh_labels()
 
     def _clear_measures(self):

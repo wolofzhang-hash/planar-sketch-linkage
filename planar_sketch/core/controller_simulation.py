@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from .controller_common import *
+from .expression_service import eval_signal_expression
 
 
 class ControllerSimulation:
@@ -1095,6 +1096,16 @@ class ControllerSimulation:
         name = str(pl.get("name", "")) or self._point_line_offset_name(pl)
         self.measures.append({"type": "translation", "plid": int(plid), "name": name})
 
+    def add_measure_expression(self, name: str, expr: str, unit: str = "") -> None:
+        self.measures.append(
+            {
+                "type": "expression",
+                "name": str(name),
+                "expr": str(expr),
+                "unit": str(unit or ""),
+            }
+        )
+
     def clear_measures(self):
         self.measures = []
         self.load_measures = []
@@ -1125,7 +1136,9 @@ class ControllerSimulation:
         (i.e., value==0 at the starting pose).
         """
         out: List[tuple[str, Optional[float], str]] = []
-        for m in self.measures:
+        base_values: Dict[int, tuple[str, Optional[float], str]] = {}
+        signals: Dict[str, float] = {}
+        for idx, m in enumerate(self.measures):
             nm = str(m.get("name", ""))
             mtype = str(m.get("type", "")).lower()
             abs_deg: Optional[float] = None
@@ -1142,24 +1155,53 @@ class ControllerSimulation:
                     plid = -1
                 pl = self.point_lines.get(plid)
                 if pl is None:
-                    out.append((nm, None, "mm"))
+                    base_values[idx] = (nm, None, "mm")
+                    continue
+                nm = str(nm) or str(pl.get("name", "")) or self._point_line_offset_name(pl)
+                sval = float(self._point_line_current_s(pl))
+                if nm in self._sim_zero_meas_len:
+                    base_values[idx] = (nm, sval - float(self._sim_zero_meas_len[nm]), "mm")
                 else:
-                    nm = str(nm) or str(pl.get("name", "")) or self._point_line_offset_name(pl)
-                    sval = float(self._point_line_current_s(pl))
-                    if nm in self._sim_zero_meas_len:
-                        out.append((nm, sval - float(self._sim_zero_meas_len[nm]), "mm"))
-                    else:
-                        out.append((nm, sval, "mm"))
+                    base_values[idx] = (nm, sval, "mm")
+                if nm and base_values[idx][1] is not None:
+                    signals[nm] = float(base_values[idx][1])
+                continue
+            elif mtype == "expression":
+                continue
+            else:
                 continue
 
             if abs_deg is None:
-                out.append((nm, None, "deg"))
-                continue
-
-            if nm in self._sim_zero_meas_deg:
-                out.append((nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm])), "deg"))
+                base_values[idx] = (nm, None, "deg")
+            elif nm in self._sim_zero_meas_deg:
+                base_values[idx] = (nm, self._rel_deg(abs_deg, float(self._sim_zero_meas_deg[nm])), "deg")
             else:
-                out.append((nm, abs_deg, "deg"))
+                base_values[idx] = (nm, abs_deg, "deg")
+            if nm and base_values[idx][1] is not None:
+                signals[nm] = float(base_values[idx][1])
+
+        for nm, val in self.get_load_measure_values():
+            if nm and val is not None:
+                signals[str(nm)] = float(val)
+
+        for idx, m in enumerate(self.measures):
+            if idx in base_values:
+                out.append(base_values[idx])
+                continue
+            mtype = str(m.get("type", "")).lower()
+            if mtype != "expression":
+                continue
+            nm = str(m.get("name", ""))
+            expr = str(m.get("expr", ""))
+            unit = str(m.get("unit", ""))
+            val, err = eval_signal_expression(expr, signals)
+            if err:
+                out.append((nm, None, unit))
+            else:
+                out.append((nm, float(val), unit))
+                if nm:
+                    signals[nm] = float(val)
+
         return out
 
     def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
