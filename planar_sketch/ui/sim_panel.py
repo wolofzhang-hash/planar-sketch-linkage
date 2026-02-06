@@ -809,30 +809,52 @@ class SimulationPanel(QWidget):
         load = self.ctrl.loads[row]
         ltype = str(load.get("type", "force")).lower()
         if col in (2, 3, 4) and ltype in ("force", "torque"):
-            key_map = {2: "fx", 3: "fy", 4: "mz"}
-            key = key_map.get(col)
-            if key is None:
+            key_map = {
+                2: ("fx", "fx_expr"),
+                3: ("fy", "fy_expr"),
+                4: ("mz", "mz_expr"),
+            }
+            key_num, key_expr = key_map.get(col, ("", ""))
+            if not key_num:
                 return
+            raw = item.text().strip()
             try:
-                value = float(item.text())
+                value = float(raw)
             except ValueError:
-                self._refresh_load_tables()
-                return
-            self.ctrl.loads[row][key] = value
+                if not raw:
+                    self._refresh_load_tables()
+                    return
+                self.ctrl.loads[row][key_expr] = raw
+                self.ctrl.recompute_from_parameters()
+            else:
+                self.ctrl.loads[row][key_num] = value
+                self.ctrl.loads[row][key_expr] = ""
         elif col == 5 and ltype in ("spring", "torsion_spring"):
+            raw = item.text().strip()
             try:
-                value = float(item.text())
+                value = float(raw)
             except ValueError:
-                self._refresh_load_tables()
-                return
-            self.ctrl.loads[row]["k"] = value
+                if not raw:
+                    self._refresh_load_tables()
+                    return
+                self.ctrl.loads[row]["k_expr"] = raw
+                self.ctrl.recompute_from_parameters()
+            else:
+                self.ctrl.loads[row]["k"] = value
+                self.ctrl.loads[row]["k_expr"] = ""
         elif col == 6 and ltype in ("spring", "torsion_spring"):
+            raw = item.text().strip()
             try:
-                value = float(item.text())
+                value = float(raw)
             except ValueError:
-                self._refresh_load_tables()
-                return
-            self.ctrl.loads[row]["load"] = value
+                if not raw:
+                    self._refresh_load_tables()
+                    return
+                self.ctrl.loads[row]["load_expr"] = raw
+                self.ctrl.recompute_from_parameters()
+            else:
+                self.ctrl.loads[row]["load"] = value
+                self.ctrl.loads[row]["load_expr"] = ""
         elif col == 7 and ltype in ("spring", "torsion_spring"):
             try:
                 raw = item.text().strip()
@@ -896,14 +918,19 @@ class SimulationPanel(QWidget):
                 k = ld.get("k", "")
                 preload = ld.get("load", "")
                 ref_pid = ld.get("ref_pid", "")
+                fx_expr = str(ld.get("fx_expr", "") or "")
+                fy_expr = str(ld.get("fy_expr", "") or "")
+                mz_expr = str(ld.get("mz_expr", "") or "")
+                k_expr = str(ld.get("k_expr", "") or "")
+                load_expr = str(ld.get("load_expr", "") or "")
                 items = [
                     QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
                     QTableWidgetItem(ltype),
-                    QTableWidgetItem(self.ctrl.format_number(fx)),
-                    QTableWidgetItem(self.ctrl.format_number(fy)),
-                    QTableWidgetItem(self.ctrl.format_number(mz)),
-                    QTableWidgetItem("" if k == "" else self.ctrl.format_number(k)),
-                    QTableWidgetItem("" if preload == "" else self.ctrl.format_number(preload)),
+                    QTableWidgetItem(fx_expr if fx_expr else self.ctrl.format_number(fx)),
+                    QTableWidgetItem(fy_expr if fy_expr else self.ctrl.format_number(fy)),
+                    QTableWidgetItem(mz_expr if mz_expr else self.ctrl.format_number(mz)),
+                    QTableWidgetItem(k_expr if k_expr else ("" if k == "" else self.ctrl.format_number(k))),
+                    QTableWidgetItem(load_expr if load_expr else ("" if preload == "" else self.ctrl.format_number(preload))),
                     QTableWidgetItem("" if ref_pid == "" else f"P{ref_pid}"),
                 ]
                 for col, item in enumerate(items):

@@ -1085,6 +1085,28 @@ class ControllerModel:
                     fj[f"{key_expr}_error"] = True
                     fj[f"{key_expr}_error_msg"] = str(err)
 
+        # Loads: fx_expr / fy_expr / mz_expr / k_expr / load_expr
+        for ld in self.loads:
+            ltype = str(ld.get("type", "force")).lower()
+            if ltype in ("spring", "torsion_spring"):
+                key_pairs = (("k", "k_expr"), ("load", "load_expr"))
+            else:
+                key_pairs = (("fx", "fx_expr"), ("fy", "fy_expr"), ("mz", "mz_expr"))
+            for key_num, key_expr in key_pairs:
+                expr = ld.get(key_expr, "")
+                if not expr:
+                    ld.pop(f"{key_expr}_error", None)
+                    ld.pop(f"{key_expr}_error_msg", None)
+                    continue
+                val, err = self.parameters.eval_expr(str(expr))
+                if err is None and val is not None:
+                    ld[key_num] = float(val)
+                    ld.pop(f"{key_expr}_error", None)
+                    ld.pop(f"{key_expr}_error_msg", None)
+                else:
+                    ld[f"{key_expr}_error"] = True
+                    ld[f"{key_expr}_error_msg"] = str(err)
+
     # --- Parameter commands (Undo/Redo) ---
     def cmd_set_param(self, name: str, value: float):
         if not self._confirm_stop_replay("modify the model"):
