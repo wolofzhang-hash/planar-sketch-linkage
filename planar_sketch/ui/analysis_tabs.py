@@ -889,6 +889,14 @@ class OptimizationTab(QWidget):
         self._refresh_case_combo_options(self.table_vars, 1)
         self._refresh_case_combo_options(self.table_obj, 1)
         self._refresh_case_combo_options(self.table_con, 1)
+        self.refresh_model_values()
+
+    def refresh_model_values(self) -> None:
+        for row in range(self.table_vars.rowCount()):
+            self._update_current_value(row)
+        if self.table_best.rowCount() == 0:
+            self.table_best.setRowCount(1)
+        self._refresh_best_objective_display()
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
