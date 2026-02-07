@@ -575,16 +575,7 @@ class ControllerModel:
                         tol=1e-6,
                     )
                 elif "s" in pl:
-                    ok = ConstraintSolver.solve_point_on_line_offset(
-                        pp,
-                        pa,
-                        pb,
-                        float(pl.get("s", 0.0)),
-                        lock_p,
-                        lock_a,
-                        lock_b,
-                        tol=1e-6,
-                    )
+                    ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
                 else:
                     ok = ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
                 if not ok:
