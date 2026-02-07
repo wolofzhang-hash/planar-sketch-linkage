@@ -67,6 +67,7 @@ class SimulationPanel(QWidget):
         self._last_run_data: Optional[Dict[str, Any]] = None
         self._last_used_solver: Optional[str] = None
         self._last_solver_error: Optional[str] = None
+        self._solver_error_log: List[str] = []
 
         layout = QVBoxLayout(self)
         self.title = QLabel()
@@ -1227,6 +1228,7 @@ class SimulationPanel(QWidget):
         self._frame = 0
         self._last_run_data = None
         self._last_solver_error = None
+        self._solver_error_log = []
         self._run_start_snapshot = self.ctrl.snapshot_model()
         self._sweep_steps_total = int(step)
         self._sweep_step_index = 0
@@ -1409,8 +1411,7 @@ class SimulationPanel(QWidget):
                     self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
                     actual_solver = "pbd"
-                    if msg:
-                        self._last_solver_error = f"{solver_name}: {msg}"
+                    self._record_solver_error(solver_name, msg)
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1430,8 +1431,7 @@ class SimulationPanel(QWidget):
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
                     actual_solver = "pbd"
-                    if msg:
-                        self._last_solver_error = f"{solver_name}: {msg}"
+                    self._record_solver_error(solver_name, msg)
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1670,6 +1670,7 @@ class SimulationPanel(QWidget):
             "elapsed_sec": elapsed,
             "reason": reason,
             "solver_error": self._last_solver_error,
+            "solver_error_log": list(self._solver_error_log),
             "started_utc": self._run_context.get("started_utc"),
             "finished_utc": self._utc_now(),
         }
@@ -1689,6 +1690,14 @@ class SimulationPanel(QWidget):
 
     def _refresh_run_buttons(self) -> None:
         self.btn_save_run.setEnabled(bool(self._last_run_data))
+
+    def _record_solver_error(self, solver_name: str, msg: str) -> None:
+        if not msg:
+            return
+        detail = f"{solver_name}: {msg}"
+        self._last_solver_error = detail
+        if detail not in self._solver_error_log:
+            self._solver_error_log.append(detail)
 
     def _run_analysis_check(self) -> None:
         self.ctrl.commit_drag_if_any()
