@@ -1253,14 +1253,28 @@ def simulate_case(
     pbd_iters = int(solver.get("pbd_iters", 80))
     hard_err_tol = float(solver.get("hard_err_tol", 1e-3))
     treat_point_spline_as_soft = bool(solver.get("treat_point_spline_as_soft", False))
+    solver_error = ""
+    solver_error_log: List[str] = []
 
     if solver_name == "scipy":
         ok, _msg = model.solve_constraints_scipy(max_nfev=max_nfev)
         if not ok:
+            if _msg:
+                detail = f"scipy: {_msg}"
+                if not solver_error:
+                    solver_error = detail
+                if detail not in solver_error_log:
+                    solver_error_log.append(detail)
             model.solve_constraints(iters=pbd_iters)
     elif solver_name == "exudyn":
         ok, _msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
         if not ok:
+            if _msg:
+                detail = f"exudyn: {_msg}"
+                if not solver_error:
+                    solver_error = detail
+                if detail not in solver_error_log:
+                    solver_error_log.append(detail)
             model.solve_constraints(iters=pbd_iters)
     else:
         model.solve_constraints(iters=pbd_iters)
@@ -1269,7 +1283,6 @@ def simulate_case(
     frames: List[Dict[str, Any]] = []
     reason = ""
     success = True
-    solver_error = ""
 
     degrees: List[float] = []
     if step_count is None:
@@ -1294,15 +1307,23 @@ def simulate_case(
             model.drive_to_deg(deg, iters=0)
             ok, msg = model.solve_constraints_scipy(max_nfev=max_nfev)
             if not ok:
-                if msg and not solver_error:
-                    solver_error = f"scipy: {msg}"
+                if msg:
+                    detail = f"scipy: {msg}"
+                    if not solver_error:
+                        solver_error = detail
+                    if detail not in solver_error_log:
+                        solver_error_log.append(detail)
                 model.solve_constraints(iters=pbd_iters)
         elif solver_name == "exudyn":
             model.drive_to_deg(deg, iters=0)
             ok, msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
             if not ok:
-                if msg and not solver_error:
-                    solver_error = f"exudyn: {msg}"
+                if msg:
+                    detail = f"exudyn: {msg}"
+                    if not solver_error:
+                        solver_error = detail
+                    if detail not in solver_error_log:
+                        solver_error_log.append(detail)
                 model.solve_constraints(iters=pbd_iters)
         else:
             model.drive_to_deg(deg, iters=pbd_iters)
@@ -1336,6 +1357,7 @@ def simulate_case(
         "success": success,
         "reason": reason or ("ok" if success else "failed"),
         "solver_error": solver_error or None,
+        "solver_error_log": list(solver_error_log),
     }
     summary = {
         "success": success,
