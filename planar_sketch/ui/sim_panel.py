@@ -66,6 +66,7 @@ class SimulationPanel(QWidget):
         self._run_start_snapshot: Optional[Dict[str, Any]] = None
         self._last_run_data: Optional[Dict[str, Any]] = None
         self._last_used_solver: Optional[str] = None
+        self._last_solver_error: Optional[str] = None
 
         layout = QVBoxLayout(self)
         self.title = QLabel()
@@ -1225,6 +1226,7 @@ class SimulationPanel(QWidget):
         self._records = []
         self._frame = 0
         self._last_run_data = None
+        self._last_solver_error = None
         self._run_start_snapshot = self.ctrl.snapshot_model()
         self._sweep_steps_total = int(step)
         self._sweep_step_index = 0
@@ -1407,6 +1409,8 @@ class SimulationPanel(QWidget):
                     self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
                     actual_solver = "pbd"
+                    if msg:
+                        self._last_solver_error = f"{solver_name}: {msg}"
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1426,6 +1430,8 @@ class SimulationPanel(QWidget):
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
                     actual_solver = "pbd"
+                    if msg:
+                        self._last_solver_error = f"{solver_name}: {msg}"
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1663,6 +1669,7 @@ class SimulationPanel(QWidget):
             "success": bool(success),
             "elapsed_sec": elapsed,
             "reason": reason,
+            "solver_error": self._last_solver_error,
             "started_utc": self._run_context.get("started_utc"),
             "finished_utc": self._utc_now(),
         }

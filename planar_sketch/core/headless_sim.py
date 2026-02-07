@@ -1269,6 +1269,7 @@ def simulate_case(
     frames: List[Dict[str, Any]] = []
     reason = ""
     success = True
+    solver_error = ""
 
     degrees: List[float] = []
     if step_count is None:
@@ -1293,11 +1294,15 @@ def simulate_case(
             model.drive_to_deg(deg, iters=0)
             ok, msg = model.solve_constraints_scipy(max_nfev=max_nfev)
             if not ok:
+                if msg and not solver_error:
+                    solver_error = f"scipy: {msg}"
                 model.solve_constraints(iters=pbd_iters)
         elif solver_name == "exudyn":
             model.drive_to_deg(deg, iters=0)
             ok, msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
             if not ok:
+                if msg and not solver_error:
+                    solver_error = f"exudyn: {msg}"
                 model.solve_constraints(iters=pbd_iters)
         else:
             model.drive_to_deg(deg, iters=pbd_iters)
@@ -1327,7 +1332,11 @@ def simulate_case(
             rec[nm] = val
         frames.append(rec)
 
-    status = {"success": success, "reason": reason or ("ok" if success else "failed")}
+    status = {
+        "success": success,
+        "reason": reason or ("ok" if success else "failed"),
+        "solver_error": solver_error or None,
+    }
     summary = {
         "success": success,
         "success_rate": (sum(1 for f in frames if f.get("success")) / float(len(frames))) if frames else 0.0,
