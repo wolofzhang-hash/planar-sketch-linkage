@@ -149,7 +149,7 @@ class SciPyKinematicSolver:
                     continue
                 ax, ay = get_xy(a, x)
                 bx, by = get_xy(b, x)
-                r.extend([ax - bx, ay - by])
+                r.append(math.hypot(ax - bx, ay - by))
 
             # Point-on-line constraints: signed distance to infinite line
             for pl in ctrl.point_lines.values():
