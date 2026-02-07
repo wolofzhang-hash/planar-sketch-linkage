@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import traceback
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
@@ -745,15 +746,24 @@ class MainWindow(QMainWindow):
     def _toggle_background_grayscale(self, checked: bool):
         self.ctrl.set_background_grayscale(bool(checked))
     def _toggle_grid_horizontal(self, checked: bool):
-        self.ctrl.set_grid_visibility(show_horizontal=bool(checked))
+        try:
+            self.ctrl.set_grid_visibility(show_horizontal=bool(checked))
+        except Exception:
+            self.report_runtime_error("Grid Error", traceback.format_exc())
     def _toggle_grid_vertical(self, checked: bool):
-        self.ctrl.set_grid_visibility(show_vertical=bool(checked))
+        try:
+            self.ctrl.set_grid_visibility(show_vertical=bool(checked))
+        except Exception:
+            self.report_runtime_error("Grid Error", traceback.format_exc())
 
     def open_grid_settings(self):
         dlg = GridSettingsDialog(self.ctrl, self)
         if dlg.exec():
             settings = dlg.settings()
             self.ctrl.set_grid_settings(**settings)
+
+    def report_runtime_error(self, title: str, detail: str) -> None:
+        QMessageBox.critical(self, title, detail)
 
     def open_settings(self):
         dlg = SettingsDialog(self.ctrl, self)
