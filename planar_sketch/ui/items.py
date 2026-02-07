@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import traceback
 
 from PyQt6.QtCore import Qt, QPointF, QRectF
 import math
@@ -183,6 +184,7 @@ class GridItem(QGraphicsItem):
     def __init__(self, ctrl: "SketchController"):
         super().__init__()
         self.ctrl = ctrl
+        self._paint_error_reported = False
         self.setZValue(-900)
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setAcceptHoverEvents(False)
@@ -215,42 +217,50 @@ class GridItem(QGraphicsItem):
         return self._grid_rect()
 
     def paint(self, painter, option, widget=None):
-        settings = getattr(self.ctrl, "grid_settings", {}) or {}
-        show_h = bool(settings.get("show_horizontal", False))
-        show_v = bool(settings.get("show_vertical", False))
-        if not show_h and not show_v:
-            return
-        spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
-        spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
-        if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
-            return
-        cx, cy = self._grid_center()
-        exposed_rect = getattr(option, "exposedRect", None)
-        if exposed_rect is None:
-            exposed_rect = getattr(option, "rect", None)
-        if exposed_rect is None:
-            exposed_rect = self.boundingRect()
-        rect = exposed_rect.intersected(self._grid_rect())
-        if rect.isNull() or rect.isEmpty():
-            return
+        try:
+            settings = getattr(self.ctrl, "grid_settings", {}) or {}
+            show_h = bool(settings.get("show_horizontal", False))
+            show_v = bool(settings.get("show_vertical", False))
+            if not show_h and not show_v:
+                return
+            spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
+            spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
+            if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
+                return
+            cx, cy = self._grid_center()
+            exposed_rect = getattr(option, "exposedRect", None)
+            if exposed_rect is None:
+                exposed_rect = getattr(option, "rect", None)
+            if exposed_rect is None:
+                exposed_rect = self.boundingRect()
+            rect = exposed_rect.intersected(self._grid_rect())
+            if rect.isNull() or rect.isEmpty():
+                return
 
-        pen = QPen(QColor(210, 210, 210, 180))
-        pen.setCosmetic(True)
-        painter.setPen(pen)
+            pen = QPen(QColor(210, 210, 210, 180))
+            pen.setCosmetic(True)
+            painter.setPen(pen)
 
-        if show_v and spacing_x > 0.0:
-            start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
-            x = start_x
-            while x <= rect.right():
-                painter.drawLine(x, rect.top(), x, rect.bottom())
-                x += spacing_x
+            if show_v and spacing_x > 0.0:
+                start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
+                x = start_x
+                while x <= rect.right():
+                    painter.drawLine(x, rect.top(), x, rect.bottom())
+                    x += spacing_x
 
-        if show_h and spacing_y > 0.0:
-            start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
-            y = start_y
-            while y <= rect.bottom():
-                painter.drawLine(rect.left(), y, rect.right(), y)
-                y += spacing_y
+            if show_h and spacing_y > 0.0:
+                start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
+                y = start_y
+                while y <= rect.bottom():
+                    painter.drawLine(rect.left(), y, rect.right(), y)
+                    y += spacing_y
+        except Exception:
+            traceback.print_exc()
+            if not self._paint_error_reported:
+                self._paint_error_reported = True
+                win = getattr(self.ctrl, "win", None)
+                if win is not None and hasattr(win, "report_runtime_error"):
+                    win.report_runtime_error("Grid Error", traceback.format_exc())
 
 
 class PointItem(QGraphicsEllipseItem):

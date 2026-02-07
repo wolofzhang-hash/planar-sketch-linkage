@@ -84,8 +84,8 @@ class ControllerCore:
         self._background_image_original: Optional[QImage] = None
         self._background_pick_points: List[QPointF] = []
         self.grid_settings: Dict[str, Any] = {
-            "show_horizontal": False,
-            "show_vertical": False,
+            "show_horizontal": True,
+            "show_vertical": True,
             "spacing_x": 100.0,
             "spacing_y": 100.0,
             "range_x": 2000.0,
