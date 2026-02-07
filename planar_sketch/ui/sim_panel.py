@@ -65,6 +65,7 @@ class SimulationPanel(QWidget):
         self._run_context: Optional[Dict[str, Any]] = None
         self._run_start_snapshot: Optional[Dict[str, Any]] = None
         self._last_run_data: Optional[Dict[str, Any]] = None
+        self._last_used_solver: Optional[str] = None
 
         layout = QVBoxLayout(self)
         self.title = QLabel()
@@ -122,10 +123,12 @@ class SimulationPanel(QWidget):
         self.lbl_solver = QLabel()
         self.combo_solver = QComboBox()
         self._init_solver_options()
+        self.lbl_solver_used = QLabel()
         self.ed_nfev = QLineEdit("250")
         self.ed_nfev.setMaximumWidth(80)
         solver_row.addWidget(self.lbl_solver)
         solver_row.addWidget(self.combo_solver)
+        solver_row.addWidget(self.lbl_solver_used)
         solver_row.addWidget(self.lbl_step)
         solver_row.addWidget(self.ed_step)
         self.lbl_max_nfev = QLabel()
@@ -302,6 +305,7 @@ class SimulationPanel(QWidget):
         self.tabs.setTabText(5, tr(lang, "tab.optimization"))
         self.lbl_solver.setText(tr(lang, "sim.solver"))
         self._refresh_solver_options()
+        self._update_used_solver_label()
         self.lbl_step.setText(tr(lang, "sim.step_deg"))
         self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
         self.lbl_driver_sweep.setText(tr(lang, "sim.driver_sweep"))
@@ -476,6 +480,36 @@ class SimulationPanel(QWidget):
         if index >= 0:
             self.combo_solver.setCurrentIndex(index)
 
+    def _has_point_spline(self) -> bool:
+        return any(
+            ps.get("enabled", True)
+            for ps in getattr(self.ctrl, "point_splines", {}).values()
+        )
+
+    def _effective_solver_name(self) -> str:
+        solver_name = self.get_solver_name()
+        if self._has_point_spline() and solver_name in ("scipy", "exudyn"):
+            return "pbd"
+        return solver_name
+
+    def _solver_display_label(self, solver_name: str) -> str:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        label = tr(lang, f"sim.solver.{solver_name}")
+        if label == f"sim.solver.{solver_name}":
+            return solver_name
+        return label
+
+    def _update_used_solver_label(self, solver_name: Optional[str] = None) -> None:
+        if not hasattr(self, "lbl_solver_used"):
+            return
+        if solver_name is None:
+            solver_name = self._last_used_solver or self._effective_solver_name()
+        else:
+            self._last_used_solver = solver_name
+        lang = getattr(self.ctrl, "ui_language", "en")
+        display = self._solver_display_label(str(solver_name))
+        self.lbl_solver_used.setText(tr(lang, "sim.solver.used").format(solver=display))
+
     def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
         step = settings.get("step", 200.0)
         try:
@@ -511,6 +545,8 @@ class SimulationPanel(QWidget):
         self.ed_nfev.setText(str(max_nfev))
         self.chk_reset_before_run.setChecked(reset_before)
         self._sync_simulation_settings_from_fields()
+        self._last_used_solver = None
+        self._update_used_solver_label()
 
     def _sync_simulation_settings_from_fields(self) -> None:
         if not hasattr(self.ctrl, "simulation_settings"):
@@ -519,6 +555,8 @@ class SimulationPanel(QWidget):
 
     def _on_simulation_settings_changed(self) -> None:
         self._sync_simulation_settings_from_fields()
+        self._last_used_solver = None
+        self._update_used_solver_label()
 
     def _sync_sweep_settings_from_fields(self) -> None:
         try:
@@ -586,6 +624,7 @@ class SimulationPanel(QWidget):
         self._refresh_output_table(outputs)
         self._refresh_load_tables()
         self._refresh_friction_table()
+        self._update_used_solver_label()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.refresh_active_case()
             self.optimization_tab.refresh_model_values()
@@ -1305,13 +1344,11 @@ class SimulationPanel(QWidget):
         ok = True
         step_applied = False
         msg = ""
-        has_point_spline = any(
-            ps.get("enabled", True)
-            for ps in getattr(self.ctrl, "point_splines", {}).values()
-        )
+        has_point_spline = self._has_point_spline()
         solver_name = self.get_solver_name()
         if has_point_spline and solver_name in ("scipy", "exudyn"):
             solver_name = "pbd"
+        actual_solver = solver_name
         iters = 200 if has_point_spline else 80
         base_step = self._theta_step
         step_target = self._theta_step_cur
@@ -1369,6 +1406,7 @@ class SimulationPanel(QWidget):
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
+                    actual_solver = "pbd"
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1387,6 +1425,7 @@ class SimulationPanel(QWidget):
                     ok, msg = self.ctrl.drive_to_deg_exudyn(theta_target, max_iters=iters)
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
+                    actual_solver = "pbd"
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1452,6 +1491,7 @@ class SimulationPanel(QWidget):
 
         if step_applied:
             self.ctrl.append_trajectories()
+        self._update_used_solver_label(actual_solver)
         self.refresh_labels()
 
         hard_err_value = None
@@ -1469,7 +1509,7 @@ class SimulationPanel(QWidget):
 
         rec: Dict[str, Any] = {
             "time": self._frame,
-            "solver": solver_name,
+            "solver": actual_solver,
             "success": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
@@ -1510,13 +1550,11 @@ class SimulationPanel(QWidget):
             self._sweep_step_index += 1
 
     def _finalize_end_pose(self) -> None:
-        has_point_spline = any(
-            ps.get("enabled", True)
-            for ps in getattr(self.ctrl, "point_splines", {}).values()
-        )
+        has_point_spline = self._has_point_spline()
         solver_name = self.get_solver_name()
         if has_point_spline and solver_name in ("scipy", "exudyn"):
             solver_name = "pbd"
+        actual_solver = solver_name
         iters = 200 if has_point_spline else 80
         if solver_name == "scipy":
             try:
@@ -1535,6 +1573,7 @@ class SimulationPanel(QWidget):
                 else:
                     ok, _msg = self.ctrl.drive_to_multi_deg_scipy(targets, max_nfev=nfev)
                     if not ok:
+                        actual_solver = "pbd"
                         self.ctrl.drive_to_multi_deg(targets, iters=iters)
             elif solver_name == "exudyn":
                 if has_non_angle_driver:
@@ -1542,6 +1581,7 @@ class SimulationPanel(QWidget):
                 else:
                     ok, _msg = self.ctrl.drive_to_multi_deg_exudyn(targets, max_iters=iters)
                     if not ok:
+                        actual_solver = "pbd"
                         self.ctrl.drive_to_multi_deg(targets, iters=iters)
             else:
                 if has_non_angle_driver:
@@ -1554,16 +1594,19 @@ class SimulationPanel(QWidget):
             if solver_name == "scipy" and nfev is not None:
                 ok, _msg = self.ctrl.drive_to_deg_scipy(target, max_nfev=nfev)
                 if not ok:
+                    actual_solver = "pbd"
                     self.ctrl.drive_to_deg(target, iters=iters)
             elif solver_name == "exudyn":
                 ok, _msg = self.ctrl.drive_to_deg_exudyn(target, max_iters=iters)
                 if not ok:
+                    actual_solver = "pbd"
                     self.ctrl.drive_to_deg(target, iters=iters)
             else:
                 self.ctrl.drive_to_deg(target, iters=iters)
             self._theta_last_ok = target
             self._theta_deg = target
         self.ctrl.append_trajectories()
+        self._update_used_solver_label(actual_solver)
 
     def _build_case_spec(self) -> Dict[str, Any]:
         has_point_spline = any(
