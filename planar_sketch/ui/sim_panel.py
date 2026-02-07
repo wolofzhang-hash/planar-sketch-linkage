@@ -383,6 +383,7 @@ class SimulationPanel(QWidget):
         self._run_context = None
         self._run_start_snapshot = None
         self._last_run_data = None
+        self._last_used_solver = None
         self._frame = 0
         self._driver_sweep = None
         self._driver_last_ok = []
@@ -501,13 +502,19 @@ class SimulationPanel(QWidget):
             return solver_name
         return label
 
+    def _mark_used_solver_unknown(self) -> None:
+        self._last_used_solver = None
+        self._update_used_solver_label()
+
     def _update_used_solver_label(self, solver_name: Optional[str] = None) -> None:
         if not hasattr(self, "lbl_solver_used"):
             return
         if solver_name is None:
-            solver_name = self._last_used_solver or self._effective_solver_name()
+            solver_name = self._last_used_solver
         else:
             self._last_used_solver = solver_name
+        if solver_name is None:
+            solver_name = "NA"
         lang = getattr(self.ctrl, "ui_language", "en")
         display = self._solver_display_label(str(solver_name))
         self.lbl_solver_used.setText(tr(lang, "sim.solver.used").format(solver=display))
@@ -547,8 +554,7 @@ class SimulationPanel(QWidget):
         self.ed_nfev.setText(str(max_nfev))
         self.chk_reset_before_run.setChecked(reset_before)
         self._sync_simulation_settings_from_fields()
-        self._last_used_solver = None
-        self._update_used_solver_label()
+        self._mark_used_solver_unknown()
 
     def _sync_simulation_settings_from_fields(self) -> None:
         if not hasattr(self.ctrl, "simulation_settings"):
@@ -557,8 +563,7 @@ class SimulationPanel(QWidget):
 
     def _on_simulation_settings_changed(self) -> None:
         self._sync_simulation_settings_from_fields()
-        self._last_used_solver = None
-        self._update_used_solver_label()
+        self._mark_used_solver_unknown()
 
     def _sync_sweep_settings_from_fields(self) -> None:
         try:
