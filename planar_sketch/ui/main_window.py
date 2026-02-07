@@ -21,6 +21,7 @@ from .panel import SketchPanel
 from .items import PointItem, LinkItem, AngleItem, SplineItem, PointSplineItem
 from .sim_panel import SimulationPanel
 from .settings_dialog import SettingsDialog
+from .grid_settings_dialog import GridSettingsDialog
 from .i18n import tr
 
 
@@ -206,6 +207,14 @@ class MainWindow(QMainWindow):
         self.act_bg_opacity.triggered.connect(self.set_background_opacity)
         self.act_bg_clear = QAction("", self)
         self.act_bg_clear.triggered.connect(self.clear_background_image)
+        self.act_grid_horizontal = QAction("", self, checkable=True)
+        self.act_grid_horizontal.setChecked(bool(self.ctrl.grid_settings.get("show_horizontal", False)))
+        self.act_grid_horizontal.triggered.connect(lambda c: self._toggle_grid_horizontal(c))
+        self.act_grid_vertical = QAction("", self, checkable=True)
+        self.act_grid_vertical.setChecked(bool(self.ctrl.grid_settings.get("show_vertical", False)))
+        self.act_grid_vertical.triggered.connect(lambda c: self._toggle_grid_vertical(c))
+        self.act_grid_settings = QAction("", self)
+        self.act_grid_settings.triggered.connect(self.open_grid_settings)
         self.act_preset_show_all = QAction("", self)
         self.act_preset_show_all.triggered.connect(self.preset_show_all)
         self.act_preset_points_only = QAction("", self)
@@ -315,6 +324,10 @@ class MainWindow(QMainWindow):
         self.toolbar_background.addAction(self.act_bg_gray)
         self.toolbar_background.addAction(self.act_bg_opacity)
         self.toolbar_background.addAction(self.act_bg_clear)
+        self.toolbar_background.addSeparator()
+        self.toolbar_background.addAction(self.act_grid_horizontal)
+        self.toolbar_background.addAction(self.act_grid_vertical)
+        self.toolbar_background.addAction(self.act_grid_settings)
 
         self.toolbar_analysis = QToolBar(self)
         self.toolbar_analysis.setIconSize(icon_size)
@@ -474,6 +487,9 @@ class MainWindow(QMainWindow):
         self.act_bg_gray.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogResetButton))
         self.act_bg_opacity.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.act_bg_clear.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton))
+        self.act_grid_horizontal.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowRight))
+        self.act_grid_vertical.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
+        self.act_grid_settings.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogDetailedView))
         self.act_preset_show_all.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
         self.act_preset_points_only.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
         self.act_preset_links_only.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogNoButton))
@@ -605,6 +621,9 @@ class MainWindow(QMainWindow):
         self.act_bg_gray.setText(tr(lang, "action.grayscale"))
         self.act_bg_opacity.setText(tr(lang, "action.set_opacity"))
         self.act_bg_clear.setText(tr(lang, "action.clear"))
+        self.act_grid_horizontal.setText(tr(lang, "action.show_horizontal_grid"))
+        self.act_grid_vertical.setText(tr(lang, "action.show_vertical_grid"))
+        self.act_grid_settings.setText(tr(lang, "action.grid_settings"))
         self.act_preset_show_all.setText(tr(lang, "action.preset_show_all"))
         self.act_preset_points_only.setText(tr(lang, "action.preset_points_only"))
         self.act_preset_links_only.setText(tr(lang, "action.preset_links_only"))
@@ -725,6 +744,16 @@ class MainWindow(QMainWindow):
         self.ctrl.set_background_visible(bool(checked))
     def _toggle_background_grayscale(self, checked: bool):
         self.ctrl.set_background_grayscale(bool(checked))
+    def _toggle_grid_horizontal(self, checked: bool):
+        self.ctrl.set_grid_visibility(show_horizontal=bool(checked))
+    def _toggle_grid_vertical(self, checked: bool):
+        self.ctrl.set_grid_visibility(show_vertical=bool(checked))
+
+    def open_grid_settings(self):
+        dlg = GridSettingsDialog(self.ctrl, self)
+        if dlg.exec():
+            settings = dlg.settings()
+            self.ctrl.set_grid_settings(**settings)
 
     def open_settings(self):
         dlg = SettingsDialog(self.ctrl, self)
@@ -861,6 +890,7 @@ class MainWindow(QMainWindow):
             action="start a new file",
         ):
             return
+        self._sync_background_actions()
         self.ctrl.stack.clear()
         self.current_file = None
         self.project_dir = None
@@ -888,6 +918,7 @@ class MainWindow(QMainWindow):
             data = self.ctrl.merge_project_dict(raw)
             if not self.ctrl.load_dict(data, action="open a new file"):
                 return
+            self._sync_background_actions()
             self._set_project_paths(path)
             if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
                 self.sim_panel.animation_tab.refresh_cases()
@@ -938,4 +969,10 @@ class MainWindow(QMainWindow):
     def _set_project_paths(self, project_file: str) -> None:
         self.current_file = project_file
         self.project_dir = self._derive_project_dir(project_file)
+
+    def _sync_background_actions(self) -> None:
+        self.act_bg_visible.setChecked(bool(self.ctrl.background_image.get("visible", True)))
+        self.act_bg_gray.setChecked(bool(self.ctrl.background_image.get("grayscale", False)))
+        self.act_grid_horizontal.setChecked(bool(self.ctrl.grid_settings.get("show_horizontal", False)))
+        self.act_grid_vertical.setChecked(bool(self.ctrl.grid_settings.get("show_vertical", False)))
         os.makedirs(self.project_dir, exist_ok=True)

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PyQt6.QtCore import Qt, QPointF
+from PyQt6.QtCore import Qt, QPointF, QRectF
 import math
 
 from PyQt6.QtGui import QPen, QColor, QPainterPath, QBrush, QFont
@@ -177,6 +177,66 @@ class TorqueArrowItem(QGraphicsPathItem):
             self._label.setVisible(True)
         else:
             self._label.setVisible(False)
+
+
+class GridItem(QGraphicsItem):
+    def __init__(self, ctrl: "SketchController"):
+        super().__init__()
+        self.ctrl = ctrl
+        self.setZValue(-900)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+
+    def _grid_rect(self) -> QRectF:
+        settings = getattr(self.ctrl, "grid_settings", {}) or {}
+        cx, cy = settings.get("center", (0.0, 0.0))
+        range_x = float(settings.get("range_x", 0.0) or 0.0)
+        range_y = float(settings.get("range_y", 0.0) or 0.0)
+        if range_x <= 0.0 or range_y <= 0.0:
+            scene = self.scene()
+            if scene is not None:
+                return scene.sceneRect()
+            return QRectF(-1e6, -1e6, 2e6, 2e6)
+        return QRectF(cx - range_x, cy - range_y, range_x * 2.0, range_y * 2.0)
+
+    def update_geometry(self) -> None:
+        self.prepareGeometryChange()
+
+    def boundingRect(self) -> QRectF:
+        return self._grid_rect()
+
+    def paint(self, painter, option, widget=None):
+        settings = getattr(self.ctrl, "grid_settings", {}) or {}
+        show_h = bool(settings.get("show_horizontal", False))
+        show_v = bool(settings.get("show_vertical", False))
+        if not show_h and not show_v:
+            return
+        spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
+        spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
+        if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
+            return
+        cx, cy = settings.get("center", (0.0, 0.0))
+        rect = option.exposedRect.intersected(self._grid_rect())
+        if rect.isNull() or rect.isEmpty():
+            return
+
+        pen = QPen(QColor(210, 210, 210, 180))
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+
+        if show_v and spacing_x > 0.0:
+            start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
+            x = start_x
+            while x <= rect.right():
+                painter.drawLine(x, rect.top(), x, rect.bottom())
+                x += spacing_x
+
+        if show_h and spacing_y > 0.0:
+            start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
+            y = start_y
+            while y <= rect.bottom():
+                painter.drawLine(rect.left(), y, rect.right(), y)
+                y += spacing_y
 
 
 class PointItem(QGraphicsEllipseItem):

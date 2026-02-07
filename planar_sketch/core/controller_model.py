@@ -197,6 +197,23 @@ class ControllerModel:
         if self._background_item is not None:
             self._apply_background_pixmap()
 
+    def _ensure_grid_item(self) -> None:
+        if self._grid_item is None:
+            self._grid_item = GridItem(self)
+            self._grid_item.setZValue(-900)
+            self._grid_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self.scene.addItem(self._grid_item)
+
+    def _refresh_grid_item(self) -> None:
+        show = bool(self.grid_settings.get("show_horizontal", False) or self.grid_settings.get("show_vertical", False))
+        if not show and self._grid_item is None:
+            return
+        self._ensure_grid_item()
+        if self._grid_item is not None:
+            self._grid_item.setVisible(show)
+            self._grid_item.update_geometry()
+            self._grid_item.update()
+
     def _ensure_background_item(self):
         if self._background_item is None:
             self._background_item = QGraphicsPixmapItem()

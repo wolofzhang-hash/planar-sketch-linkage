@@ -32,6 +32,7 @@ from ..ui.items import (
     TrajectoryItem,
     ForceArrowItem,
     TorqueArrowItem,
+    GridItem,
 )
 from ..ui.i18n import tr
 from ..utils.constants import BODY_COLORS
