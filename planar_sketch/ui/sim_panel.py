@@ -1686,7 +1686,12 @@ class SimulationPanel(QWidget):
         self._run_context = None
         self._refresh_run_buttons()
         if hasattr(self.ctrl, "win") and self.ctrl.win:
-            self.ctrl.win.statusBar().showMessage("Run finished (not saved)")
+            if success:
+                message = "Run finished (not saved)"
+            else:
+                detail = reason or "failed"
+                message = f"Run failed: {detail}"
+            self.ctrl.win.statusBar().showMessage(message)
 
     def _refresh_run_buttons(self) -> None:
         self.btn_save_run.setEnabled(bool(self._last_run_data))
