@@ -1415,6 +1415,19 @@ class ControllerModel:
             self.panel.defer_refresh_all()
         return bool(ok), str(msg)
 
+    def solve_constraints_exudyn(self, max_iters: int = 80) -> tuple[bool, str]:
+        """Solve using Exudyn backend (quasi-static / kinematics)."""
+        self.recompute_from_parameters()
+        try:
+            ok, msg = ExudynKinematicSolver.solve(self, max_iters=int(max_iters))
+        except Exception as e:
+            return False, str(e)
+        self.update_graphics()
+        self.append_trajectories()
+        if self.panel:
+            self.panel.defer_refresh_all()
+        return bool(ok), str(msg)
+
     def solve_current_scipy(self):
         """Convenience action: run SciPy solver once and show a toast/message."""
         ok, msg = self.solve_constraints_scipy(max_nfev=300)
@@ -1448,6 +1461,30 @@ class ControllerModel:
             self._sync_primary_output()
         return self.solve_constraints_scipy(max_nfev=max_nfev)
 
+    def drive_to_deg_exudyn(self, deg: float, max_iters: int = 80) -> tuple[bool, str]:
+        """Drive to a relative input angle (deg) and solve with Exudyn."""
+        if not self._active_drivers() and not self._active_outputs():
+            return False, "Driver or output not set"
+        primary_driver = self._primary_driver()
+        primary_output = self._primary_output()
+        if primary_driver and primary_driver.get("enabled"):
+            if self._sim_zero_input_rad is not None:
+                target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            primary_driver["rad"] = float(target)
+            self.drivers[0] = primary_driver
+            self._sync_primary_driver()
+        elif primary_output and primary_output.get("enabled"):
+            if self._sim_zero_output_rad is not None:
+                target = float(self._sim_zero_output_rad) + math.radians(float(deg))
+            else:
+                target = math.radians(float(deg))
+            primary_output["rad"] = float(target)
+            self.outputs[0] = primary_output
+            self._sync_primary_output()
+        return self.solve_constraints_exudyn(max_iters=max_iters)
+
     def drive_to_multi_deg_scipy(self, deg_list: List[float], max_nfev: int = 250) -> tuple[bool, str]:
         """Drive multiple active drivers to relative angles (deg) and solve with SciPy."""
         active_drivers = self._active_drivers()
@@ -1467,6 +1504,26 @@ class ControllerModel:
             drv["rad"] = float(target)
         self._sync_primary_driver()
         return self.solve_constraints_scipy(max_nfev=max_nfev)
+
+    def drive_to_multi_deg_exudyn(self, deg_list: List[float], max_iters: int = 80) -> tuple[bool, str]:
+        """Drive multiple active drivers to relative angles (deg) and solve with Exudyn."""
+        active_drivers = self._active_drivers()
+        if not active_drivers:
+            return False, "Driver not set"
+        for idx, drv in enumerate(active_drivers):
+            if idx >= len(deg_list):
+                break
+            base_rad = None
+            if idx < len(self._sim_zero_driver_rad):
+                base_rad = self._sim_zero_driver_rad[idx]
+            if base_rad is None:
+                base_rad = self._get_driver_angle_abs_rad(drv)
+            target = math.radians(float(deg_list[idx]))
+            if base_rad is not None:
+                target = float(base_rad) + target
+            drv["rad"] = float(target)
+        self._sync_primary_driver()
+        return self.solve_constraints_exudyn(max_iters=max_iters)
 
     def _create_point(self, pid: int, x: float, y: float, fixed: bool, hidden: bool, traj_enabled: bool = False):
         self.points[pid] = {

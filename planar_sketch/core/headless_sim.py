@@ -15,6 +15,7 @@ from .expression_service import eval_signal_expression
 from .geometry import angle_between, clamp_angle_rad, build_spline_samples, closest_point_on_samples
 from .solver import ConstraintSolver
 from .scipy_kinematics import SciPyKinematicSolver
+from .exudyn_kinematics import ExudynKinematicSolver
 
 
 @dataclass
@@ -1115,6 +1116,13 @@ class HeadlessModel:
         except Exception as exc:
             return False, str(exc)
 
+    def solve_constraints_exudyn(self, max_iters: int = 80) -> tuple[bool, str]:
+        try:
+            ok, msg = ExudynKinematicSolver.solve(self, max_iters=max_iters)
+            return ok, msg
+        except Exception as exc:
+            return False, str(exc)
+
     def _check_over_flags_only(self) -> None:
         return
 
@@ -1238,14 +1246,20 @@ def simulate_case(
         step_count = max(step_count, 1)
 
     solver = case_spec.get("solver", {}) or {}
-    use_scipy = bool(solver.get("use_scipy", False))
+    solver_name = str(solver.get("name") or ("scipy" if solver.get("use_scipy", False) else "pbd")).lower()
+    if solver_name not in ("pbd", "scipy", "exudyn"):
+        solver_name = "pbd"
     max_nfev = int(solver.get("max_nfev", 200))
     pbd_iters = int(solver.get("pbd_iters", 80))
     hard_err_tol = float(solver.get("hard_err_tol", 1e-3))
     treat_point_spline_as_soft = bool(solver.get("treat_point_spline_as_soft", False))
 
-    if use_scipy:
+    if solver_name == "scipy":
         ok, _msg = model.solve_constraints_scipy(max_nfev=max_nfev)
+        if not ok:
+            model.solve_constraints(iters=pbd_iters)
+    elif solver_name == "exudyn":
+        ok, _msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
         if not ok:
             model.solve_constraints(iters=pbd_iters)
     else:
@@ -1275,9 +1289,14 @@ def simulate_case(
     for frame_idx, deg in enumerate(degrees):
         ok = True
         msg = ""
-        if use_scipy:
+        if solver_name == "scipy":
             model.drive_to_deg(deg, iters=0)
             ok, msg = model.solve_constraints_scipy(max_nfev=max_nfev)
+            if not ok:
+                model.solve_constraints(iters=pbd_iters)
+        elif solver_name == "exudyn":
+            model.drive_to_deg(deg, iters=0)
+            ok, msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
             if not ok:
                 model.solve_constraints(iters=pbd_iters)
         else:
@@ -1296,7 +1315,7 @@ def simulate_case(
 
         rec: Dict[str, Any] = {
             "time": frame_idx,
-            "solver": "scipy" if use_scipy else "pbd",
+            "solver": solver_name,
             "success": step_success,
             "input_deg": model.get_input_angle_deg(),
             "output_deg": model.get_output_angle_deg(),
