@@ -1419,7 +1419,7 @@ class ControllerModel:
         """Solve using Exudyn backend (quasi-static / kinematics)."""
         self.recompute_from_parameters()
         try:
-            ok, msg = ExudynKinematicSolver.solve(self, max_iters=int(max_iters))
+            ok, msg = ExudynKinematicSolver.solve(self, max_iters=int(max_iters), distance_only=True)
         except Exception as e:
             return False, str(e)
         self.update_graphics()

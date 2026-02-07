@@ -1118,7 +1118,7 @@ class HeadlessModel:
 
     def solve_constraints_exudyn(self, max_iters: int = 80) -> tuple[bool, str]:
         try:
-            ok, msg = ExudynKinematicSolver.solve(self, max_iters=max_iters)
+            ok, msg = ExudynKinematicSolver.solve(self, max_iters=max_iters, distance_only=True)
             return ok, msg
         except Exception as exc:
             return False, str(exc)
