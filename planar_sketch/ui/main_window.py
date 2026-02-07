@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
@@ -635,12 +636,17 @@ class MainWindow(QMainWindow):
 
     def open_help_manual(self) -> None:
         from PyQt6.QtGui import QDesktopServices
-        app_dir = QCoreApplication.applicationDirPath()
-        help_path = os.path.join(app_dir, "help.pdf")
-        if not os.path.exists(help_path):
+        app_dir = Path(QCoreApplication.applicationDirPath())
+        candidates = [
+            app_dir / "help.pdf",
+            Path.cwd() / "help.pdf",
+            Path(__file__).resolve().parents[2] / "help.pdf",
+        ]
+        help_path = next((path for path in candidates if path.exists()), None)
+        if help_path is None:
             QMessageBox.information(self, tr(self.ctrl.ui_language, "menu.help"), tr(self.ctrl.ui_language, "help.missing"))
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(help_path))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(help_path)))
 
     def show_about_dialog(self) -> None:
         QMessageBox.information(
