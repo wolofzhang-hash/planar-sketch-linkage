@@ -245,14 +245,14 @@ class GridItem(QGraphicsItem):
                 start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
                 x = start_x
                 while x <= rect.right():
-                    painter.drawLine(x, rect.top(), x, rect.bottom())
+                    painter.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()))
                     x += spacing_x
 
             if show_h and spacing_y > 0.0:
                 start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
                 y = start_y
                 while y <= rect.bottom():
-                    painter.drawLine(rect.left(), y, rect.right(), y)
+                    painter.drawLine(QPointF(rect.left(), y), QPointF(rect.right(), y))
                     y += spacing_y
         except Exception:
             traceback.print_exc()
