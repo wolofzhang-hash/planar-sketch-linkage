@@ -23,7 +23,7 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QDialog
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QDialog, QComboBox
 )
 
 from .analysis_tabs import AnimationTab, OptimizationTab
@@ -119,11 +119,13 @@ class SimulationPanel(QWidget):
 
         # Solver backend
         solver_row = QHBoxLayout()
-        self.chk_scipy = QCheckBox()
-        self.chk_scipy.setChecked(True)
+        self.lbl_solver = QLabel()
+        self.combo_solver = QComboBox()
+        self._init_solver_options()
         self.ed_nfev = QLineEdit("250")
         self.ed_nfev.setMaximumWidth(80)
-        solver_row.addWidget(self.chk_scipy)
+        solver_row.addWidget(self.lbl_solver)
+        solver_row.addWidget(self.combo_solver)
         solver_row.addWidget(self.lbl_step)
         solver_row.addWidget(self.ed_step)
         self.lbl_max_nfev = QLabel()
@@ -144,14 +146,12 @@ class SimulationPanel(QWidget):
         self.btn_export = QPushButton()
         self.btn_check_analysis = QPushButton()
         self.btn_save_run = QPushButton()
-        self.btn_open_last_run = QPushButton()
         btns.addWidget(self.btn_play)
         btns.addWidget(self.btn_stop)
         btns.addWidget(self.btn_reset_pose)
         btns.addWidget(self.btn_export)
         btns.addWidget(self.btn_check_analysis)
         btns.addWidget(self.btn_save_run)
-        btns.addWidget(self.btn_open_last_run)
         main_layout.addLayout(btns)
 
         main_layout.addStretch(1)
@@ -276,13 +276,12 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose.clicked.connect(self.reset_pose)
         self.btn_export.clicked.connect(self.export_csv)
         self.btn_save_run.clicked.connect(self.save_last_run)
-        self.btn_open_last_run.clicked.connect(self.open_last_run)
 
         self.table_drivers.cellChanged.connect(self._on_driver_table_changed)
         self.table_loads.cellChanged.connect(self._on_load_table_changed)
         self.table_friction.cellChanged.connect(self._on_friction_table_changed)
         self.ed_step.editingFinished.connect(self._on_sweep_field_changed)
-        self.chk_scipy.stateChanged.connect(self._on_simulation_settings_changed)
+        self.combo_solver.currentIndexChanged.connect(self._on_simulation_settings_changed)
         self.ed_nfev.editingFinished.connect(self._on_simulation_settings_changed)
         self.chk_reset_before_run.stateChanged.connect(self._on_simulation_settings_changed)
         self.apply_sweep_settings(self.ctrl.sweep_settings)
@@ -301,9 +300,10 @@ class SimulationPanel(QWidget):
         self.tabs.setTabText(3, tr(lang, "tab.simulation"))
         self.tabs.setTabText(4, tr(lang, "tab.animation"))
         self.tabs.setTabText(5, tr(lang, "tab.optimization"))
+        self.lbl_solver.setText(tr(lang, "sim.solver"))
+        self._refresh_solver_options()
         self.lbl_step.setText(tr(lang, "sim.step_deg"))
         self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
-        self.chk_scipy.setText(tr(lang, "sim.use_scipy"))
         self.lbl_driver_sweep.setText(tr(lang, "sim.driver_sweep"))
         self.btn_clear_driver.setText(tr(lang, "sim.clear"))
         self.btn_clear_output.setText(tr(lang, "sim.clear"))
@@ -312,7 +312,6 @@ class SimulationPanel(QWidget):
         self.btn_reset_pose.setText(tr(lang, "sim.reset_pose"))
         self.btn_export.setText(tr(lang, "sim.export_csv"))
         self.btn_save_run.setText(tr(lang, "sim.save_run"))
-        self.btn_open_last_run.setText(tr(lang, "sim.open_last_run"))
         self.btn_check_analysis.setText(tr(lang, "analysis.check"))
         self.btn_add_meas_expr.setText(tr(lang, "sim.add_expression_measurement"))
         self.btn_clear_meas.setText(tr(lang, "sim.clear"))
@@ -441,6 +440,42 @@ class SimulationPanel(QWidget):
             return None
         return pids[0]
 
+    def _solver_options(self) -> List[tuple[str, str]]:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        return [
+            ("pbd", tr(lang, "sim.solver.pbd")),
+            ("scipy", tr(lang, "sim.solver.scipy")),
+            ("exudyn", tr(lang, "sim.solver.exudyn")),
+        ]
+
+    def _init_solver_options(self) -> None:
+        self.combo_solver.clear()
+        for key, label in self._solver_options():
+            self.combo_solver.addItem(label, key)
+        if self.combo_solver.count() == 0:
+            self.combo_solver.addItem("PBD", "pbd")
+
+    def _refresh_solver_options(self) -> None:
+        current = self.get_solver_name()
+        self.combo_solver.blockSignals(True)
+        self._init_solver_options()
+        self.set_solver_name(current)
+        self.combo_solver.blockSignals(False)
+
+    def get_solver_name(self) -> str:
+        name = self.combo_solver.currentData()
+        if not name:
+            return "pbd"
+        return str(name)
+
+    def set_solver_name(self, name: str) -> None:
+        name = str(name or "").lower()
+        index = self.combo_solver.findData(name)
+        if index < 0:
+            index = self.combo_solver.findData("pbd")
+        if index >= 0:
+            self.combo_solver.setCurrentIndex(index)
+
     def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
         step = settings.get("step", 200.0)
         try:
@@ -458,13 +493,13 @@ class SimulationPanel(QWidget):
         if max_nfev <= 0:
             max_nfev = 250
         return {
-            "use_scipy": bool(self.chk_scipy.isChecked()),
+            "solver": self.get_solver_name(),
             "max_nfev": max_nfev,
             "reset_before_run": bool(self.chk_reset_before_run.isChecked()),
         }
 
     def apply_simulation_settings(self, settings: Dict[str, Any]) -> None:
-        use_scipy = bool(settings.get("use_scipy", True))
+        solver_name = str(settings.get("solver") or ("scipy" if settings.get("use_scipy", True) else "pbd"))
         reset_before = bool(settings.get("reset_before_run", True))
         try:
             max_nfev = int(float(settings.get("max_nfev", 250)))
@@ -472,7 +507,7 @@ class SimulationPanel(QWidget):
             max_nfev = 250
         if max_nfev <= 0:
             max_nfev = 250
-        self.chk_scipy.setChecked(use_scipy)
+        self.set_solver_name(solver_name)
         self.ed_nfev.setText(str(max_nfev))
         self.chk_reset_before_run.setChecked(reset_before)
         self._sync_simulation_settings_from_fields()
@@ -1274,6 +1309,9 @@ class SimulationPanel(QWidget):
             ps.get("enabled", True)
             for ps in getattr(self.ctrl, "point_splines", {}).values()
         )
+        solver_name = self.get_solver_name()
+        if has_point_spline and solver_name in ("scipy", "exudyn"):
+            solver_name = "pbd"
         iters = 200 if has_point_spline else 80
         base_step = self._theta_step
         step_target = self._theta_step_cur
@@ -1315,7 +1353,7 @@ class SimulationPanel(QWidget):
         while True:
             pose_before = self.ctrl.snapshot_points()
             has_non_angle_driver = any(d.get("type") != "angle" for d in self.ctrl._active_drivers())
-            if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
+            if solver_name == "scipy":
                 try:
                     nfev = int(float(self.ed_nfev.text() or "250"))
                 except Exception:
@@ -1331,6 +1369,24 @@ class SimulationPanel(QWidget):
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
+                    if self._driver_sweep:
+                        if has_non_angle_driver:
+                            self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
+                        else:
+                            self.ctrl.drive_to_multi_deg(driver_targets, iters=iters)
+                    else:
+                        self.ctrl.drive_to_deg(theta_target, iters=iters)
+            elif solver_name == "exudyn":
+                if self._driver_sweep:
+                    if has_non_angle_driver:
+                        self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
+                        ok, msg = True, ""
+                    else:
+                        ok, msg = self.ctrl.drive_to_multi_deg_exudyn(driver_targets, max_iters=iters)
+                else:
+                    ok, msg = self.ctrl.drive_to_deg_exudyn(theta_target, max_iters=iters)
+                if not ok:
+                    self.ctrl.apply_points_snapshot(pose_before)
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1413,7 +1469,7 @@ class SimulationPanel(QWidget):
 
         rec: Dict[str, Any] = {
             "time": self._frame,
-            "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
+            "solver": solver_name,
             "success": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
@@ -1458,8 +1514,11 @@ class SimulationPanel(QWidget):
             ps.get("enabled", True)
             for ps in getattr(self.ctrl, "point_splines", {}).values()
         )
+        solver_name = self.get_solver_name()
+        if has_point_spline and solver_name in ("scipy", "exudyn"):
+            solver_name = "pbd"
         iters = 200 if has_point_spline else 80
-        if hasattr(self, "chk_scipy") and self.chk_scipy.isChecked() and not has_point_spline:
+        if solver_name == "scipy":
             try:
                 nfev = int(float(self.ed_nfev.text() or "250"))
             except Exception:
@@ -1470,11 +1529,18 @@ class SimulationPanel(QWidget):
         if self._driver_sweep:
             targets = [float(entry.get("end", last_ok)) for last_ok, entry in zip(self._driver_last_ok, self._driver_sweep)]
             has_non_angle_driver = any(d.get("type") != "angle" for d in self.ctrl._active_drivers())
-            if nfev is not None:
+            if solver_name == "scipy" and nfev is not None:
                 if has_non_angle_driver:
                     self.ctrl.drive_to_multi_values(targets, iters=iters)
                 else:
                     ok, _msg = self.ctrl.drive_to_multi_deg_scipy(targets, max_nfev=nfev)
+                    if not ok:
+                        self.ctrl.drive_to_multi_deg(targets, iters=iters)
+            elif solver_name == "exudyn":
+                if has_non_angle_driver:
+                    self.ctrl.drive_to_multi_values(targets, iters=iters)
+                else:
+                    ok, _msg = self.ctrl.drive_to_multi_deg_exudyn(targets, max_iters=iters)
                     if not ok:
                         self.ctrl.drive_to_multi_deg(targets, iters=iters)
             else:
@@ -1485,8 +1551,12 @@ class SimulationPanel(QWidget):
             self._driver_last_ok = list(targets)
         else:
             target = float(self._theta_end)
-            if nfev is not None:
+            if solver_name == "scipy" and nfev is not None:
                 ok, _msg = self.ctrl.drive_to_deg_scipy(target, max_nfev=nfev)
+                if not ok:
+                    self.ctrl.drive_to_deg(target, iters=iters)
+            elif solver_name == "exudyn":
+                ok, _msg = self.ctrl.drive_to_deg_exudyn(target, max_iters=iters)
                 if not ok:
                     self.ctrl.drive_to_deg(target, iters=iters)
             else:
@@ -1524,7 +1594,7 @@ class SimulationPanel(QWidget):
                 "max_step_deg": float(abs(self._theta_step_max)),
             },
             "solver": {
-                "use_scipy": bool(self.chk_scipy.isChecked()),
+                "name": self.get_solver_name(),
                 "max_nfev": max_nfev,
                 "pbd_iters": iters,
                 "hard_err_tol": 1e-3,
@@ -1568,8 +1638,6 @@ class SimulationPanel(QWidget):
             self.ctrl.win.statusBar().showMessage("Run finished (not saved)")
 
     def _refresh_run_buttons(self) -> None:
-        manager = self._run_manager()
-        self.btn_open_last_run.setEnabled(bool(manager.last_run_path()))
         self.btn_save_run.setEnabled(bool(self._last_run_data))
 
     def _run_analysis_check(self) -> None:

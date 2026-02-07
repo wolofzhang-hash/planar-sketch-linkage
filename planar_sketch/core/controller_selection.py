@@ -2253,7 +2253,7 @@ class ControllerSelection:
         else:
             uuid_val = self._ensure_project_uuid(project_uuid)
         return {
-            "version": "2.7.0",
+            "version": "2.9.0",
             "project_uuid": uuid_val,
             "display_precision": int(getattr(self, "display_precision", 3)),
             "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
@@ -2454,8 +2454,9 @@ class ControllerSelection:
             max_nfev = int(float(raw_sim_settings.get("max_nfev", 250)))
         except Exception:
             max_nfev = 250
+        solver_name = str(raw_sim_settings.get("solver") or ("scipy" if raw_sim_settings.get("use_scipy", True) else "pbd"))
         self.simulation_settings = {
-            "use_scipy": bool(raw_sim_settings.get("use_scipy", True)),
+            "solver": solver_name,
             "max_nfev": max_nfev,
             "reset_before_run": bool(raw_sim_settings.get("reset_before_run", True)),
         }

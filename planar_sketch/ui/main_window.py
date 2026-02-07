@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle, QToolButton
+    QFileDialog, QMessageBox, QInputDialog, QToolBar, QStyle, QToolButton, QLabel, QComboBox, QWidget, QHBoxLayout
 )
 
 from ..core.controller import SketchController
@@ -27,7 +27,10 @@ from .i18n import tr
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Planar Sketch v2.8.2")
+        self.setWindowTitle("Planar Sketch v2.9.0")
+        icon_path = Path(__file__).resolve().parents[1] / "assets" / "app_icon.svg"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
         self.scene = QGraphicsScene(-2000, -2000, 4000, 4000)
         self.ctrl = SketchController(self.scene, self)
@@ -165,8 +168,6 @@ class MainWindow(QMainWindow):
         self.act_create_spline = QAction("", self)
         self.act_create_spline.setCheckable(True)
         self.act_create_spline.toggled.connect(lambda checked: self._toggle_create_action("spline", checked))
-        self.act_solve_accurate = QAction("", self)
-        self.act_solve_accurate.triggered.connect(self.solve_accurate_scipy)
 
         self.menu_boundary_action = mb.addAction("")
         self.menu_boundary_action.setCheckable(True)
@@ -228,8 +229,6 @@ class MainWindow(QMainWindow):
         self.act_analysis_export.triggered.connect(self.sim_panel.export_csv)
         self.act_analysis_save_run = QAction("", self)
         self.act_analysis_save_run.triggered.connect(self.sim_panel.save_last_run)
-        self.act_analysis_open_last_run = QAction("", self)
-        self.act_analysis_open_last_run.triggered.connect(self.sim_panel.open_last_run)
 
         self.act_boundary_constraints = QAction("", self)
         self.act_boundary_constraints.triggered.connect(self.show_constraints_tab)
@@ -284,7 +283,6 @@ class MainWindow(QMainWindow):
         self.toolbar_sketch.addAction(self.act_create_point)
         self.toolbar_sketch.addAction(self.act_create_line)
         self.toolbar_sketch.addAction(self.act_create_spline)
-        self.toolbar_sketch.addAction(self.act_solve_accurate)
         self._install_sketch_double_clicks()
 
         self.toolbar_view = QToolBar(self)
@@ -331,7 +329,8 @@ class MainWindow(QMainWindow):
         self.toolbar_analysis.addSeparator()
         self.toolbar_analysis.addAction(self.act_analysis_export)
         self.toolbar_analysis.addAction(self.act_analysis_save_run)
-        self.toolbar_analysis.addAction(self.act_analysis_open_last_run)
+        self.toolbar_analysis.addSeparator()
+        self._build_analysis_solver_widget()
 
         self.toolbar_boundary = QToolBar(self)
         self.toolbar_boundary.setIconSize(icon_size)
@@ -465,7 +464,6 @@ class MainWindow(QMainWindow):
         self.act_create_point.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
         self.act_create_line.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_LineEditClearButton))
         self.act_create_spline.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView))
-        self.act_solve_accurate.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MediaPlay))
         self.act_pm.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogYesButton))
         self.act_dm.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.act_body_color.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DriveDVDIcon))
@@ -487,7 +485,6 @@ class MainWindow(QMainWindow):
         self.act_analysis_check.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.act_analysis_export.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
         self.act_analysis_save_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton))
-        self.act_analysis_open_last_run.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon))
         self.act_boundary_constraints.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.act_boundary_loads.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
         self.act_boundary_add_force.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_ArrowUp))
@@ -496,6 +493,66 @@ class MainWindow(QMainWindow):
         self.act_boundary_fix.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogApplyButton))
         self.act_help_manual.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_DialogHelpButton))
         self.act_help_about.setIcon(style.standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation))
+
+    def _build_analysis_solver_widget(self) -> None:
+        self.analysis_solver_widget = QWidget(self)
+        layout = QHBoxLayout(self.analysis_solver_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.lbl_analysis_solver = QLabel(self.analysis_solver_widget)
+        self.combo_analysis_solver = QComboBox(self.analysis_solver_widget)
+        layout.addWidget(self.lbl_analysis_solver)
+        layout.addWidget(self.combo_analysis_solver)
+        self.toolbar_analysis.addWidget(self.analysis_solver_widget)
+        self.combo_analysis_solver.currentIndexChanged.connect(self._on_analysis_solver_combo_changed)
+        if hasattr(self.sim_panel, "combo_solver"):
+            self.sim_panel.combo_solver.currentIndexChanged.connect(self._sync_analysis_solver_combo_from_panel)
+        self._refresh_analysis_solver_options()
+
+    def _refresh_analysis_solver_options(self) -> None:
+        if not hasattr(self, "combo_analysis_solver"):
+            return
+        current = self.sim_panel.get_solver_name() if hasattr(self.sim_panel, "get_solver_name") else "pbd"
+        self.combo_analysis_solver.blockSignals(True)
+        self.combo_analysis_solver.clear()
+        if hasattr(self.sim_panel, "_solver_options"):
+            for key, label in self.sim_panel._solver_options():
+                self.combo_analysis_solver.addItem(label, key)
+        if self.combo_analysis_solver.count() == 0:
+            self.combo_analysis_solver.addItem("PBD", "pbd")
+        index = self.combo_analysis_solver.findData(current)
+        if index < 0:
+            index = self.combo_analysis_solver.findData("pbd")
+        if index >= 0:
+            self.combo_analysis_solver.setCurrentIndex(index)
+        self.combo_analysis_solver.blockSignals(False)
+        if hasattr(self, "lbl_analysis_solver"):
+            lang = getattr(self.ctrl, "ui_language", "en")
+            self.lbl_analysis_solver.setText(tr(lang, "sim.solver"))
+
+    def _on_analysis_solver_combo_changed(self) -> None:
+        if not hasattr(self, "combo_analysis_solver") or not hasattr(self.sim_panel, "set_solver_name"):
+            return
+        name = self.combo_analysis_solver.currentData()
+        if hasattr(self.sim_panel, "combo_solver"):
+            self.sim_panel.combo_solver.blockSignals(True)
+        self.sim_panel.set_solver_name(str(name))
+        if hasattr(self.sim_panel, "combo_solver"):
+            self.sim_panel.combo_solver.blockSignals(False)
+        if hasattr(self.sim_panel, "_sync_simulation_settings_from_fields"):
+            self.sim_panel._sync_simulation_settings_from_fields()
+
+    def _sync_analysis_solver_combo_from_panel(self) -> None:
+        if not hasattr(self, "combo_analysis_solver") or not hasattr(self.sim_panel, "get_solver_name"):
+            return
+        name = self.sim_panel.get_solver_name()
+        self.combo_analysis_solver.blockSignals(True)
+        index = self.combo_analysis_solver.findData(name)
+        if index < 0:
+            index = self.combo_analysis_solver.findData("pbd")
+        if index >= 0:
+            self.combo_analysis_solver.setCurrentIndex(index)
+        self.combo_analysis_solver.blockSignals(False)
 
     def update_model_action_state(self) -> None:
         mode = getattr(self.ctrl, "mode", "Idle")
@@ -538,7 +595,6 @@ class MainWindow(QMainWindow):
         self.act_create_point.setText(tr(lang, "action.create_point"))
         self.act_create_line.setText(tr(lang, "action.create_line"))
         self.act_create_spline.setText(tr(lang, "action.create_spline"))
-        self.act_solve_accurate.setText(tr(lang, "action.solve_accurate_scipy"))
         self.act_pm.setText(tr(lang, "action.show_point_markers"))
         self.act_dm.setText(tr(lang, "action.show_dimension_markers"))
         self.act_body_color.setText(tr(lang, "action.show_rigid_body_coloring"))
@@ -560,7 +616,6 @@ class MainWindow(QMainWindow):
         self.act_analysis_check.setText(tr(lang, "analysis.check"))
         self.act_analysis_export.setText(tr(lang, "sim.export_csv"))
         self.act_analysis_save_run.setText(tr(lang, "sim.save_run"))
-        self.act_analysis_open_last_run.setText(tr(lang, "sim.open_last_run"))
         self.act_boundary_constraints.setText(tr(lang, "action.boundary_constraints"))
         self.act_boundary_loads.setText(tr(lang, "action.boundary_loads"))
         self.act_boundary_add_force.setText(tr(lang, "action.boundary_add_force"))
@@ -573,6 +628,7 @@ class MainWindow(QMainWindow):
         self.sim_dock.setWindowTitle(tr(lang, "dock.analysis"))
         self.panel.apply_language()
         self.sim_panel.apply_language()
+        self._refresh_analysis_solver_options()
 
     def _toggle_create_action(self, kind: str, checked: bool) -> None:
         if checked:
@@ -585,15 +641,6 @@ class MainWindow(QMainWindow):
         else:
             if getattr(self.ctrl, "mode", "Idle") in ("CreatePoint", "CreateLine", "CreateSpline"):
                 self.ctrl.cancel_model_action()
-
-    def solve_accurate_scipy(self):
-        """Run SciPy kinematics solver once."""
-        self.ctrl.commit_drag_if_any()
-        ok, msg = self.ctrl.solve_constraints_scipy(max_nfev=300)
-        if not ok:
-            QMessageBox.warning(self, "SciPy Solver", msg)
-        else:
-            self.statusBar().showMessage("SciPy solve OK")
 
     def show_constraints_tab(self) -> None:
         self._set_active_ribbon("boundary")

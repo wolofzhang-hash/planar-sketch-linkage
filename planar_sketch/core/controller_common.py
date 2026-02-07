@@ -19,6 +19,7 @@ from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
 from .scipy_kinematics import SciPyKinematicSolver
+from .exudyn_kinematics import ExudynKinematicSolver
 from ..ui.items import (
     TextMarker,
     PointItem,

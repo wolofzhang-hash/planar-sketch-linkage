@@ -28,3 +28,4 @@ dist/
 *.log
 *.csv
 *.svg
+!planar_sketch/assets/app_icon.svg
