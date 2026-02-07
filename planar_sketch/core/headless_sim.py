@@ -525,62 +525,18 @@ class HeadlessModel:
             j_id = int(pl.get("j", -1))
             if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
                 continue
-            if "s" in pl:
-                s_val = float(pl.get("s", 0.0))
 
-                def _polx(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
-                    px, _py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    ux, uy = abx / denom, aby / denom
-                    target_x = ax + ux * s_val
-                    return px - target_x
-
-                def _poly(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
-                    _px, py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    ux, uy = abx / denom, aby / denom
-                    target_y = ay + uy * s_val
-                    return py - target_y
-
-                funcs.append(_polx)
-                funcs.append(_poly)
-            else:
-                def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
-                    px, py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    return ((px - ax) * (-aby) + (py - ay) * abx) / denom
+            def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
+                px, py = _xy(q, p_id)
+                ax, ay = _xy(q, i_id)
+                bx, by = _xy(q, j_id)
+                abx, aby = bx - ax, by - ay
+                denom = math.hypot(abx, aby)
+                if denom < 1e-9:
+                    return 0.0
+                return ((px - ax) * (-aby) + (py - ay) * abx) / denom
 
             funcs.append(_pol)
-            if "s" in pl:
-                s_target = float(pl.get("s", 0.0))
-
-                def _pol_s(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_target=s_target) -> float:
-                    px, py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    ux, uy = abx / denom, aby / denom
-                    return (px - ax) * ux + (py - ay) * uy - s_target
-
-                funcs.append(_pol_s)
 
         for ps in self.point_splines.values():
             if not bool(ps.get("enabled", True)):

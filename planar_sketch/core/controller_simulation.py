@@ -199,6 +199,7 @@ class ControllerSimulation:
             return
         self.add_load_force(pid, fx, fy)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
     def _prompt_add_torque(self, pid: int):
@@ -207,6 +208,7 @@ class ControllerSimulation:
             return
         self.add_load_torque(pid, mz)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
     def _prompt_add_spring(self, pid: int, ref_pid: Optional[int] = None):
@@ -225,6 +227,7 @@ class ControllerSimulation:
             return
         self.add_load_spring(pid, int(ref_pid), k, load)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
     def _prompt_add_torsion_spring(self, pid: int, ref_pid: Optional[int] = None):
@@ -247,6 +250,7 @@ class ControllerSimulation:
             return
         self.add_load_torsion_spring(pid, int(ref_pid), k, float(theta0), load)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
     def _prompt_add_friction(self, pid: int):
@@ -258,6 +262,7 @@ class ControllerSimulation:
             return
         self.add_friction_joint(pid, mu, diameter)
         if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+            self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
     def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Callable[[np.ndarray], float]]:

@@ -15,6 +15,7 @@ from typing import Any, Tuple, Dict, List
 import importlib
 import importlib.util
 from .solver import ConstraintSolver
+from .geometry import build_spline_samples
 
 
 def _load_exudyn():
@@ -150,6 +151,51 @@ class ExudynKinematicSolver:
             for b in ctrl.bodies.values():
                 body_edges.extend(b.get("rigid_edges", []))
 
+        def _project_point_to_spline_normal(
+            p: Dict[str, Any],
+            control_points: list[Dict[str, Any]],
+            *,
+            closed: bool,
+            samples_per_segment: int = 16,
+        ) -> None:
+            pts = [(float(cp["x"]), float(cp["y"])) for cp in control_points]
+            samples = build_spline_samples(pts, samples_per_segment=samples_per_segment, closed=closed)
+            if len(samples) < 2:
+                return
+            px, py = float(p["x"]), float(p["y"])
+            best_dist2 = float("inf")
+            best = None
+            for idx in range(len(samples) - 1):
+                x1, y1, _seg1, _t1 = samples[idx]
+                x2, y2, _seg2, _t2 = samples[idx + 1]
+                vx = x2 - x1
+                vy = y2 - y1
+                denom = vx * vx + vy * vy
+                if denom <= 1e-18:
+                    continue
+                u = ((px - x1) * vx + (py - y1) * vy) / denom
+                u = max(0.0, min(1.0, u))
+                cx = x1 + u * vx
+                cy = y1 + u * vy
+                dx = cx - px
+                dy = cy - py
+                dist2 = dx * dx + dy * dy
+                if dist2 < best_dist2:
+                    best_dist2 = dist2
+                    best = (cx, cy, vx, vy)
+            if best is None:
+                return
+            cx, cy, tx, ty = best
+            t_norm = (tx * tx + ty * ty) ** 0.5
+            if t_norm < 1e-12:
+                return
+            tx /= t_norm
+            ty /= t_norm
+            nx, ny = -ty, tx
+            offset = (px - cx) * nx + (py - cy) * ny
+            p["x"] = px - offset * nx
+            p["y"] = py - offset * ny
+
         for _ in range(max(1, int(max_iters))):
             # Drivers first
             for drv in drive_sources:
@@ -232,6 +278,27 @@ class ExudynKinematicSolver:
                         )
                     else:
                         ConstraintSolver.solve_point_on_line(pp, pa, pb, lock_p, lock_a, lock_b, tol=1e-6)
+
+            if hasattr(ctrl, "point_splines") and hasattr(ctrl, "splines"):
+                for ps in ctrl.point_splines.values():
+                    if not bool(ps.get("enabled", True)):
+                        continue
+                    p_id = int(ps.get("p", -1))
+                    s_id = int(ps.get("s", -1))
+                    if p_id not in ctrl.points or s_id not in ctrl.splines:
+                        continue
+                    if bool(ctrl.points[p_id].get("fixed", False)) or (p_id in driven_pids):
+                        continue
+                    spline = ctrl.splines[s_id]
+                    cp_ids = [pid for pid in spline.get("points", []) if pid in ctrl.points]
+                    if len(cp_ids) < 2:
+                        continue
+                    control_points = [ctrl.points[pid] for pid in cp_ids]
+                    _project_point_to_spline_normal(
+                        ctrl.points[p_id],
+                        control_points,
+                        closed=bool(spline.get("closed", False)),
+                    )
 
             # Rigid-body edges
             for (i, j, L) in body_edges:

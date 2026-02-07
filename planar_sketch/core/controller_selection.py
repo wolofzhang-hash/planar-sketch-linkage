@@ -1583,6 +1583,7 @@ class ControllerSelection:
         # refresh sim panel labels if present
         try:
             if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
+                self.win.sim_panel._mark_used_solver_unknown()
                 self.win.sim_panel.refresh_labels()
         except Exception:
             pass
