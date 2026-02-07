@@ -1010,6 +1010,24 @@ class ControllerSimulation:
                     if prev is None or mag_k > prev[2]:
                         link_reactions[pid] = (fx_k, fy_k, mag_k)
 
+        point_line_reactions: Dict[int, Tuple[float, float, float]] = {}
+        if J.size:
+            for k, info in enumerate(meta):
+                if info.get("type") != "point_line":
+                    continue
+                pid = int(info.get("p", -1))
+                if pid not in idx_map:
+                    continue
+                idx = idx_map[pid]
+                fx_k = float(J[k, 2 * idx] * lam[k])
+                fy_k = float(J[k, 2 * idx + 1] * lam[k])
+                mag_k = math.hypot(fx_k, fy_k)
+                if mag_k <= 0.0:
+                    continue
+                prev = point_line_reactions.get(pid)
+                if prev is None or mag_k > prev[2]:
+                    point_line_reactions[pid] = (fx_k, fy_k, mag_k)
+
         spline_reactions: Dict[int, Tuple[float, float, float]] = {}
         if J.size:
             for k, info in enumerate(meta):
@@ -1034,6 +1052,8 @@ class ControllerSimulation:
             if bool(point.get("fixed", False)):
                 fx = float(reaction_fixed[2 * idx])
                 fy = float(reaction_fixed[2 * idx + 1])
+            elif pid in point_line_reactions:
+                fx, fy, _mag = point_line_reactions[pid]
             elif pid in link_reactions:
                 fx, fy, _mag = link_reactions[pid]
             elif pid in spline_reactions:
