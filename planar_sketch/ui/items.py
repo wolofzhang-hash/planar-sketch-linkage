@@ -187,9 +187,18 @@ class GridItem(QGraphicsItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setAcceptHoverEvents(False)
 
+    def _grid_center(self) -> tuple[float, float]:
+        settings = getattr(self.ctrl, "grid_settings", {}) or {}
+        center = settings.get("center", (0.0, 0.0))
+        try:
+            cx, cy = center
+            return float(cx), float(cy)
+        except Exception:
+            return 0.0, 0.0
+
     def _grid_rect(self) -> QRectF:
         settings = getattr(self.ctrl, "grid_settings", {}) or {}
-        cx, cy = settings.get("center", (0.0, 0.0))
+        cx, cy = self._grid_center()
         range_x = float(settings.get("range_x", 0.0) or 0.0)
         range_y = float(settings.get("range_y", 0.0) or 0.0)
         if range_x <= 0.0 or range_y <= 0.0:
@@ -215,7 +224,7 @@ class GridItem(QGraphicsItem):
         spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
         if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
             return
-        cx, cy = settings.get("center", (0.0, 0.0))
+        cx, cy = self._grid_center()
         rect = option.exposedRect.intersected(self._grid_rect())
         if rect.isNull() or rect.isEmpty():
             return
