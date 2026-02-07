@@ -975,4 +975,5 @@ class MainWindow(QMainWindow):
         self.act_bg_gray.setChecked(bool(self.ctrl.background_image.get("grayscale", False)))
         self.act_grid_horizontal.setChecked(bool(self.ctrl.grid_settings.get("show_horizontal", False)))
         self.act_grid_vertical.setChecked(bool(self.ctrl.grid_settings.get("show_vertical", False)))
-        os.makedirs(self.project_dir, exist_ok=True)
+        if self.project_dir:
+            os.makedirs(self.project_dir, exist_ok=True)
