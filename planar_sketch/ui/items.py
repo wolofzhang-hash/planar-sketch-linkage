@@ -225,7 +225,12 @@ class GridItem(QGraphicsItem):
         if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
             return
         cx, cy = self._grid_center()
-        rect = option.exposedRect.intersected(self._grid_rect())
+        exposed_rect = getattr(option, "exposedRect", None)
+        if exposed_rect is None:
+            exposed_rect = getattr(option, "rect", None)
+        if exposed_rect is None:
+            exposed_rect = self.boundingRect()
+        rect = exposed_rect.intersected(self._grid_rect())
         if rect.isNull() or rect.isEmpty():
             return
 
