@@ -345,7 +345,12 @@ class CaseRunManager:
         _write_json(summary_path, summary)
         _write_json(status_path, status)
         with open(log_path, "w", encoding="utf-8") as fh:
-            fh.write(status.get("reason", "ok"))
+            reason = status.get("reason", "ok")
+            solver_error = status.get("solver_error")
+            fh.write(str(reason))
+            if solver_error:
+                fh.write("\nsolver_error: ")
+                fh.write(str(solver_error))
 
         with open(os.path.join(self.runs_dir, "last_run.txt"), "w", encoding="utf-8") as fh:
             fh.write(run_dir)
