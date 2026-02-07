@@ -346,6 +346,7 @@ class ControllerSelection:
     def cmd_add_point(self, x: float, y: float):
         if not self._confirm_stop_replay("modify the model"):
             return
+        x, y = self._snap_point_to_grid(float(x), float(y))
         pid = self._next_pid; self._next_pid += 1
         ctrl = self
         self._last_model_action = "CreatePoint"
@@ -364,6 +365,52 @@ class ControllerSelection:
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
                 ctrl.update_status()
         self.stack.push(AddPoint())
+
+    def _snap_point_to_grid(self, x: float, y: float) -> tuple[float, float]:
+        settings = getattr(self, "grid_settings", {}) or {}
+        show_h = bool(settings.get("show_horizontal", False))
+        show_v = bool(settings.get("show_vertical", False))
+        if not show_h and not show_v:
+            return float(x), float(y)
+        spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
+        spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
+        cx, cy = settings.get("center", (0.0, 0.0))
+        range_x = float(settings.get("range_x", 0.0) or 0.0)
+        range_y = float(settings.get("range_y", 0.0) or 0.0)
+
+        def in_range(value: float, center: float, span: float) -> bool:
+            if span <= 0.0:
+                return True
+            return (center - span) <= value <= (center + span)
+
+        if show_v and spacing_x > 0.0 and in_range(x, cx, range_x):
+            x = cx + round((x - cx) / spacing_x) * spacing_x
+        if show_h and spacing_y > 0.0 and in_range(y, cy, range_y):
+            y = cy + round((y - cy) / spacing_y) * spacing_y
+        return float(x), float(y)
+
+    def set_grid_visibility(self, show_horizontal: Optional[bool] = None, show_vertical: Optional[bool] = None) -> None:
+        if show_horizontal is not None:
+            self.grid_settings["show_horizontal"] = bool(show_horizontal)
+        if show_vertical is not None:
+            self.grid_settings["show_vertical"] = bool(show_vertical)
+        self._refresh_grid_item()
+
+    def set_grid_settings(
+        self,
+        spacing_x: float,
+        spacing_y: float,
+        range_x: float,
+        range_y: float,
+        center_x: float,
+        center_y: float,
+    ) -> None:
+        self.grid_settings["spacing_x"] = max(0.1, float(spacing_x))
+        self.grid_settings["spacing_y"] = max(0.1, float(spacing_y))
+        self.grid_settings["range_x"] = max(0.0, float(range_x))
+        self.grid_settings["range_y"] = max(0.0, float(range_y))
+        self.grid_settings["center"] = (float(center_x), float(center_y))
+        self._refresh_grid_item()
 
     def cmd_add_link(self, i: int, j: int):
         if not self._confirm_stop_replay("modify the model"):
@@ -2092,6 +2139,15 @@ class ControllerSelection:
                     "scale": float(self.background_image.get("scale", 1.0)),
                     "pos": list(self.background_image.get("pos", (0.0, 0.0))),
                 },
+                "grid_settings": {
+                    "show_horizontal": bool(self.grid_settings.get("show_horizontal", False)),
+                    "show_vertical": bool(self.grid_settings.get("show_vertical", False)),
+                    "spacing_x": float(self.grid_settings.get("spacing_x", 100.0)),
+                    "spacing_y": float(self.grid_settings.get("spacing_y", 100.0)),
+                    "range_x": float(self.grid_settings.get("range_x", 2000.0)),
+                    "range_y": float(self.grid_settings.get("range_y", 2000.0)),
+                    "center": list(self.grid_settings.get("center", (0.0, 0.0))),
+                },
                 "points": [
                     {
                         "id": pid,
@@ -2286,6 +2342,15 @@ class ControllerSelection:
                 "scale": 1.0,
                 "pos": [0.0, 0.0],
             },
+            "grid_settings": {
+                "show_horizontal": False,
+                "show_vertical": False,
+                "spacing_x": 100.0,
+                "spacing_y": 100.0,
+                "range_x": 2000.0,
+                "range_y": 2000.0,
+                "center": [0.0, 0.0],
+            },
             "points": [],
             "constraints": [],
             "links": [],
@@ -2327,6 +2392,7 @@ class ControllerSelection:
         for key, val in data.items():
             if key in (
                 "background_image",
+                "grid_settings",
                 "driver",
                 "output",
                 "sweep",
@@ -2353,6 +2419,7 @@ class ControllerSelection:
             "torque_arrow_width",
             "parameters",
             "background_image",
+            "grid_settings",
             "points",
             "constraints",
             "links",
@@ -2398,6 +2465,7 @@ class ControllerSelection:
         ]
         dict_keys = [
             "background_image",
+            "grid_settings",
             "driver",
             "output",
             "sweep",
@@ -2449,6 +2517,28 @@ class ControllerSelection:
                 self.background_image["pos"] = (float(pos[0]), float(pos[1]))
             except Exception:
                 self.background_image["pos"] = (0.0, 0.0)
+        grid_info = data.get("grid_settings") or {}
+        self.grid_settings = {
+            "show_horizontal": False,
+            "show_vertical": False,
+            "spacing_x": 100.0,
+            "spacing_y": 100.0,
+            "range_x": 2000.0,
+            "range_y": 2000.0,
+            "center": (0.0, 0.0),
+        }
+        if isinstance(grid_info, dict):
+            self.grid_settings["show_horizontal"] = bool(grid_info.get("show_horizontal", False))
+            self.grid_settings["show_vertical"] = bool(grid_info.get("show_vertical", False))
+            self.grid_settings["spacing_x"] = max(0.1, float(grid_info.get("spacing_x", 100.0)))
+            self.grid_settings["spacing_y"] = max(0.1, float(grid_info.get("spacing_y", 100.0)))
+            self.grid_settings["range_x"] = max(0.0, float(grid_info.get("range_x", 2000.0)))
+            self.grid_settings["range_y"] = max(0.0, float(grid_info.get("range_y", 2000.0)))
+            center = grid_info.get("center", (0.0, 0.0))
+            try:
+                self.grid_settings["center"] = (float(center[0]), float(center[1]))
+            except Exception:
+                self.grid_settings["center"] = (0.0, 0.0)
         sweep_info = data.get("sweep", {}) or {}
         try:
             sweep_start = float(sweep_info.get("start", self.sweep_settings.get("start", 0.0)))
@@ -2487,6 +2577,7 @@ class ControllerSelection:
             self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
             self._background_item = None
             self._background_image_original = None
+            self._grid_item = None
         finally:
             self.scene.blockSignals(False)
         self._load_arrow_items = []
@@ -2865,6 +2956,7 @@ class ControllerSelection:
             opt_tab = getattr(self.win.sim_panel, "optimization_tab", None)
             if opt_tab is not None and hasattr(opt_tab, "apply_settings"):
                 opt_tab.apply_settings(self.optimization_settings)
+        self._refresh_grid_item()
         self.solve_constraints(); self.update_graphics()
         if self.panel: self.panel.defer_refresh_all()
         if clear_undo: self.stack.clear()
