@@ -132,6 +132,8 @@ class SimulationPanel(QWidget):
         self.chk_reset_before_run = QCheckBox()
         self.chk_reset_before_run.setChecked(True)
         solver_row.addWidget(self.chk_reset_before_run)
+        self.lbl_actual_solver = QLabel()
+        solver_row.addWidget(self.lbl_actual_solver)
         self.input_fields = [self.ed_step, self.ed_nfev]
         solver_row.addStretch(1)
         main_layout.addLayout(solver_row)
@@ -291,6 +293,7 @@ class SimulationPanel(QWidget):
         self.apply_language()
         self.refresh_labels()
         self._refresh_run_buttons()
+        self._set_actual_solver("pbd")
 
     def apply_language(self) -> None:
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -326,6 +329,7 @@ class SimulationPanel(QWidget):
         self.btn_remove_friction.setText(tr(lang, "sim.remove_selected"))
         self.btn_clear_friction.setText(tr(lang, "sim.clear"))
         self.chk_reset_before_run.setText(tr(lang, "sim.reset_before_run"))
+        self._set_actual_solver(getattr(self, "_actual_solver", "pbd"))
         self.table_meas.setHorizontalHeaderLabels([
             tr(lang, "sim.table.type"),
             tr(lang, "sim.table.measurement"),
@@ -503,6 +507,14 @@ class SimulationPanel(QWidget):
 
     def _on_sweep_field_changed(self) -> None:
         self._sync_sweep_settings_from_fields()
+
+    def _set_actual_solver(self, solver: str) -> None:
+        lang = getattr(self.ctrl, "ui_language", "en")
+        solver_key = "sim.solver.scipy" if solver == "scipy" else "sim.solver.pbd"
+        self._actual_solver = solver
+        self.lbl_actual_solver.setText(
+            tr(lang, "sim.actual_solver").format(solver=tr(lang, solver_key))
+        )
 
     # ---- UI actions ----
     def refresh_labels(self):
@@ -1278,6 +1290,7 @@ class SimulationPanel(QWidget):
         base_step = self._theta_step
         step_target = self._theta_step_cur
         theta_target = self._theta_last_ok + step_target
+        actual_solver = "pbd"
         driver_targets: List[float] = []
         if self._driver_sweep:
             driver_targets = []
@@ -1324,10 +1337,13 @@ class SimulationPanel(QWidget):
                     if has_non_angle_driver:
                         self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
                         ok, msg = True, ""
+                        actual_solver = "pbd"
                     else:
                         ok, msg = self.ctrl.drive_to_multi_deg_scipy(driver_targets, max_nfev=nfev)
+                        actual_solver = "scipy" if ok else "pbd"
                 else:
                     ok, msg = self.ctrl.drive_to_deg_scipy(theta_target, max_nfev=nfev)
+                    actual_solver = "scipy" if ok else "pbd"
                 if not ok:
                     self.ctrl.apply_points_snapshot(pose_before)
                     # Fallback to PBD so the UI stays responsive
@@ -1396,6 +1412,7 @@ class SimulationPanel(QWidget):
 
         if step_applied:
             self.ctrl.append_trajectories()
+        self._set_actual_solver(actual_solver)
         self.refresh_labels()
 
         hard_err_value = None
@@ -1413,7 +1430,7 @@ class SimulationPanel(QWidget):
 
         rec: Dict[str, Any] = {
             "time": self._frame,
-            "solver": ("scipy" if (hasattr(self, "chk_scipy") and self.chk_scipy.isChecked()) else "pbd"),
+            "solver": actual_solver,
             "success": ok,
             "input_deg": self.ctrl.get_input_angle_deg(),
             "output_deg": self.ctrl.get_output_angle_deg(),
