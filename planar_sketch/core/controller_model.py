@@ -206,6 +206,7 @@ class ControllerModel:
 
     def _refresh_grid_item(self) -> None:
         show = bool(self.grid_settings.get("show_horizontal", False) or self.grid_settings.get("show_vertical", False))
+        print("[grid] refresh grid item show:", show, "settings:", self.grid_settings)
         if not show and self._grid_item is None:
             return
         self._ensure_grid_item()

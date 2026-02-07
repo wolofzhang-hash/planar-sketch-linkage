@@ -367,7 +367,8 @@ class ControllerSelection:
         self.stack.push(AddPoint())
 
     def _snap_point_to_grid(self, x: float, y: float) -> tuple[float, float]:
-        settings = getattr(self, "grid_settings", {}) or {}
+        self._ensure_grid_settings()
+        settings = self.grid_settings
         show_h = bool(settings.get("show_horizontal", False))
         show_v = bool(settings.get("show_vertical", False))
         if not show_h and not show_v:
@@ -389,11 +390,45 @@ class ControllerSelection:
             y = cy + round((y - cy) / spacing_y) * spacing_y
         return float(x), float(y)
 
+    def _ensure_grid_settings(self) -> None:
+        settings = getattr(self, "grid_settings", None)
+        if not isinstance(settings, dict):
+            settings = {}
+        center = settings.get("center", (0.0, 0.0))
+        print("[grid] ensure settings raw:", settings)
+
+        def _finite(value: float, default: float) -> float:
+            try:
+                value = float(value)
+            except Exception:
+                return float(default)
+            if not math.isfinite(value):
+                return float(default)
+            return float(value)
+
+        try:
+            center_tuple = (_finite(center[0], 0.0), _finite(center[1], 0.0))
+        except Exception:
+            center_tuple = (0.0, 0.0)
+        self.grid_settings = {
+            "show_horizontal": bool(settings.get("show_horizontal", False)),
+            "show_vertical": bool(settings.get("show_vertical", False)),
+            "spacing_x": max(0.1, _finite(settings.get("spacing_x", 100.0), 100.0)),
+            "spacing_y": max(0.1, _finite(settings.get("spacing_y", 100.0), 100.0)),
+            "range_x": max(0.0, _finite(settings.get("range_x", 2000.0), 2000.0)),
+            "range_y": max(0.0, _finite(settings.get("range_y", 2000.0), 2000.0)),
+            "center": center_tuple,
+        }
+        print("[grid] ensure settings normalized:", self.grid_settings)
+
     def set_grid_visibility(self, show_horizontal: Optional[bool] = None, show_vertical: Optional[bool] = None) -> None:
+        self._ensure_grid_settings()
+        print("[grid] toggle visibility:", show_horizontal, show_vertical)
         if show_horizontal is not None:
             self.grid_settings["show_horizontal"] = bool(show_horizontal)
         if show_vertical is not None:
             self.grid_settings["show_vertical"] = bool(show_vertical)
+        print("[grid] visibility now:", self.grid_settings.get("show_horizontal"), self.grid_settings.get("show_vertical"))
         self._refresh_grid_item()
 
     def set_grid_settings(
@@ -405,6 +440,7 @@ class ControllerSelection:
         center_x: float,
         center_y: float,
     ) -> None:
+        self._ensure_grid_settings()
         self.grid_settings["spacing_x"] = max(0.1, float(spacing_x))
         self.grid_settings["spacing_y"] = max(0.1, float(spacing_y))
         self.grid_settings["range_x"] = max(0.0, float(range_x))

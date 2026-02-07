@@ -187,11 +187,28 @@ class GridItem(QGraphicsItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setAcceptHoverEvents(False)
 
+    def _grid_center(self) -> tuple[float, float]:
+        settings = getattr(self.ctrl, "grid_settings", {}) or {}
+        center = settings.get("center", (0.0, 0.0))
+        try:
+            cx, cy = center
+            cx = float(cx)
+            cy = float(cy)
+            if not math.isfinite(cx) or not math.isfinite(cy):
+                return 0.0, 0.0
+            return cx, cy
+        except Exception:
+            return 0.0, 0.0
+
     def _grid_rect(self) -> QRectF:
         settings = getattr(self.ctrl, "grid_settings", {}) or {}
-        cx, cy = settings.get("center", (0.0, 0.0))
+        cx, cy = self._grid_center()
         range_x = float(settings.get("range_x", 0.0) or 0.0)
         range_y = float(settings.get("range_y", 0.0) or 0.0)
+        if not math.isfinite(range_x):
+            range_x = 0.0
+        if not math.isfinite(range_y):
+            range_y = 0.0
         if range_x <= 0.0 or range_y <= 0.0:
             scene = self.scene()
             if scene is not None:
@@ -209,34 +226,55 @@ class GridItem(QGraphicsItem):
         settings = getattr(self.ctrl, "grid_settings", {}) or {}
         show_h = bool(settings.get("show_horizontal", False))
         show_v = bool(settings.get("show_vertical", False))
-        if not show_h and not show_v:
-            return
-        spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
-        spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
-        if (show_v and spacing_x <= 0.0) or (show_h and spacing_y <= 0.0):
-            return
-        cx, cy = settings.get("center", (0.0, 0.0))
-        rect = option.exposedRect.intersected(self._grid_rect())
-        if rect.isNull() or rect.isEmpty():
-            return
+        print("[grid] paint call:", "show_h", show_h, "show_v", show_v, "settings", settings)
+        try:
+            if not show_h and not show_v:
+                return
+            spacing_x = float(settings.get("spacing_x", 0.0) or 0.0)
+            spacing_y = float(settings.get("spacing_y", 0.0) or 0.0)
+            if (
+                (show_v and (spacing_x <= 0.0 or not math.isfinite(spacing_x)))
+                or (show_h and (spacing_y <= 0.0 or not math.isfinite(spacing_y)))
+            ):
+                print("[grid] paint skip due to spacing:", spacing_x, spacing_y)
+                return
+            cx, cy = self._grid_center()
+            rect = option.exposedRect.intersected(self._grid_rect())
+            if rect.isNull() or rect.isEmpty():
+                print("[grid] paint skip due to empty rect:", rect)
+                return
+            if not all(
+                math.isfinite(value)
+                for value in (rect.left(), rect.right(), rect.top(), rect.bottom(), cx, cy)
+            ):
+                print("[grid] paint skip due to non-finite rect:", rect, "center:", (cx, cy))
+                return
 
-        pen = QPen(QColor(210, 210, 210, 180))
-        pen.setCosmetic(True)
-        painter.setPen(pen)
+            pen = QPen(QColor(210, 210, 210, 180))
+            pen.setCosmetic(True)
+            painter.setPen(pen)
 
-        if show_v and spacing_x > 0.0:
-            start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
-            x = start_x
-            while x <= rect.right():
-                painter.drawLine(x, rect.top(), x, rect.bottom())
-                x += spacing_x
+            if show_v and spacing_x > 0.0:
+                start_x = math.floor((rect.left() - cx) / spacing_x) * spacing_x + cx
+                count_v = 0
+                x = start_x
+                while x <= rect.right():
+                    painter.drawLine(x, rect.top(), x, rect.bottom())
+                    x += spacing_x
+                    count_v += 1
+                print("[grid] painted vertical lines:", count_v, "start_x:", start_x, "rect:", rect)
 
-        if show_h and spacing_y > 0.0:
-            start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
-            y = start_y
-            while y <= rect.bottom():
-                painter.drawLine(rect.left(), y, rect.right(), y)
-                y += spacing_y
+            if show_h and spacing_y > 0.0:
+                start_y = math.floor((rect.top() - cy) / spacing_y) * spacing_y + cy
+                count_h = 0
+                y = start_y
+                while y <= rect.bottom():
+                    painter.drawLine(rect.left(), y, rect.right(), y)
+                    y += spacing_y
+                    count_h += 1
+                print("[grid] painted horizontal lines:", count_h, "start_y:", start_y, "rect:", rect)
+        except Exception as exc:
+            print("[grid] paint exception:", exc)
 
 
 class PointItem(QGraphicsEllipseItem):
