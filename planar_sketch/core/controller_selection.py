@@ -1364,6 +1364,15 @@ class ControllerSelection:
         deg = math.degrees(angle_between(v1x, v1y, v2x, v2y))
         self.cmd_add_angle(i, j, k, deg)
 
+    def _add_angle_constraint(self, i: int, j: int, k: int) -> None:
+        if i not in self.points or j not in self.points or k not in self.points:
+            return
+        pi, pj, pk = self.points[i], self.points[j], self.points[k]
+        v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
+        v2x, v2y = pk["x"] - pj["x"], pk["y"] - pj["y"]
+        deg = math.degrees(angle_between(v1x, v1y, v2x, v2y))
+        self.cmd_add_angle(i, j, k, deg)
+
     def add_point_line_offset_from_selection(self):
         """Create a point-on-line (s) constraint from the current selection."""
         self.commit_drag_if_any()
@@ -1447,6 +1456,16 @@ class ControllerSelection:
         # unique, stable order
         seen = set()
         nbrs = [x for x in nbrs if (x not in seen and not seen.add(x))]
+
+        if len(nbrs) >= 2:
+            m.addSeparator()
+            sub_angle_constraint = m.addMenu(tr(lang, "context.add_angle_constraint"))
+            for idx, i in enumerate(nbrs[:-1]):
+                for k in nbrs[idx + 1:]:
+                    sub_angle_constraint.addAction(
+                        f"A(P{i}-P{pid}-P{k})",
+                        lambda i=i, k=k: self._add_angle_constraint(i, pid, k),
+                    )
 
         point_line_ids = [plid for plid, pl in self.point_lines.items() if int(pl.get("p", -1)) == pid]
         if nbrs or point_line_ids:
