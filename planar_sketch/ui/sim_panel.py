@@ -1684,6 +1684,13 @@ class SimulationPanel(QWidget):
                 "adaptive": True,
                 "min_step_deg": float(self._theta_step_min),
                 "max_step_deg": float(abs(self._theta_step_max)),
+                "dtheta_min_deg": 0.05,
+                "dtheta_max_deg": 2.0,
+                "err_good": 1e-10,
+                "err_ok": 1e-7,
+                "grow": 1.35,
+                "shrink": 0.5,
+                "max_retries_per_step": 8,
             },
             "solver": {
                 "name": self.get_solver_name(),
