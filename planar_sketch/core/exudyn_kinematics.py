@@ -11,9 +11,11 @@ load handling (hinges, trajectories, springs, friction, etc.).
 
 from __future__ import annotations
 
-from typing import Any, Tuple, Dict, List
+from typing import Any, Tuple, Dict, List, Optional
 import importlib
 import importlib.util
+import math
+import traceback
 from .solver import ConstraintSolver
 from .geometry import build_spline_samples
 
@@ -30,6 +32,80 @@ def _load_exudyn():
 
 class ExudynKinematicSolver:
     """Integration stub for Exudyn-based solvers."""
+
+    @staticmethod
+    def _format_exception(exc: BaseException) -> str:
+        tb = traceback.TracebackException.from_exception(exc)
+        frames = list(tb.stack)
+        details = [f"{type(exc).__name__}: {exc}"]
+        if frames:
+            head = frames[0]
+            details.append(f"at {head.filename}:{head.lineno} in {head.name}")
+            tail = frames[-1]
+            if tail is not head:
+                details.append(f"-> {tail.filename}:{tail.lineno} in {tail.name}")
+        return "; ".join(details)
+
+    @staticmethod
+    def _point_line_error(plid: int, p_id: Optional[int], detail: str) -> ValueError:
+        point_info = f"point {p_id}" if p_id is not None else "point ?"
+        return ValueError(f"Point-line {plid} ({point_info}): {detail}")
+
+    @staticmethod
+    def _validate_point_lines(ctrl: Any) -> Tuple[bool, str]:
+        if not hasattr(ctrl, "point_lines"):
+            return True, ""
+        for plid, pl in ctrl.point_lines.items():
+            if not bool(pl.get("enabled", True)):
+                continue
+            p_id = pl.get("p")
+            if hasattr(ctrl, "_point_line_current_s"):
+                raw_current = ctrl._point_line_current_s(pl)
+                if raw_current is not None:
+                    try:
+                        val = float(raw_current)
+                    except Exception as exc:
+                        return False, str(
+                            ExudynKinematicSolver._point_line_error(
+                                int(plid),
+                                p_id,
+                                f"invalid current s value {raw_current!r} ({type(exc).__name__})",
+                            )
+                        )
+                    if not math.isfinite(val):
+                        return False, str(
+                            ExudynKinematicSolver._point_line_error(
+                                int(plid),
+                                p_id,
+                                f"non-finite current s value {raw_current!r}",
+                            )
+                        )
+            if pl.get("s_expr") and pl.get("s_expr_error"):
+                msg = pl.get("s_expr_error_msg") or "invalid s expression"
+                return False, str(ExudynKinematicSolver._point_line_error(int(plid), p_id, msg))
+            if "s" in pl:
+                raw_s = pl.get("s", None)
+                if raw_s is None:
+                    return False, str(
+                        ExudynKinematicSolver._point_line_error(int(plid), p_id, "s value is None")
+                    )
+                try:
+                    val = float(raw_s)
+                except Exception as exc:
+                    return False, str(
+                        ExudynKinematicSolver._point_line_error(
+                            int(plid),
+                            p_id,
+                            f"invalid s value {raw_s!r} ({type(exc).__name__})",
+                        )
+                    )
+                if not math.isfinite(val):
+                    return False, str(
+                        ExudynKinematicSolver._point_line_error(
+                            int(plid), p_id, f"non-finite s value {raw_s!r}"
+                        )
+                    )
+        return True, ""
 
     @staticmethod
     def _active_drivers(ctrl: Any) -> List[Dict[str, Any]]:
@@ -140,9 +216,12 @@ class ExudynKinematicSolver:
             pl = ctrl.point_lines[plid]
             base_s = 0.0
             if hasattr(ctrl, "_point_line_current_s"):
-                base_s = float(ctrl._point_line_current_s(pl) or 0.0)
+                raw_s = ctrl._point_line_current_s(pl)
+                if raw_s is not None:
+                    base_s = float(raw_s)
             else:
-                base_s = float(pl.get("s", 0.0))
+                raw_s = pl.get("s", 0.0)
+                base_s = float(raw_s)
             offset = float(drv.get("value", 0.0) or 0.0)
             translation_targets[int(plid)] = base_s + offset
 
@@ -332,12 +411,17 @@ class ExudynKinematicSolver:
         constraints (including driver angles), point-on-spline projections,
         and spring loads.
         """
-        exu = _load_exudyn()
+        try:
+            exu = _load_exudyn()
+        except Exception as exc:
+            detail = ExudynKinematicSolver._format_exception(exc)
+            return False, f"Exudyn not installed: {detail}"
         try:
             sc = exu.SystemContainer()
             sc.AddSystem()
         except Exception as exc:
-            return False, f"Exudyn initialization failed: {exc}"
+            detail = ExudynKinematicSolver._format_exception(exc)
+            return False, f"Exudyn initialization failed: {detail}"
 
         if hasattr(ctrl, "recompute_from_parameters"):
             ctrl.recompute_from_parameters()
@@ -347,6 +431,10 @@ class ExudynKinematicSolver:
 
         has_spring = any(str(ld.get("type", "force")).lower() == "spring" for ld in getattr(ctrl, "loads", []))
         try:
+            if distance_only:
+                ok, msg = ExudynKinematicSolver._validate_point_lines(ctrl)
+                if not ok:
+                    return False, msg
             if distance_only:
                 driven_pids = ExudynKinematicSolver._collect_driven_pids(ctrl)
                 if not has_spring:
@@ -364,7 +452,8 @@ class ExudynKinematicSolver:
                         ExudynKinematicSolver._apply_spring_loads(ctrl, driven_pids)
                         ctrl.solve_constraints(iters=1)
         except Exception as exc:
-            return False, f"Exudyn solve failed: {exc}"
+            detail = ExudynKinematicSolver._format_exception(exc)
+            return False, f"Exudyn solve failed: {detail}"
         if distance_only:
             return True, "Exudyn initialized; distance-constraint solver applied"
         return True, "Exudyn initialized; projection solver applied"
