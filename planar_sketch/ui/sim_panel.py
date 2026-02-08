@@ -507,7 +507,7 @@ class SimulationPanel(QWidget):
 
     def _effective_solver_name(self) -> str:
         solver_name = self.get_solver_name()
-        if self._has_point_spline() and solver_name in ("scipy", "exudyn"):
+        if self._has_point_spline() and solver_name == "scipy":
             return "pbd"
         return solver_name
 
@@ -1600,7 +1600,7 @@ class SimulationPanel(QWidget):
     def _finalize_end_pose(self) -> None:
         has_point_spline = self._has_point_spline()
         solver_name = self.get_solver_name()
-        if has_point_spline and solver_name in ("scipy", "exudyn"):
+        if has_point_spline and solver_name == "scipy":
             solver_name = "pbd"
         actual_solver = solver_name
         iters = 200 if has_point_spline else 80
