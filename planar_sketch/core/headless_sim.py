@@ -1301,7 +1301,7 @@ def simulate_case(
     success = True
     tol = 1e-12
 
-    def solve_to_target(deg: float) -> Tuple[bool, str, float]:
+    def try_solve(deg: float) -> Tuple[bool, float, str]:
         nonlocal solver_error
         ok_local = True
         msg_local = ""
@@ -1339,7 +1339,7 @@ def simulate_case(
         )
         if not treat_point_spline_as_soft:
             hard_err_local = max(hard_err_local, detail.get("point_spline", 0.0))
-        return bool(ok_local), msg_local, float(hard_err_local)
+        return bool(ok_local), float(hard_err_local), msg_local
 
     def _record_frame(frame_idx: int, hard_err_value: float, ok_value: bool, retries: int, dtheta_used: float) -> None:
         step_success = bool(ok_value) and hard_err_value <= hard_err_tol
@@ -1383,7 +1383,7 @@ def simulate_case(
                 degrees.append(start + (end - start) * progress)
         last_deg = start
         for frame_idx, deg in enumerate(degrees):
-            ok, msg, hard_err = solve_to_target(deg)
+            ok, hard_err, msg = try_solve(deg)
             if not ok and msg:
                 reason = reason or msg
                 success = False
@@ -1406,7 +1406,7 @@ def simulate_case(
 
         theta = start
         if abs(end - start) <= tol:
-            ok, msg, hard_err = solve_to_target(end)
+            ok, hard_err, msg = try_solve(end)
             if not ok and msg:
                 reason = reason or msg
                 success = False
@@ -1428,7 +1428,7 @@ def simulate_case(
                     else:
                         target = max(target, end)
                     snapshot = model.snapshot_state()
-                    ok, msg, hard_err = solve_to_target(target)
+                    ok, hard_err, msg = try_solve(target)
                     if ok and hard_err <= err_good:
                         _record_frame(frame_idx, hard_err, ok, retries, target - theta)
                         theta = target
@@ -1444,7 +1444,7 @@ def simulate_case(
                     retries += 1
                     if retries > max_retries_per_step:
                         success = False
-                        reason = f"adaptive sweep failed near theta={theta:.6g}"
+                        reason = msg or f"adaptive sweep failed near theta={theta:.6g}"
                         break
                     dtheta = max(dtheta_min_deg, abs(dtheta) * shrink) * direction
                 if not success:
