@@ -16,6 +16,7 @@ import csv
 import math
 import os
 import time
+import importlib.util
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any, TYPE_CHECKING
 
@@ -66,6 +67,7 @@ class SimulationPanel(QWidget):
         self._run_start_snapshot: Optional[Dict[str, Any]] = None
         self._last_run_data: Optional[Dict[str, Any]] = None
         self._last_used_solver: Optional[str] = None
+        self._last_solver_fallback_from: Optional[str] = None
         self._last_solver_error: Optional[str] = None
         self._solver_error_log: List[str] = []
 
@@ -455,10 +457,20 @@ class SimulationPanel(QWidget):
             ("exudyn", tr(lang, "sim.solver.exudyn")),
         ]
 
+    def _exudyn_available(self) -> bool:
+        return importlib.util.find_spec("exudyn") is not None
+
     def _init_solver_options(self) -> None:
         self.combo_solver.clear()
+        exudyn_available = self._exudyn_available()
         for key, label in self._solver_options():
+            if key == "exudyn" and not exudyn_available:
+                label = f"{label} (not installed)"
             self.combo_solver.addItem(label, key)
+            if key == "exudyn" and not exudyn_available:
+                item = self.combo_solver.model().item(self.combo_solver.count() - 1)
+                if item is not None:
+                    item.setEnabled(False)
         if self.combo_solver.count() == 0:
             self.combo_solver.addItem("PBD", "pbd")
 
@@ -477,6 +489,10 @@ class SimulationPanel(QWidget):
 
     def set_solver_name(self, name: str) -> None:
         name = str(name or "").lower()
+        if name == "exudyn" and not self._exudyn_available():
+            name = "pbd"
+            if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
+                self.ctrl.win.statusBar().showMessage("Exudyn is not installed; using PBD instead.")
         index = self.combo_solver.findData(name)
         if index < 0:
             index = self.combo_solver.findData("pbd")
@@ -504,6 +520,7 @@ class SimulationPanel(QWidget):
 
     def _mark_used_solver_unknown(self) -> None:
         self._last_used_solver = None
+        self._last_solver_fallback_from = None
         self._update_used_solver_label()
 
     def _update_used_solver_label(self, solver_name: Optional[str] = None) -> None:
@@ -513,11 +530,28 @@ class SimulationPanel(QWidget):
             solver_name = self._last_used_solver
         else:
             self._last_used_solver = solver_name
+        fallback_from = self._last_solver_fallback_from
         if solver_name is None:
             solver_name = "NA"
         lang = getattr(self.ctrl, "ui_language", "en")
         display = self._solver_display_label(str(solver_name))
+        if fallback_from:
+            display_fallback = self._solver_display_label(str(fallback_from))
+            display = f"{display} (fallback from {display_fallback})"
         self.lbl_solver_used.setText(tr(lang, "sim.solver.used").format(solver=display))
+
+    def _set_used_solver(self, solver_name: str, fallback_from: Optional[str] = None) -> None:
+        self._last_used_solver = solver_name
+        self._last_solver_fallback_from = fallback_from
+        self._update_used_solver_label()
+
+    def _notify_solver_fallback(self, solver_name: str, msg: str) -> None:
+        if not msg:
+            msg = "unknown error"
+        if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
+            self.ctrl.win.statusBar().showMessage(
+                f"{self._solver_display_label(solver_name)} failed ({msg}), fallback to PBD."
+            )
 
     def apply_sweep_settings(self, settings: Dict[str, float]) -> None:
         step = settings.get("step", 200.0)
@@ -1417,6 +1451,7 @@ class SimulationPanel(QWidget):
                     # Fallback to PBD so the UI stays responsive
                     actual_solver = "pbd"
                     self._record_solver_error(solver_name, msg)
+                    self._notify_solver_fallback(solver_name, msg)
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1437,6 +1472,7 @@ class SimulationPanel(QWidget):
                     self.ctrl.apply_points_snapshot(pose_before)
                     actual_solver = "pbd"
                     self._record_solver_error(solver_name, msg)
+                    self._notify_solver_fallback(solver_name, msg)
                     if self._driver_sweep:
                         if has_non_angle_driver:
                             self.ctrl.drive_to_multi_values(driver_targets, iters=iters)
@@ -1502,7 +1538,8 @@ class SimulationPanel(QWidget):
 
         if step_applied:
             self.ctrl.append_trajectories()
-        self._update_used_solver_label(actual_solver)
+        fallback_from = solver_name if actual_solver == "pbd" and solver_name != "pbd" else None
+        self._set_used_solver(actual_solver, fallback_from=fallback_from)
         self.refresh_labels()
 
         hard_err_value = None
@@ -1617,7 +1654,8 @@ class SimulationPanel(QWidget):
             self._theta_last_ok = target
             self._theta_deg = target
         self.ctrl.append_trajectories()
-        self._update_used_solver_label(actual_solver)
+        fallback_from = solver_name if actual_solver == "pbd" and solver_name != "pbd" else None
+        self._set_used_solver(actual_solver, fallback_from=fallback_from)
 
     def _build_case_spec(self) -> Dict[str, Any]:
         has_point_spline = any(

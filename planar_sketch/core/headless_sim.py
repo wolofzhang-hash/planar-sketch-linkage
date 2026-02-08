@@ -1068,7 +1068,7 @@ class HeadlessModel:
             ok, msg = ExudynKinematicSolver.solve(self, max_iters=max_iters, distance_only=True)
             return ok, msg
         except Exception as exc:
-            return False, str(exc)
+            return False, ExudynKinematicSolver._format_exception(exc)
 
     def _check_over_flags_only(self) -> None:
         return

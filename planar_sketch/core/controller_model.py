@@ -1429,7 +1429,7 @@ class ControllerModel:
         try:
             ok, msg = ExudynKinematicSolver.solve(self, max_iters=int(max_iters), distance_only=True)
         except Exception as e:
-            return False, str(e)
+            return False, ExudynKinematicSolver._format_exception(e)
         self.update_graphics()
         self.append_trajectories()
         if self.panel:
