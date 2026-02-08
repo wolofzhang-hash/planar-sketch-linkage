@@ -416,6 +416,61 @@ class HeadlessModel:
         base_deg = math.degrees(self._sim_zero_output_rad)
         return self._rel_deg(abs_deg, base_deg)
 
+    def get_driver_angles_deg(self) -> List[Optional[float]]:
+        angles: List[Optional[float]] = []
+        if not self.drivers:
+            return angles
+        for idx, drv in enumerate(self.drivers):
+            if not drv.get("enabled", True):
+                angles.append(None)
+                continue
+            if str(drv.get("type", "angle")) == "angle":
+                piv = drv.get("pivot")
+                tip = drv.get("tip")
+                if piv is None or tip is None:
+                    angles.append(None)
+                    continue
+                ang = self.get_angle_rad(int(piv), int(tip))
+                if ang is None:
+                    angles.append(None)
+                    continue
+                abs_deg = math.degrees(ang)
+                if idx == 0 and self._sim_zero_input_rad is not None:
+                    base_deg = math.degrees(self._sim_zero_input_rad)
+                    angles.append(self._rel_deg(abs_deg, base_deg))
+                else:
+                    angles.append(abs_deg)
+            else:
+                val = drv.get("value")
+                try:
+                    angles.append(float(val))
+                except Exception:
+                    angles.append(None)
+        return angles
+
+    def snapshot_state(self) -> Dict[str, Any]:
+        return {
+            "points": {pid: (float(p["x"]), float(p["y"])) for pid, p in self.points.items()},
+            "drivers": [float(d.get("rad", 0.0)) for d in self.drivers],
+            "outputs": [float(o.get("rad", 0.0)) for o in self.outputs],
+        }
+
+    def apply_state_snapshot(self, snapshot: Dict[str, Any]) -> None:
+        for pid, pos in (snapshot.get("points") or {}).items():
+            if pid in self.points:
+                self.points[pid]["x"] = float(pos[0])
+                self.points[pid]["y"] = float(pos[1])
+        driver_rads = snapshot.get("drivers") or []
+        for idx, rad in enumerate(driver_rads):
+            if idx < len(self.drivers):
+                self.drivers[idx]["rad"] = float(rad)
+        output_rads = snapshot.get("outputs") or []
+        for idx, rad in enumerate(output_rads):
+            if idx < len(self.outputs):
+                self.outputs[idx]["rad"] = float(rad)
+        self._sync_primary_driver()
+        self._sync_primary_output()
+
     def get_measure_values(self, abs_values: bool = False) -> List[tuple[str, Optional[float], str]]:
         out: List[tuple[str, Optional[float], str]] = []
         base_values: Dict[int, tuple[str, Optional[float], str]] = {}
@@ -1191,6 +1246,20 @@ def simulate_case(
         except Exception:
             step_count = 1
         step_count = max(step_count, 1)
+    adaptive = bool(sweep.get("adaptive", True))
+    dtheta_min_deg = float(sweep.get("dtheta_min_deg", sweep.get("min_step_deg", 0.05)))
+    dtheta_max_deg = float(sweep.get("dtheta_max_deg", sweep.get("max_step_deg", 2.0)))
+    err_good = float(sweep.get("err_good", 1e-10))
+    err_ok = float(sweep.get("err_ok", 1e-7))
+    grow = float(sweep.get("grow", 1.35))
+    shrink = float(sweep.get("shrink", 0.5))
+    max_retries_per_step = int(sweep.get("max_retries_per_step", 8))
+    if dtheta_min_deg <= 0:
+        dtheta_min_deg = 1e-6
+    if dtheta_max_deg <= 0:
+        dtheta_max_deg = max(dtheta_min_deg, 1e-3)
+    if dtheta_max_deg < dtheta_min_deg:
+        dtheta_max_deg = dtheta_min_deg
 
     solver = case_spec.get("solver", {}) or {}
     solver_name = str(solver.get("name") or ("scipy" if solver.get("use_scipy", False) else "pbd")).lower()
@@ -1230,32 +1299,18 @@ def simulate_case(
     frames: List[Dict[str, Any]] = []
     reason = ""
     success = True
+    tol = 1e-12
 
-    degrees: List[float] = []
-    if step_count is None:
-        cur = start
-        if step > 0:
-            while cur <= end + 1e-9:
-                degrees.append(cur)
-                cur += step
-        else:
-            while cur >= end - 1e-9:
-                degrees.append(cur)
-                cur += step
-    else:
-        for idx in range(step_count):
-            progress = (idx + 1) / float(step_count)
-            degrees.append(start + (end - start) * progress)
-
-    for frame_idx, deg in enumerate(degrees):
-        ok = True
-        msg = ""
+    def solve_to_target(deg: float) -> Tuple[bool, str, float]:
+        nonlocal solver_error
+        ok_local = True
+        msg_local = ""
         if solver_name == "scipy":
             model.drive_to_deg(deg, iters=0)
-            ok, msg = model.solve_constraints_scipy(max_nfev=max_nfev)
-            if not ok:
-                if msg:
-                    detail = f"scipy: {msg}"
+            ok_local, msg_local = model.solve_constraints_scipy(max_nfev=max_nfev)
+            if not ok_local:
+                if msg_local:
+                    detail = f"scipy: {msg_local}"
                     if not solver_error:
                         solver_error = detail
                     if detail not in solver_error_log:
@@ -1263,10 +1318,10 @@ def simulate_case(
                 model.solve_constraints(iters=pbd_iters)
         elif solver_name == "exudyn":
             model.drive_to_deg(deg, iters=0)
-            ok, msg = model.solve_constraints_exudyn(max_iters=pbd_iters)
-            if not ok:
-                if msg:
-                    detail = f"exudyn: {msg}"
+            ok_local, msg_local = model.solve_constraints_exudyn(max_iters=pbd_iters)
+            if not ok_local:
+                if msg_local:
+                    detail = f"exudyn: {msg_local}"
                     if not solver_error:
                         solver_error = detail
                     if detail not in solver_error_log:
@@ -1276,29 +1331,124 @@ def simulate_case(
             model.drive_to_deg(deg, iters=pbd_iters)
 
         max_err, detail = model.max_constraint_error()
-        hard_err = max(detail.get("length", 0.0), detail.get("angle", 0.0), detail.get("coincide", 0.0), detail.get("point_line", 0.0))
+        hard_err_local = max(
+            detail.get("length", 0.0),
+            detail.get("angle", 0.0),
+            detail.get("coincide", 0.0),
+            detail.get("point_line", 0.0),
+        )
         if not treat_point_spline_as_soft:
-            hard_err = max(hard_err, detail.get("point_spline", 0.0))
+            hard_err_local = max(hard_err_local, detail.get("point_spline", 0.0))
+        return bool(ok_local), msg_local, float(hard_err_local)
 
-        step_success = bool(ok) and hard_err <= hard_err_tol
+    def _record_frame(frame_idx: int, hard_err_value: float, ok_value: bool, retries: int, dtheta_used: float) -> None:
+        step_success = bool(ok_value) and hard_err_value <= hard_err_tol
         if not step_success:
+            nonlocal success, reason
             success = False
             if not reason:
-                reason = msg or "constraint_error"
-
+                reason = "constraint_error"
         rec: Dict[str, Any] = {
             "time": frame_idx,
             "solver": solver_name,
             "success": step_success,
             "input_deg": model.get_input_angle_deg(),
             "output_deg": model.get_output_angle_deg(),
-            "hard_err": hard_err,
+            "driver_deg": model.get_driver_angles_deg(),
+            "hard_err": hard_err_value,
+            "dtheta_deg": dtheta_used,
+            "retries": retries,
         }
         for nm, val, _unit in model.get_measure_values():
             rec[nm] = val
         for nm, val in model.get_load_measure_values():
             rec[nm] = val
         frames.append(rec)
+
+    if not adaptive:
+        degrees: List[float] = []
+        if step_count is None:
+            cur = start
+            if step > 0:
+                while cur <= end + 1e-9:
+                    degrees.append(cur)
+                    cur += step
+            else:
+                while cur >= end - 1e-9:
+                    degrees.append(cur)
+                    cur += step
+        else:
+            for idx in range(step_count):
+                progress = (idx + 1) / float(step_count)
+                degrees.append(start + (end - start) * progress)
+        last_deg = start
+        for frame_idx, deg in enumerate(degrees):
+            ok, msg, hard_err = solve_to_target(deg)
+            if not ok and msg:
+                reason = reason or msg
+                success = False
+            dtheta_used = deg - last_deg
+            _record_frame(frame_idx, hard_err, ok, 0, dtheta_used)
+            last_deg = deg
+    else:
+        direction = 1.0 if end >= start else -1.0
+        if step_count is None:
+            base_step = float(step or 0.0)
+        else:
+            if step_count <= 1:
+                base_step = end - start
+            else:
+                base_step = (end - start) / float(step_count - 1)
+        dtheta_init = abs(base_step)
+        if dtheta_init <= 0:
+            dtheta_init = dtheta_min_deg
+        dtheta = max(dtheta_min_deg, min(dtheta_init, dtheta_max_deg)) * direction
+
+        theta = start
+        if abs(end - start) <= tol:
+            ok, msg, hard_err = solve_to_target(end)
+            if not ok and msg:
+                reason = reason or msg
+                success = False
+            _record_frame(0, hard_err, ok, 0, 0.0)
+        else:
+            frame_idx = 0
+            while True:
+                if direction > 0:
+                    if theta >= end - tol:
+                        break
+                else:
+                    if theta <= end + tol:
+                        break
+                retries = 0
+                while True:
+                    target = theta + dtheta
+                    if direction > 0:
+                        target = min(target, end)
+                    else:
+                        target = max(target, end)
+                    snapshot = model.snapshot_state()
+                    ok, msg, hard_err = solve_to_target(target)
+                    if ok and hard_err <= err_good:
+                        _record_frame(frame_idx, hard_err, ok, retries, target - theta)
+                        theta = target
+                        dtheta = max(dtheta_min_deg, min(abs(dtheta) * grow, dtheta_max_deg)) * direction
+                        frame_idx += 1
+                        break
+                    if ok and hard_err <= err_ok:
+                        _record_frame(frame_idx, hard_err, ok, retries, target - theta)
+                        theta = target
+                        frame_idx += 1
+                        break
+                    model.apply_state_snapshot(snapshot)
+                    retries += 1
+                    if retries > max_retries_per_step:
+                        success = False
+                        reason = f"adaptive sweep failed near theta={theta:.6g}"
+                        break
+                    dtheta = max(dtheta_min_deg, abs(dtheta) * shrink) * direction
+                if not success:
+                    break
 
     status = {
         "success": success,
