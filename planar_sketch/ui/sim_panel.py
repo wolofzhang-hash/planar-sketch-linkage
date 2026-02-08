@@ -1355,7 +1355,7 @@ class SimulationPanel(QWidget):
         msg = ""
         has_point_spline = self._has_point_spline()
         solver_name = self.get_solver_name()
-        if has_point_spline and solver_name in ("scipy", "exudyn"):
+        if has_point_spline and solver_name in ("scipy",):
             solver_name = "pbd"
         actual_solver = solver_name
         iters = 200 if has_point_spline else 80
