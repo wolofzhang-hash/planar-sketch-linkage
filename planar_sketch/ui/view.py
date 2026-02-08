@@ -221,6 +221,10 @@ class SketchView(QGraphicsView):
                 self.ctrl.win.delete_selected()
             e.accept()
             return
+        if e.key() == Qt.Key.Key_F4:
+            self.ctrl.repeat_last_model_action()
+            e.accept()
+            return
         if e.key() == Qt.Key.Key_Escape:
             self.ctrl.cancel_model_action()
             e.accept()
