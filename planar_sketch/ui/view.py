@@ -20,6 +20,7 @@ from .items import (
     ForceArrowItem,
     TorqueArrowItem,
     AngleItem,
+    GridItem,
 )
 
 if TYPE_CHECKING:
@@ -60,6 +61,8 @@ class SketchView(QGraphicsView):
     def _item_at_pos(self, pos):
         for item in self.items(pos):
             if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
+                continue
+            if isinstance(item, GridItem):
                 continue
             if self._is_load_arrow_item(item):
                 continue
