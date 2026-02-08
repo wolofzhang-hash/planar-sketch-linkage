@@ -411,23 +411,30 @@ class ExudynKinematicSolver:
         constraints (including driver angles), point-on-spline projections,
         and spring loads.
         """
+        warning = None
+        exu = None
         try:
             exu = _load_exudyn()
         except Exception as exc:
             detail = ExudynKinematicSolver._format_exception(exc)
-            return False, f"Exudyn not installed: {detail}"
-        try:
-            sc = exu.SystemContainer()
-            sc.AddSystem()
-        except Exception as exc:
-            detail = ExudynKinematicSolver._format_exception(exc)
-            return False, f"Exudyn initialization failed: {detail}"
+            warning = f"Exudyn unavailable (module import failed): {detail}"
+        if exu is not None:
+            try:
+                sc = exu.SystemContainer()
+                sc.AddSystem()
+            except Exception as exc:
+                detail = ExudynKinematicSolver._format_exception(exc)
+                warning = f"Exudyn unavailable (init failed): {detail}"
+                exu = None
 
         if hasattr(ctrl, "recompute_from_parameters"):
             ctrl.recompute_from_parameters()
 
         if not hasattr(ctrl, "solve_constraints") and not distance_only:
-            return True, "Exudyn initialized; no constraint solver available"
+            msg = "Exudyn initialized; no constraint solver available"
+            if warning:
+                msg = f"{warning}. Internal solver skipped; no constraint solver available"
+            return True, msg
 
         has_spring = any(str(ld.get("type", "force")).lower() == "spring" for ld in getattr(ctrl, "loads", []))
         try:
@@ -454,6 +461,14 @@ class ExudynKinematicSolver:
         except Exception as exc:
             detail = ExudynKinematicSolver._format_exception(exc)
             return False, f"Exudyn solve failed: {detail}"
-        if distance_only:
-            return True, "Exudyn initialized; distance-constraint solver applied"
-        return True, "Exudyn initialized; projection solver applied"
+        if warning:
+            if distance_only:
+                msg = f"{warning}. Internal distance-constraint solver applied"
+            else:
+                msg = f"{warning}. Internal projection solver applied"
+        else:
+            if distance_only:
+                msg = "Exudyn initialized; distance-constraint solver applied"
+            else:
+                msg = "Exudyn initialized; projection solver applied"
+        return True, msg

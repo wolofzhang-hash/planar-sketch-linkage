@@ -344,7 +344,7 @@ class ControllerSimulation:
 
                 funcs.append(_pol)
 
-        # Point-on-spline constraints (distance to closest sampled point)
+        # Point-on-spline constraints (normal distance to closest sampled segment)
         for ps in self.point_splines.values():
             if not bool(ps.get("enabled", True)):
                 continue
@@ -363,8 +363,38 @@ class ControllerSimulation:
                     [_xy(q, cid) for cid in cp_ids],
                     closed=bool(spline.get("closed", False)),
                 )
-                _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
-                return math.sqrt(dist2)
+                if len(samples) < 2:
+                    return 0.0
+                best_dist2 = float("inf")
+                best = None
+                for idx in range(len(samples) - 1):
+                    x1, y1, _seg1, _t1 = samples[idx]
+                    x2, y2, _seg2, _t2 = samples[idx + 1]
+                    vx = x2 - x1
+                    vy = y2 - y1
+                    denom = vx * vx + vy * vy
+                    if denom <= 1e-18:
+                        continue
+                    u = ((px - x1) * vx + (py - y1) * vy) / denom
+                    u = max(0.0, min(1.0, u))
+                    cx = x1 + u * vx
+                    cy = y1 + u * vy
+                    dx = cx - px
+                    dy = cy - py
+                    dist2 = dx * dx + dy * dy
+                    if dist2 < best_dist2:
+                        best_dist2 = dist2
+                        best = (cx, cy, vx, vy)
+                if best is None:
+                    return 0.0
+                cx, cy, tx, ty = best
+                t_norm = math.hypot(tx, ty)
+                if t_norm <= 1e-12:
+                    return 0.0
+                tx /= t_norm
+                ty /= t_norm
+                nx, ny = -ty, tx
+                return (px - cx) * nx + (py - cy) * ny
 
             funcs.append(_pos)
 
@@ -712,8 +742,38 @@ class ControllerSimulation:
                     [_xy(q, cid) for cid in cp_ids],
                     closed=bool(spline.get("closed", False)),
                 )
-                _, _, _, _, dist2 = closest_point_on_samples(px, py, samples)
-                return math.sqrt(dist2)
+                if len(samples) < 2:
+                    return 0.0
+                best_dist2 = float("inf")
+                best = None
+                for idx in range(len(samples) - 1):
+                    x1, y1, _seg1, _t1 = samples[idx]
+                    x2, y2, _seg2, _t2 = samples[idx + 1]
+                    vx = x2 - x1
+                    vy = y2 - y1
+                    denom = vx * vx + vy * vy
+                    if denom <= 1e-18:
+                        continue
+                    u = ((px - x1) * vx + (py - y1) * vy) / denom
+                    u = max(0.0, min(1.0, u))
+                    cx = x1 + u * vx
+                    cy = y1 + u * vy
+                    dx = cx - px
+                    dy = cy - py
+                    dist2 = dx * dx + dy * dy
+                    if dist2 < best_dist2:
+                        best_dist2 = dist2
+                        best = (cx, cy, vx, vy)
+                if best is None:
+                    return 0.0
+                cx, cy, tx, ty = best
+                t_norm = math.hypot(tx, ty)
+                if t_norm <= 1e-12:
+                    return 0.0
+                tx /= t_norm
+                ty /= t_norm
+                nx, ny = -ty, tx
+                return (px - cx) * nx + (py - cy) * ny
 
             _add(_pos, "passive", {"type": "point_spline", "p": p_id, "s": s_id})
 
@@ -1059,10 +1119,10 @@ class ControllerSimulation:
                 fy = float(reaction_fixed[2 * idx + 1])
             elif pid in point_line_reactions:
                 fx, fy, _mag = point_line_reactions[pid]
-            elif pid in link_reactions:
-                fx, fy, _mag = link_reactions[pid]
             elif pid in spline_reactions:
                 fx, fy, _mag = spline_reactions[pid]
+            elif pid in link_reactions:
+                fx, fy, _mag = link_reactions[pid]
             else:
                 applied_fx, applied_fy = applied_force.get(pid, (0.0, 0.0))
                 if abs(applied_fx) > 0.0 or abs(applied_fy) > 0.0:
