@@ -1193,10 +1193,12 @@ class ControllerSelection:
             def do(self_):
                 ctrl.apply_points_snapshot(after)
                 ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl.update_sim_start_pose_snapshot()
                 if ctrl.panel: ctrl.panel.refresh_fast()
             def undo(self_):
                 ctrl.apply_points_snapshot(before)
                 ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl.update_sim_start_pose_snapshot()
                 if ctrl.panel: ctrl.panel.refresh_fast()
         self.stack.push(MoveSystem())
 
