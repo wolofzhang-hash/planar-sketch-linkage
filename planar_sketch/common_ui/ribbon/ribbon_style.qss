@@ -1,12 +1,23 @@
 QMenuBar {
-    min-height: 96px;
-    max-height: 104px;
+    min-height: 90px;
+    max-height: 100px;
+}
+QTabBar::tab {
+    font-size: 10pt;
+    height: 22px;
+    padding: 2px 10px;
+    margin: 0px;
 }
 QToolButton {
-    font-size: 11px;
-    padding: 2px 4px;
-    margin: 1px;
-    min-height: 42px;
+    font-size: 9pt;
+    padding: 1px 3px;
+    margin: 0px;
+    min-height: 32px;
+}
+QLabel {
+    font-size: 8pt;
+    padding: 0px;
+    margin: 0px;
 }
 QWidget {
     margin: 0px;

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenuBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QAction, QFont
+from PyQt6.QtWidgets import QLabel, QMenuBar, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
 
 from .action_registry import ActionRegistry
 from .icon_manager import RibbonIconConfig, apply_ribbon_qss, ensure_large_button_icon, style_large_button
@@ -57,8 +57,8 @@ class _CompatRibbonBar(QMenuBar):
         self._tabs = QTabWidget(self)
         self._tabs.setDocumentMode(True)
         self.setNativeMenuBar(False)
-        self.setMinimumHeight(96)
-        self.setMaximumHeight(104)
+        self.setMinimumHeight(90)
+        self.setMaximumHeight(100)
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().addWidget(self._tabs)
@@ -86,6 +86,30 @@ def _build_bar(parent) -> QMenuBar:
         return _RibbonBar(parent)
     return _CompatRibbonBar(parent)
 
+
+
+
+def apply_compact_ribbon_style(ribbonbar: QMenuBar) -> None:
+    tab_font = QFont()
+    tab_font.setPointSize(10)
+    for tabbar in ribbonbar.findChildren(QTabBar):
+        tabbar.setFont(tab_font)
+        tabbar.setMinimumHeight(22)
+
+    button_font = QFont()
+    button_font.setPointSize(9)
+    for button in ribbonbar.findChildren(QToolButton):
+        button.setIconSize(QSize(22, 22))
+        button.setFont(button_font)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+
+    label_font = QFont()
+    label_font.setPointSize(8)
+    for label in ribbonbar.findChildren(QLabel):
+        label.setFont(label_font)
+        label.setContentsMargins(0, 0, 0, 0)
+
+    ribbonbar.setMaximumHeight(100)
 
 def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
     btn.setEnabled(action.isEnabled())
@@ -127,4 +151,5 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
 
+    apply_compact_ribbon_style(ribbon)
     return result
