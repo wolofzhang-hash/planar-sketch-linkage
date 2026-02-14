@@ -1,17 +1,46 @@
 QMenuBar {
-    min-height: 82px;
-    max-height: 88px;
+    min-height: 92px;
+    max-height: 100px;
 }
-QTabBar::tab {
-    font-size: 9px;
-    padding: 2px 8px;
-}
-QToolButton {
-    font-size: 11px;
-    padding: 1px 3px;
+
+QTabWidget::pane {
     margin: 0px;
-    min-height: 34px;
+    padding: 0px;
+    top: -1px;
+    border: 0px;
 }
+
+QTabBar {
+    margin: 0px;
+    padding: 0px;
+}
+
+QTabBar::tab {
+    font-size: 12px;
+    min-height: 24px;
+    max-height: 26px;
+    padding: 0px 10px;
+    margin: 0px;
+    color: #222222;
+}
+
+QTabBar::tab:selected {
+    font-weight: 600;
+    color: #111111;
+    border-bottom: 3px solid #1f3fff;
+}
+
+QTabBar::tab:!selected {
+    border-bottom: 3px solid transparent;
+}
+
+QToolButton {
+    font-size: 10px;
+    padding: 0px 1px;
+    margin: 0px;
+    min-height: 28px;
+}
+
 QWidget {
     margin: 0px;
     padding: 0px;
