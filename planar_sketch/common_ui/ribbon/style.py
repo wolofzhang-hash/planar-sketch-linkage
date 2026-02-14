@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QMenuBar, QTabBar, QToolButton
+from PyQt6.QtWidgets import QMenuBar, QToolButton, QWidget
 
 _ICON_SIZE = QSize(28, 28)
 _TAB_FONT_SIZE = 11
@@ -23,19 +23,38 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
     if qss:
         ribbonbar.setStyleSheet(qss)
 
-    tab_font = QFont()
-    tab_font.setPointSize(_TAB_FONT_SIZE)
-    for tabbar in ribbonbar.findChildren(QTabBar):
+    if hasattr(ribbonbar, "setRibbonHeight"):
+        ribbonbar.setRibbonHeight(105)
+
+    if hasattr(ribbonbar, "applicationOptionButton"):
+        app_btn = ribbonbar.applicationOptionButton()
+        if app_btn is not None:
+            app_btn.hide()
+
+    def _apply_tab_style() -> None:
+        tabbar_getter = getattr(ribbonbar, "tabBar", None)
+        if not callable(tabbar_getter):
+            return
+        tabbar = tabbar_getter()
+        if tabbar is None:
+            return
+        tab_font = QFont()
+        tab_font.setPointSize(_TAB_FONT_SIZE)
         tabbar.setFont(tab_font)
         tabbar.setMinimumHeight(22)
         tabbar.setMaximumHeight(24)
 
-    button_font = QFont()
-    button_font.setPointSize(_BUTTON_FONT_SIZE)
-    for button in ribbonbar.findChildren(QToolButton):
-        button.setIconSize(_ICON_SIZE)
-        button.setFont(button_font)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+    def _apply_icon_and_button_style() -> None:
+        button_font = QFont()
+        button_font.setPointSize(_BUTTON_FONT_SIZE)
+        for child in ribbonbar.findChildren(QWidget):
+            set_icon_size = getattr(child, "setIconSize", None)
+            if callable(set_icon_size):
+                set_icon_size(_ICON_SIZE)
+            if isinstance(child, QToolButton):
+                child.setFont(button_font)
+                child.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
-    ribbonbar.setMinimumHeight(92)
-    ribbonbar.setMaximumHeight(106)
+    _apply_tab_style()
+    _apply_icon_and_button_style()
+    QTimer.singleShot(0, lambda: (_apply_tab_style(), _apply_icon_and_button_style()))

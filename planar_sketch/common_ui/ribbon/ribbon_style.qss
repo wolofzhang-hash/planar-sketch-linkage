@@ -1,8 +1,3 @@
-QMenuBar {
-    min-height: 92px;
-    max-height: 106px;
-}
-
 QTabWidget::pane {
     margin: 0px;
     padding: 0px;
@@ -19,8 +14,8 @@ QTabBar::tab {
     font-size: 11px;
     min-height: 22px;
     max-height: 24px;
-    padding: 1px 9px;
-    margin: 0px;
+    padding: 0px 8px;
+    margin: 0px 0px;
     color: #222222;
 }
 
