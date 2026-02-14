@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import QMenuBar, QToolButton
 
 
@@ -14,11 +13,11 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
         if app_btn is not None:
             app_btn.hide()
 
-    def _hide_ribbon_button_content() -> None:
+    def _restore_ribbon_button_content() -> None:
         for button in ribbonbar.findChildren(QToolButton):
-            button.setIcon(QIcon())
-            button.setText("")
-            button.setToolTip("")
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+            if not button.toolTip() and button.text():
+                button.setToolTip(button.text())
 
-    _hide_ribbon_button_content()
-    QTimer.singleShot(0, _hide_ribbon_button_content)
+    _restore_ribbon_button_content()
+    QTimer.singleShot(0, _restore_ribbon_button_content)
