@@ -38,6 +38,7 @@ def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
 
 def _apply_action_state(action: QAction, btn: QToolButton) -> None:
     btn.setEnabled(action.isEnabled())
+    btn.setText(action.text())
     if btn.isCheckable() != action.isCheckable():
         btn.setCheckable(action.isCheckable())
     if action.isCheckable():

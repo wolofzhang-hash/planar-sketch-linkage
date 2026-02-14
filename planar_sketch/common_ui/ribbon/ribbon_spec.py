@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 from typing import Literal
 
 RibbonItemKind = Literal["action", "toggle", "widget"]
@@ -31,128 +32,133 @@ class RibbonSpec:
     categories: tuple[RibbonCategorySpec, ...] = field(default_factory=tuple)
 
 
-def build_planar_ribbon_spec() -> RibbonSpec:
+def build_planar_ribbon_spec(translate: Callable[[str, str], str] | None = None) -> RibbonSpec:
+    def t(key: str, default: str) -> str:
+        if translate is None:
+            return default
+        return translate(key, default)
+
     return RibbonSpec(
         categories=(
             RibbonCategorySpec(
-                title="Home",
+                title=t("ribbon.category.home", "Home"),
                 key="home",
                 panels=(
-                    RibbonPanelSpec("File", (
-                        RibbonItemSpec("act_file_new", "action", "New"),
-                        RibbonItemSpec("act_file_open", "action", "Open"),
-                        RibbonItemSpec("act_file_save", "action", "Save"),
-                        RibbonItemSpec("act_file_save_as", "action", "Save As"),
+                    RibbonPanelSpec(t("ribbon.panel.file", "File"), (
+                        RibbonItemSpec("act_file_new", "action"),
+                        RibbonItemSpec("act_file_open", "action"),
+                        RibbonItemSpec("act_file_save", "action"),
+                        RibbonItemSpec("act_file_save_as", "action"),
                     )),
-                    RibbonPanelSpec("Edit", (
-                        RibbonItemSpec("act_undo", "action", "Undo"),
-                        RibbonItemSpec("act_redo", "action", "Redo"),
-                        RibbonItemSpec("act_delete_selected", "action", "Delete"),
-                        RibbonItemSpec("act_repeat_model", "action", "Repeat"),
-                        RibbonItemSpec("act_cancel_model", "action", "Cancel"),
+                    RibbonPanelSpec(t("ribbon.panel.edit", "Edit"), (
+                        RibbonItemSpec("act_undo", "action"),
+                        RibbonItemSpec("act_redo", "action"),
+                        RibbonItemSpec("act_delete_selected", "action"),
+                        RibbonItemSpec("act_repeat_model", "action"),
+                        RibbonItemSpec("act_cancel_model", "action"),
                     )),
-                    RibbonPanelSpec("Settings", (
-                        RibbonItemSpec("act_settings", "action", "Settings"),
+                    RibbonPanelSpec(t("ribbon.panel.settings", "Settings"), (
+                        RibbonItemSpec("act_settings", "action"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="Model",
+                title=t("menu.sketch", "Model"),
                 key="model",
                 panels=(
-                    RibbonPanelSpec("Create", (
-                        RibbonItemSpec("act_create_point", "toggle", "Point"),
-                        RibbonItemSpec("act_create_line", "toggle", "Line"),
-                        RibbonItemSpec("act_create_spline", "toggle", "Spline"),
+                    RibbonPanelSpec(t("ribbon.panel.create", "Create"), (
+                        RibbonItemSpec("act_create_point", "toggle"),
+                        RibbonItemSpec("act_create_line", "toggle"),
+                        RibbonItemSpec("act_create_spline", "toggle"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="Boundary",
+                title=t("menu.boundary", "Boundary"),
                 key="boundary",
                 panels=(
-                    RibbonPanelSpec("Mode", (
-                        RibbonItemSpec("act_boundary_constraints", "action", "Constraints"),
-                        RibbonItemSpec("act_boundary_loads", "action", "Loads"),
+                    RibbonPanelSpec(t("ribbon.panel.mode", "Mode"), (
+                        RibbonItemSpec("act_boundary_constraints", "action"),
+                        RibbonItemSpec("act_boundary_loads", "action"),
                     )),
-                    RibbonPanelSpec("Loads", (
-                        RibbonItemSpec("act_boundary_add_force", "action", "Add Force"),
-                        RibbonItemSpec("act_boundary_add_torque", "action", "Add Torque"),
-                        RibbonItemSpec("act_boundary_clear_loads", "action", "Clear Loads"),
+                    RibbonPanelSpec(t("ribbon.panel.loads", "Loads"), (
+                        RibbonItemSpec("act_boundary_add_force", "action"),
+                        RibbonItemSpec("act_boundary_add_torque", "action"),
+                        RibbonItemSpec("act_boundary_clear_loads", "action"),
                     )),
-                    RibbonPanelSpec("Fix", (
-                        RibbonItemSpec("act_boundary_fix", "action", "Fix"),
+                    RibbonPanelSpec(t("ribbon.panel.fix", "Fix"), (
+                        RibbonItemSpec("act_boundary_fix", "action"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="Analysis",
+                title=t("menu.analysis", "Analysis"),
                 key="analysis",
                 panels=(
-                    RibbonPanelSpec("Run", (
-                        RibbonItemSpec("act_analysis_play", "action", "Play"),
-                        RibbonItemSpec("act_analysis_stop", "action", "Stop"),
-                        RibbonItemSpec("act_analysis_reset_pose", "action", "ResetPose"),
+                    RibbonPanelSpec(t("ribbon.panel.run", "Run"), (
+                        RibbonItemSpec("act_analysis_play", "action"),
+                        RibbonItemSpec("act_analysis_stop", "action"),
+                        RibbonItemSpec("act_analysis_reset_pose", "action"),
                     )),
-                    RibbonPanelSpec("Check", (
-                        RibbonItemSpec("act_analysis_check", "action", "Check"),
+                    RibbonPanelSpec(t("ribbon.panel.check", "Check"), (
+                        RibbonItemSpec("act_analysis_check", "action"),
                     )),
-                    RibbonPanelSpec("Export", (
-                        RibbonItemSpec("act_analysis_export", "action", "Export"),
-                        RibbonItemSpec("act_analysis_save_run", "action", "Save Run"),
+                    RibbonPanelSpec(t("ribbon.panel.export", "Export"), (
+                        RibbonItemSpec("act_analysis_export", "action"),
+                        RibbonItemSpec("act_analysis_save_run", "action"),
                     )),
-                    RibbonPanelSpec("Solver", (
-                        RibbonItemSpec("analysis_solver_widget", "widget", "Solver Combo"),
+                    RibbonPanelSpec(t("ribbon.panel.solver", "Solver"), (
+                        RibbonItemSpec("analysis_solver_widget", "widget"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="View",
+                title=t("menu.view", "View"),
                 key="view",
                 panels=(
-                    RibbonPanelSpec("Display", (
-                        RibbonItemSpec("act_pm", "toggle", "PM"),
-                        RibbonItemSpec("act_dm", "toggle", "DM"),
-                        RibbonItemSpec("act_body_color", "toggle", "Body Color"),
-                        RibbonItemSpec("act_splines", "toggle", "Splines"),
-                        RibbonItemSpec("act_load_arrows", "toggle", "Load Arrows"),
+                    RibbonPanelSpec(t("ribbon.panel.display", "Display"), (
+                        RibbonItemSpec("act_pm", "toggle"),
+                        RibbonItemSpec("act_dm", "toggle"),
+                        RibbonItemSpec("act_body_color", "toggle"),
+                        RibbonItemSpec("act_splines", "toggle"),
+                        RibbonItemSpec("act_load_arrows", "toggle"),
                     )),
-                    RibbonPanelSpec("Presets", (
-                        RibbonItemSpec("act_preset_show_all", "action", "Show All"),
-                        RibbonItemSpec("act_preset_points_only", "action", "Points Only"),
-                        RibbonItemSpec("act_preset_links_only", "action", "Links Only"),
+                    RibbonPanelSpec(t("menu.presets", "Presets"), (
+                        RibbonItemSpec("act_preset_show_all", "action"),
+                        RibbonItemSpec("act_preset_points_only", "action"),
+                        RibbonItemSpec("act_preset_links_only", "action"),
                     )),
-                    RibbonPanelSpec("Navigate", (
-                        RibbonItemSpec("act_reset_view", "action", "Reset View"),
-                        RibbonItemSpec("act_fit_all", "action", "Fit All"),
+                    RibbonPanelSpec(t("ribbon.panel.navigate", "Navigate"), (
+                        RibbonItemSpec("act_reset_view", "action"),
+                        RibbonItemSpec("act_fit_all", "action"),
                     )),
-                    RibbonPanelSpec("Grid", (
-                        RibbonItemSpec("act_grid_horizontal", "toggle", "Grid H"),
-                        RibbonItemSpec("act_grid_vertical", "toggle", "Grid V"),
-                        RibbonItemSpec("act_grid_settings", "action", "Grid Settings"),
+                    RibbonPanelSpec(t("ribbon.panel.grid", "Grid"), (
+                        RibbonItemSpec("act_grid_horizontal", "toggle"),
+                        RibbonItemSpec("act_grid_vertical", "toggle"),
+                        RibbonItemSpec("act_grid_settings", "action"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="Background",
+                title=t("menu.background_image", "Background"),
                 key="background",
                 panels=(
-                    RibbonPanelSpec("Image", (
-                        RibbonItemSpec("act_bg_load", "action", "Load"),
-                        RibbonItemSpec("act_bg_visible", "toggle", "Visible"),
-                        RibbonItemSpec("act_bg_gray", "toggle", "Gray"),
-                        RibbonItemSpec("act_bg_opacity", "action", "Opacity"),
-                        RibbonItemSpec("act_bg_clear", "action", "Clear"),
+                    RibbonPanelSpec(t("ribbon.panel.image", "Image"), (
+                        RibbonItemSpec("act_bg_load", "action"),
+                        RibbonItemSpec("act_bg_visible", "toggle"),
+                        RibbonItemSpec("act_bg_gray", "toggle"),
+                        RibbonItemSpec("act_bg_opacity", "action"),
+                        RibbonItemSpec("act_bg_clear", "action"),
                     )),
                 ),
             ),
             RibbonCategorySpec(
-                title="Help",
+                title=t("menu.help", "Help"),
                 key="help",
                 panels=(
-                    RibbonPanelSpec("Support", (
-                        RibbonItemSpec("act_help_manual", "action", "Manual"),
-                        RibbonItemSpec("act_help_about", "action", "About"),
+                    RibbonPanelSpec(t("ribbon.panel.support", "Support"), (
+                        RibbonItemSpec("act_help_manual", "action"),
+                        RibbonItemSpec("act_help_about", "action"),
                     )),
                 ),
             ),
