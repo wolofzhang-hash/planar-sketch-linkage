@@ -6,7 +6,7 @@ from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QMenuBar, QToolButton, QWidget
 
-_ICON_SIZE = QSize(28, 28)
+_ICON_SIZE = QSize(36, 36)
 _TAB_FONT_SIZE = 11
 _BUTTON_FONT_SIZE = 9
 
@@ -24,12 +24,22 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
         ribbonbar.setStyleSheet(qss)
 
     if hasattr(ribbonbar, "setRibbonHeight"):
-        ribbonbar.setRibbonHeight(105)
+        ribbonbar.setRibbonHeight(118)
 
     if hasattr(ribbonbar, "applicationOptionButton"):
         app_btn = ribbonbar.applicationOptionButton()
         if app_btn is not None:
             app_btn.hide()
+
+    if hasattr(ribbonbar, "applicationButton"):
+        app_btn = ribbonbar.applicationButton()
+        if app_btn is not None:
+            app_btn.hide()
+
+    # Fallback for pyqtribbon variants that expose the launcher button as a plain QToolButton.
+    for child in ribbonbar.findChildren(QToolButton):
+        if child.text().strip().lower() == "pyqtribbon":
+            child.hide()
 
     def _apply_tab_style() -> None:
         tabbar_getter = getattr(ribbonbar, "tabBar", None)
