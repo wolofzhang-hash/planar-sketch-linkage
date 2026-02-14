@@ -491,13 +491,13 @@ class MainWindow(QMainWindow):
         self.combo_analysis_solver.blockSignals(False)
 
     def update_model_action_state(self) -> None:
-        mode = getattr(self.ctrl, "mode", "Idle")
+        continuous_mode = getattr(self.ctrl, "_continuous_model_action", None)
         with QSignalBlocker(self.act_create_point):
-            self.act_create_point.setChecked(mode == "CreatePoint")
+            self.act_create_point.setChecked(continuous_mode == "CreatePoint")
         with QSignalBlocker(self.act_create_line):
-            self.act_create_line.setChecked(mode == "CreateLine")
+            self.act_create_line.setChecked(continuous_mode == "CreateLine")
         with QSignalBlocker(self.act_create_spline):
-            self.act_create_spline.setChecked(mode == "CreateSpline")
+            self.act_create_spline.setChecked(continuous_mode == "CreateSpline")
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
