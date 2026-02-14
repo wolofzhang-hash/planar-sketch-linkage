@@ -91,10 +91,10 @@ def _build_bar(parent) -> QMenuBar:
 
 def apply_compact_ribbon_style(ribbonbar: QMenuBar) -> None:
     tab_font = QFont()
-    tab_font.setPointSize(10)
+    tab_font.setPointSize(12)
     for tabbar in ribbonbar.findChildren(QTabBar):
         tabbar.setFont(tab_font)
-        tabbar.setMinimumHeight(22)
+        tabbar.setMinimumHeight(20)
 
     button_font = QFont()
     button_font.setPointSize(9)
@@ -109,7 +109,13 @@ def apply_compact_ribbon_style(ribbonbar: QMenuBar) -> None:
         label.setFont(label_font)
         label.setContentsMargins(0, 0, 0, 0)
 
-    ribbonbar.setMaximumHeight(100)
+    # Hide the default application button (usually shown as "PyQtRibbon") so
+    # the tab row starts cleanly from the first tab.
+    for button in ribbonbar.findChildren(QToolButton):
+        if button.text().strip() == "PyQtRibbon":
+            button.hide()
+
+    ribbonbar.setMaximumHeight(84)
 
 def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
     btn.setEnabled(action.isEnabled())
