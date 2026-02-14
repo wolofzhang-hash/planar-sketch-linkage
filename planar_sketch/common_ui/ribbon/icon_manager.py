@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QStyle, QToolButton, QWidget
 
 @dataclass(frozen=True)
 class RibbonIconConfig:
-    icon_size: QSize = QSize(22, 22)
+    icon_size: QSize = QSize(28, 28)
 
 
 _FALLBACK_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "fallback_action.svg"
