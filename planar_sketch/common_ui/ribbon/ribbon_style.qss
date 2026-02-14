@@ -1,0 +1,42 @@
+QTabWidget::pane {
+    margin: 0px;
+    padding: 0px;
+    top: -1px;
+    border: 0px;
+}
+
+QTabBar {
+    margin: 0px;
+    padding: 0px;
+}
+
+QTabBar::tab {
+    font-size: 11px;
+    min-height: 22px;
+    max-height: 24px;
+    padding: 0px 8px;
+    margin: 0px 0px;
+    color: #222222;
+}
+
+QTabBar::tab:selected {
+    font-weight: 600;
+    color: #111111;
+    border-bottom: 2px solid #1f3fff;
+}
+
+QTabBar::tab:!selected {
+    border-bottom: 2px solid transparent;
+}
+
+QToolButton {
+    font-size: 9px;
+    padding: 0px 1px;
+    margin: 0px;
+    min-height: 24px;
+}
+
+QWidget {
+    margin: 0px;
+    padding: 0px;
+}
