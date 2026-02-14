@@ -1,0 +1,14 @@
+QMenuBar {
+    min-height: 96px;
+    max-height: 104px;
+}
+QToolButton {
+    font-size: 11px;
+    padding: 2px 4px;
+    margin: 1px;
+    min-height: 42px;
+}
+QWidget {
+    margin: 0px;
+    padding: 0px;
+}
