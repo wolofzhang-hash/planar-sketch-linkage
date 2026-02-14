@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QAction, QFont
-from PyQt6.QtWidgets import QLabel, QMenuBar, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QAction
+from PyQt6.QtWidgets import QMenuBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
 
 from .action_registry import ActionRegistry
-from .icon_manager import RibbonIconConfig, apply_ribbon_qss, ensure_large_button_icon, style_large_button
+from .icon_manager import RibbonIconConfig, ensure_large_button_icon
 from .ribbon_spec import RibbonSpec
+from .style import apply_compact_largeicon_style
 
 try:
     from pyqtribbon import RibbonBar as _RibbonBar
@@ -58,7 +59,7 @@ class _CompatRibbonBar(QMenuBar):
         self._tabs.setDocumentMode(True)
         self.setNativeMenuBar(False)
         self.setMinimumHeight(92)
-        self.setMaximumHeight(100)
+        self.setMaximumHeight(106)
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().addWidget(self._tabs)
@@ -87,80 +88,15 @@ def _build_bar(parent) -> QMenuBar:
     return _CompatRibbonBar(parent)
 
 
+def _hide_panel_option_button(panel: object) -> None:
+    option_getter = getattr(panel, "panelOptionButton", None)
+    if not callable(option_getter):
+        return
+    option_btn = option_getter()
+    if option_btn is None:
+        return
+    option_btn.hide()
 
-
-def _hide_or_soften_brand_block(ribbonbar: QMenuBar) -> None:
-    brand_widgets: list[QWidget] = []
-
-    for label in ribbonbar.findChildren(QLabel):
-        if "pyqtribbon" in label.text().strip().lower():
-            brand_widgets.append(label)
-
-    for button in ribbonbar.findChildren(QToolButton):
-        if "pyqtribbon" in button.text().strip().lower():
-            brand_widgets.append(button)
-
-    hidden = False
-    for widget in brand_widgets:
-        widget.setVisible(False)
-        parent = widget.parentWidget()
-        if parent is not None:
-            parent.setMaximumWidth(0)
-            parent.setMinimumWidth(0)
-        hidden = True
-
-    if not hidden:
-        for label in ribbonbar.findChildren(QLabel):
-            text = label.text().strip()
-            if not text:
-                continue
-            if text.lower() in {"ribbon", "application"}:
-                label.setStyleSheet("font-size: 7px; color: #9a9a9a; padding: 0px; margin: 0px;")
-
-
-def _hide_panel_launchers(ribbonbar: QMenuBar) -> None:
-    """Hide tiny panel launcher buttons (bottom-right corner markers)."""
-    for button in ribbonbar.findChildren(QToolButton):
-        if button.text().strip():
-            continue
-        if max(button.width(), button.height()) > 18:
-            continue
-        parent = button.parentWidget()
-        parent_name = parent.metaObject().className().lower() if parent is not None else ""
-        if "panel" not in parent_name and "group" not in parent_name:
-            continue
-        button.setVisible(False)
-        button.setMinimumSize(0, 0)
-        button.setMaximumSize(0, 0)
-
-
-def apply_ribbon_style(ribbonbar: QMenuBar, icon_config: RibbonIconConfig) -> None:
-    apply_ribbon_qss(ribbonbar)
-
-    tab_font = QFont()
-    tab_font.setPointSize(12)
-    for tabbar in ribbonbar.findChildren(QTabBar):
-        tabbar.setFont(tab_font)
-        tabbar.setMinimumHeight(24)
-        tabbar.setMaximumHeight(26)
-
-    button_font = QFont()
-    button_font.setPointSize(10)
-    for button in ribbonbar.findChildren(QToolButton):
-        button.setIconSize(icon_config.icon_size)
-        button.setFont(button_font)
-        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-
-    label_font = QFont()
-    label_font.setPointSize(8)
-    for label in ribbonbar.findChildren(QLabel):
-        label.setFont(label_font)
-        label.setContentsMargins(0, 0, 0, 0)
-
-    _hide_or_soften_brand_block(ribbonbar)
-    _hide_panel_launchers(ribbonbar)
-    ribbonbar.setMinimumHeight(92)
-    ribbonbar.setMaximumHeight(100)
 
 def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
     btn.setEnabled(action.isEnabled())
@@ -179,7 +115,7 @@ def _apply_action_state(action: QAction, btn: QToolButton) -> None:
 
 
 def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: RibbonIconConfig | None = None) -> RibbonBuildResult:
-    icon_config = icon_config or RibbonIconConfig()
+    _ = icon_config or RibbonIconConfig()
     ribbon = _build_bar(mainwindow)
     result = RibbonBuildResult(ribbon=ribbon)
 
@@ -188,6 +124,7 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
         result.categories[category_spec.key] = category
         for panel_spec in category_spec.panels:
             panel = category.addPanel(panel_spec.title)
+            _hide_panel_option_button(panel)
             for item in panel_spec.items:
                 if item.kind == "widget":
                     panel.addWidget(registry.widget(item.key))
@@ -196,10 +133,9 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
                 text = item.text_override or action.text()
                 btn = panel.addLargeButton(text, action.icon())
                 if isinstance(btn, QToolButton):
-                    style_large_button(btn, icon_config)
                     ensure_large_button_icon(btn, action)
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
 
-    apply_ribbon_style(ribbon, icon_config)
+    apply_compact_largeicon_style(ribbon)
     return result
