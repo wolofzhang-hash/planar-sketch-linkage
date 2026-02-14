@@ -84,6 +84,23 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
         "menu.background_image": "Background",
         "menu.help": "Help",
         "menu.presets": "Presets",
+        "ribbon.category.home": "Home",
+        "ribbon.panel.file": "File",
+        "ribbon.panel.edit": "Edit",
+        "ribbon.panel.settings": "Settings",
+        "ribbon.panel.create": "Create",
+        "ribbon.panel.mode": "Mode",
+        "ribbon.panel.loads": "Loads",
+        "ribbon.panel.fix": "Fix",
+        "ribbon.panel.run": "Run",
+        "ribbon.panel.check": "Check",
+        "ribbon.panel.export": "Export",
+        "ribbon.panel.solver": "Solver",
+        "ribbon.panel.display": "Display",
+        "ribbon.panel.navigate": "Navigate",
+        "ribbon.panel.grid": "Grid",
+        "ribbon.panel.image": "Image",
+        "ribbon.panel.support": "Support",
         "action.new": "New",
         "action.open": "Open...",
         "action.save": "Save",
@@ -93,6 +110,7 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
         "action.redo": "Redo",
         "action.delete_selected": "Delete Selected",
         "action.repeat_last_model_action": "Repeat Last Modeling Action",
+        "action.cancel": "Cancel",
         "action.settings": "Settings...",
         "action.create_point": "Create Point",
         "action.create_line": "Create Line",
@@ -411,6 +429,23 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
         "menu.background_image": "背景",
         "menu.help": "帮助",
         "menu.presets": "预设",
+        "ribbon.category.home": "主页",
+        "ribbon.panel.file": "文件",
+        "ribbon.panel.edit": "编辑",
+        "ribbon.panel.settings": "设置",
+        "ribbon.panel.create": "创建",
+        "ribbon.panel.mode": "模式",
+        "ribbon.panel.loads": "载荷",
+        "ribbon.panel.fix": "固定",
+        "ribbon.panel.run": "运行",
+        "ribbon.panel.check": "检查",
+        "ribbon.panel.export": "导出",
+        "ribbon.panel.solver": "求解器",
+        "ribbon.panel.display": "显示",
+        "ribbon.panel.navigate": "导航",
+        "ribbon.panel.grid": "网格",
+        "ribbon.panel.image": "图像",
+        "ribbon.panel.support": "支持",
         "action.new": "新建",
         "action.open": "打开...",
         "action.save": "保存",
@@ -420,6 +455,7 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
         "action.redo": "重做",
         "action.delete_selected": "删除所选",
         "action.repeat_last_model_action": "重复上次建模操作",
+        "action.cancel": "取消",
         "action.settings": "设置...",
         "action.create_point": "创建点",
         "action.create_line": "创建线段",
@@ -664,7 +700,11 @@ LANGUAGES: Dict[str, Dict[str, str]] = {
 }
 
 
-def tr(lang: str, key: str) -> str:
+def tr(lang: str, key: str, default: str | None = None) -> str:
     """Translate a UI key."""
     table = LANGUAGES.get(lang, LANGUAGES["en"])
-    return table.get(key, LANGUAGES["en"].get(key, key))
+    if key in table:
+        return table[key]
+    if key in LANGUAGES["en"]:
+        return LANGUAGES["en"][key]
+    return key if default is None else default

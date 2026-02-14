@@ -264,12 +264,20 @@ class MainWindow(QMainWindow):
     def _build_ribbon(self) -> None:
         self._build_analysis_solver_widget()
         self._apply_action_icons()
-        spec = build_planar_ribbon_spec()
+        lang = getattr(self.ctrl, "ui_language", "en")
+        spec = build_planar_ribbon_spec(lambda key, default: tr(lang, key, default))
         registry = self._build_action_registry()
         self.ribbon_result = build(self, spec, registry)
         self.setMenuBar(self.ribbon_result.ribbon)
         self._set_active_ribbon("home")
         self._install_sketch_double_clicks()
+
+    def _rebuild_ribbon(self) -> None:
+        active_key = getattr(self, "_active_ribbon", "home")
+        visible = getattr(self, "_toolbars_enabled", True)
+        self._build_ribbon()
+        self._set_toolbars_visible(visible)
+        self._set_active_ribbon(active_key)
 
     def _build_action_registry(self) -> ActionRegistry:
         return ActionRegistry(
@@ -493,7 +501,7 @@ class MainWindow(QMainWindow):
         self.act_undo.setText(tr(lang, "action.undo"))
         self.act_redo.setText(tr(lang, "action.redo"))
         self.act_delete_selected.setText(tr(lang, "action.delete_selected"))
-        self.act_cancel_model.setText("Cancel")
+        self.act_cancel_model.setText(tr(lang, "action.cancel", "Cancel"))
         self.act_repeat_model.setText(tr(lang, "action.repeat_last_model_action"))
         self.act_settings.setText(tr(lang, "action.settings"))
         self.act_create_point.setText(tr(lang, "action.create_point"))
@@ -536,6 +544,7 @@ class MainWindow(QMainWindow):
         self.panel.apply_language()
         self.sim_panel.apply_language()
         self._refresh_analysis_solver_options()
+        self._rebuild_ribbon()
 
     def _toggle_create_action(self, kind: str, checked: bool) -> None:
         if checked:
