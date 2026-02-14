@@ -9,7 +9,7 @@ from pathlib import Path
 import traceback
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QEvent, QSignalBlocker, QCoreApplication, QUrl
+from PyQt6.QtCore import Qt, QEvent, QSignalBlocker, QCoreApplication, QUrl, QTimer
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_ribbon()
         self.apply_language()
+        self._set_dock_visibility(active="sketch")
         self.menuBar().setVisible(True)
         self.file_new(prompt_for_folder=False)
         self.update_undo_redo_actions()
@@ -277,8 +278,57 @@ class MainWindow(QMainWindow):
         registry = self._build_action_registry()
         self.ribbon_result = build(self, spec, registry)
         self.setMenuBar(self.ribbon_result.ribbon)
+        self._bind_ribbon_category_visibility()
         self._set_active_ribbon("home")
         self._install_sketch_double_clicks()
+
+    def _bind_ribbon_category_visibility(self) -> None:
+        ribbon = self.ribbon_result.ribbon
+        self._ribbon_visibility_sync_targets = set()
+
+        if hasattr(ribbon, "currentCategoryChanged"):
+            ribbon.currentCategoryChanged.connect(self._sync_dock_visibility_from_ribbon)
+        elif hasattr(ribbon, "currentChanged"):
+            ribbon.currentChanged.connect(self._sync_dock_visibility_from_ribbon)
+
+        self._register_ribbon_visibility_sync_target(ribbon)
+        for child in ribbon.findChildren(QWidget):
+            class_name = child.metaObject().className().lower()
+            if "tab" in class_name or "ribbon" in class_name:
+                self._register_ribbon_visibility_sync_target(child)
+
+        self._sync_dock_visibility_from_ribbon()
+
+    def _register_ribbon_visibility_sync_target(self, widget: QWidget) -> None:
+        targets = getattr(self, "_ribbon_visibility_sync_targets", None)
+        if targets is None:
+            self._ribbon_visibility_sync_targets = set()
+            targets = self._ribbon_visibility_sync_targets
+        if widget in targets:
+            return
+        widget.installEventFilter(self)
+        targets.add(widget)
+
+    def _sync_dock_visibility_from_ribbon(self, *_args) -> None:
+        current = None
+        ribbon = self.ribbon_result.ribbon
+        if hasattr(ribbon, "currentCategory"):
+            current = ribbon.currentCategory()
+        if current is None and hasattr(ribbon, "currentWidget"):
+            current = ribbon.currentWidget()
+        current_key = next((k for k, v in self.ribbon_result.categories.items() if v == current), None)
+        if current_key == "model":
+            self._set_dock_visibility(active="sketch")
+        elif current_key == "analysis":
+            self._set_dock_visibility(active="analysis")
+            self._show_analysis_simulation_tab()
+
+    def _show_analysis_simulation_tab(self) -> None:
+        tabs = getattr(self.sim_panel, "tabs", None)
+        if tabs is None:
+            return
+        if tabs.count() > 3:
+            tabs.setCurrentIndex(3)
 
     def _rebuild_ribbon(self) -> None:
         active_key = getattr(self, "_active_ribbon", "home")
@@ -329,6 +379,16 @@ class MainWindow(QMainWindow):
             if handler is not None:
                 handler()
                 return True
+
+        ribbon_targets = getattr(self, "_ribbon_visibility_sync_targets", set())
+        if obj in ribbon_targets and event.type() in (
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.KeyRelease,
+            QEvent.Type.Show,
+            QEvent.Type.LayoutRequest,
+        ):
+            QTimer.singleShot(0, self._sync_dock_visibility_from_ribbon)
+
         return super().eventFilter(obj, event)
 
     def _set_toolbars_visible(self, visible: bool) -> None:
@@ -365,6 +425,7 @@ class MainWindow(QMainWindow):
     def _activate_analysis_mode(self) -> None:
         self._set_active_ribbon("analysis")
         self._set_dock_visibility(active="analysis")
+        self._show_analysis_simulation_tab()
 
     def _set_dock_visibility(self, active: str) -> None:
         show_sketch = active == "sketch"
