@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import weakref
 from dataclasses import dataclass, field
 
+from PyQt6 import sip
 from PyQt6.QtGui import QAction
 from PyQt6.QtWidgets import QToolButton
 from pyqtribbon import RibbonBar
@@ -33,7 +35,26 @@ def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
     btn.setCheckable(action.isCheckable())
     btn.setChecked(action.isChecked())
     btn.clicked.connect(action.trigger)
-    action.changed.connect(lambda a=action, b=btn: _apply_action_state(a, b))
+    btn_ref = weakref.ref(btn)
+
+    def _sync_button_state() -> None:
+        target_btn = btn_ref()
+        if target_btn is None or sip.isdeleted(target_btn):
+            _disconnect_action_changed(action, _sync_button_state)
+            return
+        _apply_action_state(action, target_btn)
+
+    action.changed.connect(_sync_button_state)
+    btn.destroyed.connect(
+        lambda *_: _disconnect_action_changed(action, _sync_button_state),
+    )
+
+
+def _disconnect_action_changed(action: QAction, slot: object) -> None:
+    try:
+        action.changed.disconnect(slot)
+    except (TypeError, RuntimeError):
+        return
 
 
 def _apply_action_state(action: QAction, btn: QToolButton) -> None:
