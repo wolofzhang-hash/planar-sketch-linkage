@@ -9,7 +9,7 @@ from pathlib import Path
 import traceback
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
+from PyQt6.QtCore import Qt, QEvent, QSignalBlocker, QCoreApplication, QUrl
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
@@ -25,7 +25,7 @@ from .settings_dialog import SettingsDialog
 from .grid_settings_dialog import GridSettingsDialog
 from .i18n import tr
 from ..common_ui.ribbon.action_registry import ActionRegistry
-from ..common_ui.ribbon.icon_manager import RibbonIconConfig, assign_default_icons
+from ..common_ui.ribbon.icon_manager import assign_default_icons
 from ..common_ui.ribbon.ribbon_factory import build
 from ..common_ui.ribbon.ribbon_spec import build_planar_ribbon_spec
 
@@ -266,7 +266,7 @@ class MainWindow(QMainWindow):
         self._apply_action_icons()
         spec = build_planar_ribbon_spec()
         registry = self._build_action_registry()
-        self.ribbon_result = build(self, spec, registry, icon_config=RibbonIconConfig(icon_size=QSize(24, 24)))
+        self.ribbon_result = build(self, spec, registry)
         self.setMenuBar(self.ribbon_result.ribbon)
         self._set_active_ribbon("home")
         self._install_sketch_double_clicks()

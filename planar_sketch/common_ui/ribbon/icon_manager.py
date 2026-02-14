@@ -1,16 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import QSize
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QStyle, QToolButton
-
-
-@dataclass(frozen=True)
-class RibbonIconConfig:
-    icon_size: QSize = QSize(28, 28)
 
 
 _FALLBACK_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "fallback_action.svg"
