@@ -2,90 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenuBar, QTabWidget, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QToolButton
+from pyqtribbon import RibbonBar
 
 from .action_registry import ActionRegistry
 from .icon_manager import RibbonIconConfig, ensure_large_button_icon
 from .ribbon_spec import RibbonSpec
 from .style import apply_compact_largeicon_style
 
-try:
-    from pyqtribbon import RibbonBar as _RibbonBar
-except Exception:
-    _RibbonBar = None
-
-
-class _CompatPanel(QWidget):
-    def __init__(self, title: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.title = title
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(2, 0, 2, 0)
-        self._layout.setSpacing(1)
-
-    def addLargeButton(self, text: str, icon):
-        btn = QToolButton(self)
-        btn.setText(text)
-        btn.setIcon(icon)
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-        self._layout.addWidget(btn)
-        return btn
-
-    def addWidget(self, widget: QWidget):
-        self._layout.addWidget(widget)
-        return widget
-
-
-class _CompatCategory(QWidget):
-    def __init__(self, title: str, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.title = title
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(2, 0, 2, 0)
-        self._layout.setSpacing(1)
-
-    def addPanel(self, title: str):
-        panel = _CompatPanel(title, self)
-        self._layout.addWidget(panel)
-        return panel
-
-
-class _CompatRibbonBar(QMenuBar):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._tabs = QTabWidget(self)
-        self._tabs.setDocumentMode(True)
-        self.setNativeMenuBar(False)
-        self.setMinimumHeight(92)
-        self.setMaximumHeight(106)
-        self.setLayout(QVBoxLayout())
-        self.layout().setContentsMargins(0, 0, 0, 0)
-        self.layout().addWidget(self._tabs)
-
-    def addCategory(self, title: str):
-        category = _CompatCategory(title, self)
-        self._tabs.addTab(category, title)
-        return category
-
-    def setCurrentCategory(self, category):
-        idx = self._tabs.indexOf(category)
-        if idx >= 0:
-            self._tabs.setCurrentIndex(idx)
-
 
 @dataclass
 class RibbonBuildResult:
-    ribbon: QMenuBar
+    ribbon: RibbonBar
     categories: dict[str, object] = field(default_factory=dict)
     action_buttons: dict[str, list[QToolButton]] = field(default_factory=dict)
-
-
-def _build_bar(parent) -> QMenuBar:
-    if _RibbonBar is not None:
-        return _RibbonBar(parent)
-    return _CompatRibbonBar(parent)
 
 
 def _hide_panel_option_button(panel: object) -> None:
@@ -116,7 +47,7 @@ def _apply_action_state(action: QAction, btn: QToolButton) -> None:
 
 def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: RibbonIconConfig | None = None) -> RibbonBuildResult:
     _ = icon_config or RibbonIconConfig()
-    ribbon = _build_bar(mainwindow)
+    ribbon = RibbonBar(mainwindow)
     result = RibbonBuildResult(ribbon=ribbon)
 
     for category_spec in spec.categories:
