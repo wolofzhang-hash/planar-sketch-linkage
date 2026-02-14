@@ -60,7 +60,6 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_ribbon()
         self.apply_language()
-        self._set_dock_visibility(active="sketch")
         self.menuBar().setVisible(True)
         self.file_new(prompt_for_folder=False)
         self.update_undo_redo_actions()
@@ -278,29 +277,8 @@ class MainWindow(QMainWindow):
         registry = self._build_action_registry()
         self.ribbon_result = build(self, spec, registry)
         self.setMenuBar(self.ribbon_result.ribbon)
-        self._bind_ribbon_category_visibility()
         self._set_active_ribbon("home")
         self._install_sketch_double_clicks()
-
-    def _bind_ribbon_category_visibility(self) -> None:
-        ribbon = self.ribbon_result.ribbon
-        if hasattr(ribbon, "currentCategoryChanged"):
-            ribbon.currentCategoryChanged.connect(self._sync_dock_visibility_from_ribbon)
-        elif hasattr(ribbon, "currentChanged"):
-            ribbon.currentChanged.connect(self._sync_dock_visibility_from_ribbon)
-
-    def _sync_dock_visibility_from_ribbon(self, *_args) -> None:
-        current = None
-        ribbon = self.ribbon_result.ribbon
-        if hasattr(ribbon, "currentCategory"):
-            current = ribbon.currentCategory()
-        if current is None and hasattr(ribbon, "currentWidget"):
-            current = ribbon.currentWidget()
-        current_key = next((k for k, v in self.ribbon_result.categories.items() if v == current), None)
-        if current_key == "model":
-            self._set_dock_visibility(active="sketch")
-        elif current_key == "analysis":
-            self._set_dock_visibility(active="analysis")
 
     def _rebuild_ribbon(self) -> None:
         active_key = getattr(self, "_active_ribbon", "home")
