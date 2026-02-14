@@ -9,11 +9,11 @@ from pathlib import Path
 import traceback
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QSize, QEvent, QSignalBlocker, QCoreApplication, QUrl
+from PyQt6.QtCore import Qt, QEvent, QSignalBlocker, QCoreApplication, QUrl
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox, QInputDialog, QStyle, QToolButton, QLabel, QComboBox, QWidget, QHBoxLayout
+    QFileDialog, QMessageBox, QInputDialog, QToolButton, QLabel, QComboBox, QWidget, QHBoxLayout
 )
 
 from ..core.controller import SketchController
@@ -25,7 +25,6 @@ from .settings_dialog import SettingsDialog
 from .grid_settings_dialog import GridSettingsDialog
 from .i18n import tr
 from ..common_ui.ribbon.action_registry import ActionRegistry
-from ..common_ui.ribbon.icon_manager import RibbonIconConfig, assign_default_icons
 from ..common_ui.ribbon.ribbon_factory import build
 from ..common_ui.ribbon.ribbon_spec import build_planar_ribbon_spec
 
@@ -263,10 +262,9 @@ class MainWindow(QMainWindow):
 
     def _build_ribbon(self) -> None:
         self._build_analysis_solver_widget()
-        self._apply_action_icons()
         spec = build_planar_ribbon_spec()
         registry = self._build_action_registry()
-        self.ribbon_result = build(self, spec, registry, icon_config=RibbonIconConfig(icon_size=QSize(24, 24)))
+        self.ribbon_result = build(self, spec, registry)
         self.setMenuBar(self.ribbon_result.ribbon)
         self._set_active_ribbon("home")
         self._install_sketch_double_clicks()
@@ -363,57 +361,6 @@ class MainWindow(QMainWindow):
     def _raise_dock(self, dock: QDockWidget) -> None:
         dock.show()
         dock.raise_()
-
-    def _apply_action_icons(self) -> None:
-        style = self.style()
-        assign_default_icons(self._build_action_registry().actions, style, {
-            "act_file_new": QStyle.StandardPixmap.SP_FileIcon,
-            "act_file_open": QStyle.StandardPixmap.SP_DirOpenIcon,
-            "act_file_save": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "act_file_save_as": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "act_file_exit": QStyle.StandardPixmap.SP_DialogCloseButton,
-            "act_undo": QStyle.StandardPixmap.SP_ArrowBack,
-            "act_redo": QStyle.StandardPixmap.SP_ArrowForward,
-            "act_delete_selected": QStyle.StandardPixmap.SP_TrashIcon,
-            "act_repeat_model": QStyle.StandardPixmap.SP_BrowserReload,
-            "act_cancel_model": QStyle.StandardPixmap.SP_DialogCancelButton,
-            "act_settings": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            "act_create_point": QStyle.StandardPixmap.SP_DialogYesButton,
-            "act_create_line": QStyle.StandardPixmap.SP_LineEditClearButton,
-            "act_create_spline": QStyle.StandardPixmap.SP_FileDialogContentsView,
-            "act_pm": QStyle.StandardPixmap.SP_DialogYesButton,
-            "act_dm": QStyle.StandardPixmap.SP_DialogApplyButton,
-            "act_body_color": QStyle.StandardPixmap.SP_DriveDVDIcon,
-            "act_splines": QStyle.StandardPixmap.SP_FileDialogInfoView,
-            "act_load_arrows": QStyle.StandardPixmap.SP_ArrowUp,
-            "act_bg_load": QStyle.StandardPixmap.SP_DialogOpenButton,
-            "act_bg_visible": QStyle.StandardPixmap.SP_DialogYesButton,
-            "act_bg_gray": QStyle.StandardPixmap.SP_DialogResetButton,
-            "act_bg_opacity": QStyle.StandardPixmap.SP_DialogApplyButton,
-            "act_bg_clear": QStyle.StandardPixmap.SP_LineEditClearButton,
-            "act_grid_horizontal": QStyle.StandardPixmap.SP_ArrowRight,
-            "act_grid_vertical": QStyle.StandardPixmap.SP_ArrowUp,
-            "act_grid_settings": QStyle.StandardPixmap.SP_FileDialogDetailedView,
-            "act_preset_show_all": QStyle.StandardPixmap.SP_DialogYesButton,
-            "act_preset_points_only": QStyle.StandardPixmap.SP_DialogNoButton,
-            "act_preset_links_only": QStyle.StandardPixmap.SP_DialogNoButton,
-            "act_reset_view": QStyle.StandardPixmap.SP_BrowserStop,
-            "act_fit_all": QStyle.StandardPixmap.SP_ArrowUp,
-            "act_analysis_play": QStyle.StandardPixmap.SP_MediaPlay,
-            "act_analysis_stop": QStyle.StandardPixmap.SP_MediaStop,
-            "act_analysis_reset_pose": QStyle.StandardPixmap.SP_BrowserReload,
-            "act_analysis_check": QStyle.StandardPixmap.SP_DialogApplyButton,
-            "act_analysis_export": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "act_analysis_save_run": QStyle.StandardPixmap.SP_DialogSaveButton,
-            "act_boundary_constraints": QStyle.StandardPixmap.SP_DialogApplyButton,
-            "act_boundary_loads": QStyle.StandardPixmap.SP_ArrowUp,
-            "act_boundary_add_force": QStyle.StandardPixmap.SP_ArrowUp,
-            "act_boundary_add_torque": QStyle.StandardPixmap.SP_BrowserReload,
-            "act_boundary_clear_loads": QStyle.StandardPixmap.SP_TrashIcon,
-            "act_boundary_fix": QStyle.StandardPixmap.SP_DialogApplyButton,
-            "act_help_manual": QStyle.StandardPixmap.SP_DialogHelpButton,
-            "act_help_about": QStyle.StandardPixmap.SP_MessageBoxInformation,
-        })
 
     def _build_analysis_solver_widget(self) -> None:
         self.analysis_solver_widget = QWidget(self)
