@@ -48,10 +48,8 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
         button_font = QFont()
         button_font.setPointSize(_BUTTON_FONT_SIZE)
         for child in ribbonbar.findChildren(QWidget):
-            set_icon_size = getattr(child, "setIconSize", None)
-            if callable(set_icon_size):
-                set_icon_size(_ICON_SIZE)
             if isinstance(child, QToolButton):
+                child.setIconSize(_ICON_SIZE)
                 child.setFont(button_font)
                 child.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
