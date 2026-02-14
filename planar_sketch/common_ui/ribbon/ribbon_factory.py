@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QTabBar, QToolButton
+from PyQt6.QtWidgets import QToolButton
 from pyqtribbon import RibbonBar
 
 from .action_registry import ActionRegistry
@@ -47,13 +46,6 @@ def _apply_action_state(action: QAction, btn: QToolButton) -> None:
 
 def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry) -> RibbonBuildResult:
     ribbon = RibbonBar(mainwindow)
-    for tab_bar in ribbon.findChildren(QTabBar):
-        tab_font = tab_bar.font()
-        point_size = tab_font.pointSizeF()
-        if point_size > 1:
-            tab_font.setPointSizeF(point_size - 1)
-        tab_bar.setFont(tab_font)
-
     result = RibbonBuildResult(ribbon=ribbon)
 
     for category_spec in spec.categories:
@@ -71,9 +63,6 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry) -> RibbonBuild
                 btn = panel.addLargeButton(text, action.icon())
                 if isinstance(btn, QToolButton):
                     ensure_large_button_icon(btn, action)
-                    btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-                    icon_size = btn.iconSize()
-                    btn.setIconSize(QSize(max(16, icon_size.width() - 6), max(16, icon_size.height() - 6)))
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
     return result
