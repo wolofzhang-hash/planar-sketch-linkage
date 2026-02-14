@@ -69,7 +69,7 @@ class ControllerCore:
         self.display_precision = 1
         self.load_arrow_width = 1.6
         self.torque_arrow_width = 1.6
-        self.ui_language = "en"
+        self.ui_language = "zh"
         self.project_uuid: str = ""
 
         self.background_image: Dict[str, Any] = {

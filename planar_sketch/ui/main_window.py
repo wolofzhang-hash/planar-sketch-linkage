@@ -70,7 +70,15 @@ class MainWindow(QMainWindow):
         if self.panel.sync_guard: return
         self.panel.sync_guard = True
         try:
-            items = self.scene.selectedItems()
+            scene = getattr(self, "scene", None)
+            if scene is None:
+                return
+            try:
+                items = scene.selectedItems()
+            except RuntimeError:
+                # The Qt scene can already be destroyed while a queued
+                # selectionChanged signal is still being delivered.
+                return
             pids, lids, aids, sids, psids = [], [], [], [], []
             for it in items:
                 if isinstance(it, PointItem) and (not self.ctrl.is_point_effectively_hidden(it.pid)) and self.ctrl.show_points_geometry:
