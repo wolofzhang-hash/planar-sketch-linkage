@@ -7,9 +7,9 @@ from PyQt6.QtWidgets import QToolButton
 from pyqtribbon import RibbonBar
 
 from .action_registry import ActionRegistry
-from .icon_manager import RibbonIconConfig, ensure_large_button_icon
+from .icon_manager import ensure_large_button_icon
 from .ribbon_spec import RibbonSpec
-from .style import apply_compact_largeicon_style
+from .style import apply_ribbon_style
 
 
 @dataclass
@@ -45,8 +45,7 @@ def _apply_action_state(action: QAction, btn: QToolButton) -> None:
         btn.setChecked(action.isChecked())
 
 
-def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: RibbonIconConfig | None = None) -> RibbonBuildResult:
-    _ = icon_config or RibbonIconConfig()
+def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry) -> RibbonBuildResult:
     ribbon = RibbonBar(mainwindow)
     result = RibbonBuildResult(ribbon=ribbon)
 
@@ -68,5 +67,5 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
 
-    apply_compact_largeicon_style(ribbon)
+    apply_ribbon_style(ribbon)
     return result

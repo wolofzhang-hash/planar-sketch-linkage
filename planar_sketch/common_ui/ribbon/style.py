@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer
@@ -11,6 +12,20 @@ _TAB_FONT_SIZE = 11
 _BUTTON_FONT_SIZE = 9
 
 
+@dataclass(frozen=True)
+class _RibbonStyleConfig:
+    icon_size: QSize
+    tab_font_pt: int
+    button_font_pt: int
+
+
+RIBBON = _RibbonStyleConfig(
+    icon_size=_ICON_SIZE,
+    tab_font_pt=_TAB_FONT_SIZE,
+    button_font_pt=_BUTTON_FONT_SIZE,
+)
+
+
 def _load_qss() -> str:
     qss_path = Path(__file__).with_name("ribbon_style.qss")
     if not qss_path.exists():
@@ -18,7 +33,7 @@ def _load_qss() -> str:
     return qss_path.read_text(encoding="utf-8")
 
 
-def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
+def apply_ribbon_style(ribbonbar: QMenuBar) -> None:
     qss = _load_qss()
     if qss:
         ribbonbar.setStyleSheet(qss)
@@ -39,17 +54,17 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
         if tabbar is None:
             return
         tab_font = QFont()
-        tab_font.setPointSize(_TAB_FONT_SIZE)
+        tab_font.setPointSize(RIBBON.tab_font_pt)
         tabbar.setFont(tab_font)
         tabbar.setMinimumHeight(22)
         tabbar.setMaximumHeight(24)
 
     def _apply_icon_and_button_style() -> None:
         button_font = QFont()
-        button_font.setPointSize(_BUTTON_FONT_SIZE)
+        button_font.setPointSize(RIBBON.button_font_pt)
         for child in ribbonbar.findChildren(QWidget):
             if isinstance(child, QToolButton):
-                child.setIconSize(_ICON_SIZE)
+                child.setIconSize(RIBBON.icon_size)
                 child.setFont(button_font)
                 child.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
