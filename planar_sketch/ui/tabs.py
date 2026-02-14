@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Iterable
 
 from PyQt6.QtCore import Qt, QSignalBlocker, QItemSelectionModel, QTimer
 from PyQt6.QtWidgets import (
@@ -23,6 +23,16 @@ PARAMETER_FUNCTIONS = ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
+
+
+def _balance_table_columns(table: QTableWidget, compact_columns: Iterable[int] = ()) -> None:
+    """Use mostly-even column widths while keeping selected columns compact."""
+    header = table.horizontalHeader()
+    header.setStretchLastSection(False)
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    for column in compact_columns:
+        if 0 <= column < table.columnCount():
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
 
 
 class ParametersTab(QWidget):
@@ -54,6 +64,7 @@ class ParametersTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        _balance_table_columns(self.table)
         layout.addWidget(self.table)
 
         self.btn_add.clicked.connect(self._add_param)
@@ -161,9 +172,7 @@ class PointsTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setStretchLastSection(True)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(lambda: self.ctrl.cmd_add_point(0.0, 0.0))
         self.btn_del.clicked.connect(self._delete_selected)
@@ -374,6 +383,7 @@ class LinksTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
         self.btn_add.clicked.connect(self._add_link_from_points)
         self.btn_del.clicked.connect(self._delete_selected)
@@ -583,6 +593,7 @@ class AnglesTab(QWidget):
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
         self.btn_add.setVisible(False)
         self.btn_add.setEnabled(False)
@@ -770,6 +781,7 @@ class SplinesTab(QWidget):
         self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
 
         self.btn_add.clicked.connect(self._add_spline_from_points)
@@ -879,6 +891,7 @@ class ConstraintsTab(QWidget):
         self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
 
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -1023,6 +1036,7 @@ class BodiesTab(QWidget):
         self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
+        _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
 
         self.btn_make.clicked.connect(self._make_body)
