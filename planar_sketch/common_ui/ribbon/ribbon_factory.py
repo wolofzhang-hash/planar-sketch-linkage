@@ -21,8 +21,8 @@ class _CompatPanel(QWidget):
         super().__init__(parent)
         self.title = title
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(4, 2, 4, 2)
-        self._layout.setSpacing(2)
+        self._layout.setContentsMargins(2, 0, 2, 0)
+        self._layout.setSpacing(1)
 
     def addLargeButton(self, text: str, icon):
         btn = QToolButton(self)
@@ -42,8 +42,8 @@ class _CompatCategory(QWidget):
         super().__init__(parent)
         self.title = title
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(4, 2, 4, 2)
-        self._layout.setSpacing(4)
+        self._layout.setContentsMargins(2, 0, 2, 0)
+        self._layout.setSpacing(1)
 
     def addPanel(self, title: str):
         panel = _CompatPanel(title, self)
@@ -57,8 +57,8 @@ class _CompatRibbonBar(QMenuBar):
         self._tabs = QTabWidget(self)
         self._tabs.setDocumentMode(True)
         self.setNativeMenuBar(False)
-        self.setMinimumHeight(82)
-        self.setMaximumHeight(88)
+        self.setMinimumHeight(92)
+        self.setMaximumHeight(100)
         self.setLayout(QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().addWidget(self._tabs)
@@ -89,17 +89,49 @@ def _build_bar(parent) -> QMenuBar:
 
 
 
-def apply_compact_ribbon_style(ribbonbar: QMenuBar) -> None:
+def _hide_or_soften_brand_block(ribbonbar: QMenuBar) -> None:
+    brand_widgets: list[QWidget] = []
+
+    for label in ribbonbar.findChildren(QLabel):
+        if "pyqtribbon" in label.text().strip().lower():
+            brand_widgets.append(label)
+
+    for button in ribbonbar.findChildren(QToolButton):
+        if "pyqtribbon" in button.text().strip().lower():
+            brand_widgets.append(button)
+
+    hidden = False
+    for widget in brand_widgets:
+        widget.setVisible(False)
+        parent = widget.parentWidget()
+        if parent is not None:
+            parent.setMaximumWidth(0)
+            parent.setMinimumWidth(0)
+        hidden = True
+
+    if not hidden:
+        for label in ribbonbar.findChildren(QLabel):
+            text = label.text().strip()
+            if not text:
+                continue
+            if text.lower() in {"ribbon", "application"}:
+                label.setStyleSheet("font-size: 7px; color: #9a9a9a; padding: 0px; margin: 0px;")
+
+
+def apply_ribbon_style(ribbonbar: QMenuBar) -> None:
+    apply_ribbon_qss(ribbonbar)
+
     tab_font = QFont()
     tab_font.setPointSize(12)
     for tabbar in ribbonbar.findChildren(QTabBar):
         tabbar.setFont(tab_font)
-        tabbar.setMinimumHeight(20)
+        tabbar.setMinimumHeight(24)
+        tabbar.setMaximumHeight(26)
 
     button_font = QFont()
-    button_font.setPointSize(9)
+    button_font.setPointSize(10)
     for button in ribbonbar.findChildren(QToolButton):
-        button.setIconSize(QSize(22, 22))
+        button.setIconSize(QSize(24, 24))
         button.setFont(button_font)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
@@ -109,13 +141,9 @@ def apply_compact_ribbon_style(ribbonbar: QMenuBar) -> None:
         label.setFont(label_font)
         label.setContentsMargins(0, 0, 0, 0)
 
-    # Hide the default application button (usually shown as "PyQtRibbon") so
-    # the tab row starts cleanly from the first tab.
-    for button in ribbonbar.findChildren(QToolButton):
-        if button.text().strip() == "PyQtRibbon":
-            button.hide()
-
-    ribbonbar.setMaximumHeight(84)
+    _hide_or_soften_brand_block(ribbonbar)
+    ribbonbar.setMinimumHeight(92)
+    ribbonbar.setMaximumHeight(100)
 
 def _sync_action_to_button(action: QAction, btn: QToolButton) -> None:
     btn.setEnabled(action.isEnabled())
@@ -136,7 +164,6 @@ def _apply_action_state(action: QAction, btn: QToolButton) -> None:
 def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: RibbonIconConfig | None = None) -> RibbonBuildResult:
     icon_config = icon_config or RibbonIconConfig()
     ribbon = _build_bar(mainwindow)
-    apply_ribbon_qss(ribbon)
     result = RibbonBuildResult(ribbon=ribbon)
 
     for category_spec in spec.categories:
@@ -157,5 +184,5 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
 
-    apply_compact_ribbon_style(ribbon)
+    apply_ribbon_style(ribbon)
     return result
