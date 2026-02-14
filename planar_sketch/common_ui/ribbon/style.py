@@ -31,6 +31,15 @@ def apply_compact_largeicon_style(ribbonbar: QMenuBar) -> None:
         if app_btn is not None:
             app_btn.hide()
 
+    if hasattr(ribbonbar, "applicationButton"):
+        app_btn = ribbonbar.applicationButton()
+        if app_btn is not None:
+            app_btn.hide()
+
+    for button in ribbonbar.findChildren(QToolButton):
+        if "pyqtribbon" in button.text().lower():
+            button.hide()
+
     def _apply_tab_style() -> None:
         tabbar_getter = getattr(ribbonbar, "tabBar", None)
         if not callable(tabbar_getter):

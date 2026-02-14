@@ -11,9 +11,6 @@ QTabBar {
 }
 
 QTabBar::tab {
-    font-size: 11px;
-    min-height: 22px;
-    max-height: 24px;
     padding: 0px 8px;
     margin: 0px 0px;
     color: #222222;
@@ -30,10 +27,8 @@ QTabBar::tab:!selected {
 }
 
 QToolButton {
-    font-size: 9px;
     padding: 0px 1px;
     margin: 0px;
-    min-height: 24px;
 }
 
 QWidget {
