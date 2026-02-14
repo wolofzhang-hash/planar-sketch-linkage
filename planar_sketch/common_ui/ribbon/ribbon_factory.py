@@ -118,7 +118,23 @@ def _hide_or_soften_brand_block(ribbonbar: QMenuBar) -> None:
                 label.setStyleSheet("font-size: 7px; color: #9a9a9a; padding: 0px; margin: 0px;")
 
 
-def apply_ribbon_style(ribbonbar: QMenuBar) -> None:
+def _hide_panel_launchers(ribbonbar: QMenuBar) -> None:
+    """Hide tiny panel launcher buttons (bottom-right corner markers)."""
+    for button in ribbonbar.findChildren(QToolButton):
+        if button.text().strip():
+            continue
+        if max(button.width(), button.height()) > 18:
+            continue
+        parent = button.parentWidget()
+        parent_name = parent.metaObject().className().lower() if parent is not None else ""
+        if "panel" not in parent_name and "group" not in parent_name:
+            continue
+        button.setVisible(False)
+        button.setMinimumSize(0, 0)
+        button.setMaximumSize(0, 0)
+
+
+def apply_ribbon_style(ribbonbar: QMenuBar, icon_config: RibbonIconConfig) -> None:
     apply_ribbon_qss(ribbonbar)
 
     tab_font = QFont()
@@ -131,7 +147,7 @@ def apply_ribbon_style(ribbonbar: QMenuBar) -> None:
     button_font = QFont()
     button_font.setPointSize(10)
     for button in ribbonbar.findChildren(QToolButton):
-        button.setIconSize(QSize(24, 24))
+        button.setIconSize(icon_config.icon_size)
         button.setFont(button_font)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
 
@@ -142,6 +158,7 @@ def apply_ribbon_style(ribbonbar: QMenuBar) -> None:
         label.setContentsMargins(0, 0, 0, 0)
 
     _hide_or_soften_brand_block(ribbonbar)
+    _hide_panel_launchers(ribbonbar)
     ribbonbar.setMinimumHeight(92)
     ribbonbar.setMaximumHeight(100)
 
@@ -184,5 +201,5 @@ def build(mainwindow, spec: RibbonSpec, registry: ActionRegistry, icon_config: R
                     _sync_action_to_button(action, btn)
                     result.action_buttons.setdefault(item.key, []).append(btn)
 
-    apply_ribbon_style(ribbon)
+    apply_ribbon_style(ribbon, icon_config)
     return result
