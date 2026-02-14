@@ -440,8 +440,6 @@ class MainWindow(QMainWindow):
             ("help", self.menu_help_action),
         ):
             action.setChecked(name == key)
-        if hasattr(self, "analysis_solver_widget"):
-            self.analysis_solver_widget.setVisible(key == "analysis")
 
     def _activate_sketch_mode(self) -> None:
         self._set_active_ribbon("sketch")
@@ -522,26 +520,11 @@ class MainWindow(QMainWindow):
         self.combo_analysis_solver = QComboBox(self.analysis_solver_widget)
         layout.addWidget(self.lbl_analysis_solver)
         layout.addWidget(self.combo_analysis_solver)
-        self._place_analysis_solver_widget()
+        self.toolbar_analysis.addWidget(self.analysis_solver_widget)
         self.combo_analysis_solver.currentIndexChanged.connect(self._on_analysis_solver_combo_changed)
         if hasattr(self.sim_panel, "combo_solver"):
             self.sim_panel.combo_solver.currentIndexChanged.connect(self._sync_analysis_solver_combo_from_panel)
         self._refresh_analysis_solver_options()
-
-    def _place_analysis_solver_widget(self) -> None:
-        """Place analysis right-area widget using optional capabilities + fallback."""
-        ribbon = getattr(self, "ribbonbar", None)
-        if ribbon is not None:
-            for method_name in ("addRightWidget", "add_right_widget", "appendRightWidget"):
-                method = getattr(ribbon, method_name, None)
-                if not callable(method):
-                    continue
-                try:
-                    method(self.analysis_solver_widget)
-                    return
-                except Exception:
-                    continue
-        self.statusBar().addPermanentWidget(self.analysis_solver_widget)
 
     def _refresh_analysis_solver_options(self) -> None:
         if not hasattr(self, "combo_analysis_solver"):
