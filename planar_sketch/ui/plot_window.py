@@ -26,11 +26,23 @@ from PyQt6.QtWidgets import (
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
+from .i18n import tr, get_ui_language
+
+
+def _lang(owner) -> str:
+    return get_ui_language(getattr(owner, "_ctrl", None), fallback="zh")
+
+
+def _tr(owner, key: str, **kwargs) -> str:
+    text = tr(_lang(owner), key)
+    return text.format(**kwargs) if kwargs else text
+
 
 class PlotWindow(QMainWindow):
-    def __init__(self, records: List[Dict[str, Any]]):
+    def __init__(self, records: List[Dict[str, Any]], ctrl=None):
         super().__init__()
-        self.setWindowTitle("Plot")
+        self._ctrl = ctrl
+        self.setWindowTitle(_tr(self, "plot.title"))
         self.resize(1000, 650)
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
@@ -202,7 +214,7 @@ class PlotWindow(QMainWindow):
 
     def plot(self):
         if not self._records:
-            QMessageBox.information(self, "Plot", "No sweep data yet. Run in the Simulation panel first.")
+            QMessageBox.information(self, _tr(self, "plot.title"), _tr(self, "plot.msg.no_sweep_data"))
             return
 
         x_key = self.cb_x.currentData()
@@ -210,7 +222,7 @@ class PlotWindow(QMainWindow):
             return
         y_keys = self._selected_y_keys()
         if not y_keys:
-            QMessageBox.information(self, "Plot", "Please check at least one Y series.")
+            QMessageBox.information(self, _tr(self, "plot.title"), _tr(self, "plot.msg.no_y_selected"))
             return
 
         self._last_x_key = str(x_key)
@@ -235,7 +247,7 @@ class PlotWindow(QMainWindow):
 
     def export_svg(self):
         if not self._records:
-            QMessageBox.information(self, "Export", "No data to export.")
+            QMessageBox.information(self, _tr(self, "export.title"), _tr(self, "plot.msg.no_data_export"))
             return
         if self._last_x_key is None:
             self.plot()
@@ -247,18 +259,18 @@ class PlotWindow(QMainWindow):
         try:
             self.fig.savefig(path, format="svg")
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+            QMessageBox.critical(self, _tr(self, "export.failed"), str(e))
 
     def export_csv(self):
         if not self._records:
-            QMessageBox.information(self, "Export", "No data to export.")
+            QMessageBox.information(self, _tr(self, "export.title"), _tr(self, "plot.msg.no_data_export"))
             return
         if self._last_x_key is None:
             self.plot()
         if self._last_x_key is None:
             return
         if not self._last_y_keys:
-            QMessageBox.information(self, "Export", "No Y series selected.")
+            QMessageBox.information(self, _tr(self, "export.title"), _tr(self, "plot.msg.no_y_export"))
             return
 
         path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV (*.csv)")
@@ -277,4 +289,4 @@ class PlotWindow(QMainWindow):
                         row.append(r.get(k))
                     w.writerow(row)
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+            QMessageBox.critical(self, _tr(self, "export.failed"), str(e))

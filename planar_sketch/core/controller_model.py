@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from .controller_common import *
+from .run_service import RunService
 
 
 class ControllerModel:
@@ -135,6 +136,12 @@ class ControllerModel:
             if self._pos_master is None:
                 return tr(lang, "status.point_on_spline_pick_point")
             return tr(lang, "status.point_on_spline_pick_spline").format(master=int(self._pos_master))
+        if self.mode == "PointSplineDist":
+            master = getattr(self, "_psd_master", None)
+            if master is None:
+                return tr(lang, "status.point_spline_dist_pick_point")
+            dist = float(getattr(self, "_psd_dist", 0.0))
+            return tr(lang, "status.point_spline_dist_pick_spline").format(master=int(master), dist=self.format_number(dist))
         if self.mode == "BackgroundImagePick":
             if len(self._background_pick_points) == 0:
                 return tr(lang, "status.background_pick_first")
@@ -361,6 +368,130 @@ class ControllerModel:
             return animation_tab.confirm_stop_replay(action)
         return True
 
+    def _case_run_manager_for_ui(self):
+        # Keep controller dirty-state logic aligned with the same project/session
+        # directory resolution used by the UI panels. This avoids controller-side
+        # dirty marking drifting away from the run/case directory used by
+        # Simulation / Animation / Synthesis tabs.
+        try:
+            return RunService(self).manager()
+        except Exception:
+            return None
+
+    def _clear_loaded_case_run_cache(self) -> None:
+        win = getattr(self, "win", None)
+        sim_panel = getattr(win, "sim_panel", None) if win else None
+        if sim_panel is None:
+            return
+        try:
+            sim_panel._records = []
+            sim_panel._last_run_data = None
+        except Exception:
+            pass
+        try:
+            anim = getattr(sim_panel, "animation_tab", None)
+            if anim is not None:
+                if hasattr(anim, "_clear_loaded_replay"):
+                    anim._clear_loaded_replay()
+                else:
+                    anim._frames = []
+                    anim._frame_index = 0
+                    anim._loaded_case_id = None
+                    if hasattr(anim, "pause_replay"):
+                        anim.pause_replay()
+        except Exception:
+            pass
+
+    def _refresh_case_state_ui(self) -> None:
+        win = getattr(self, "win", None)
+        sim_panel = getattr(win, "sim_panel", None) if win else None
+        try:
+            anim = getattr(sim_panel, "animation_tab", None)
+            if anim is not None and hasattr(anim, "refresh_cases"):
+                anim.refresh_cases()
+        except Exception:
+            pass
+
+    def _mark_cases_dirty_after_model_edit(self, *, clear_run_cache: bool = False) -> None:
+        """Mark all saved cases dirty after a geometry/topology edit.
+
+        Integrated rule set:
+        - case specs remain unchanged
+        - geometry edits mark cases as needing re-run
+        - saved runs can be cleared immediately
+        - loaded replay data is always dropped to prevent pose/spec mismatch
+        """
+        try:
+            self._model_edit_revision = int(getattr(self, "_model_edit_revision", 0)) + 1
+        except Exception:
+            pass
+
+        manager = self._case_run_manager_for_ui()
+        if manager is not None:
+            try:
+                dirty_case_ids = {str(info.name) for info in manager.list_cases()}
+            except Exception:
+                dirty_case_ids = set()
+            if clear_run_cache:
+                for case_name in list(dirty_case_ids):
+                    try:
+                        manager.delete_case_runs(case_name)
+                    except Exception:
+                        pass
+        else:
+            dirty_case_ids = set(getattr(self, "_dirty_case_ids", set()) or set())
+
+        self._dirty_case_ids = dirty_case_ids
+        self._cases_dirty_by_model_edit = bool(dirty_case_ids)
+        self._clear_loaded_case_run_cache()
+        self._refresh_case_state_ui()
+
+        win = getattr(self, "win", None)
+        try:
+            if hasattr(win, "statusBar") and win.statusBar():
+                msg = "Model changed: saved case runs cleared. Re-run needed." if clear_run_cache else "Model changed: saved cases marked for re-run."
+                win.statusBar().showMessage(msg)
+        except Exception:
+            pass
+
+    def mark_cases_clean_after_run(self, case_name: Optional[str] = None) -> None:
+        """Mark saved case results fresh again after a successful run."""
+        try:
+            self._last_run_completed_revision = int(getattr(self, "_model_edit_revision", 0))
+            dirty_ids = set(getattr(self, "_dirty_case_ids", set()) or set())
+            if case_name:
+                dirty_ids.discard(str(case_name))
+            else:
+                dirty_ids.clear()
+            self._dirty_case_ids = dirty_ids
+            self._cases_dirty_by_model_edit = bool(dirty_ids)
+            self._refresh_case_state_ui()
+        except Exception:
+            pass
+
+    def case_needs_rerun(self, case_name: Optional[str]) -> bool:
+        try:
+            if not case_name:
+                return bool(getattr(self, "_cases_dirty_by_model_edit", False))
+            dirty_ids = set(getattr(self, "_dirty_case_ids", set()) or set())
+            return str(case_name) in dirty_ids
+        except Exception:
+            return False
+
+    def cases_need_rerun(self) -> bool:
+        try:
+            return bool(getattr(self, "_cases_dirty_by_model_edit", False))
+        except Exception:
+            return False
+
+    def _after_geometry_model_edit(self, *, clear_run_cache: bool = True, keep_selection: bool = True) -> None:
+        try:
+            self._mark_cases_dirty_after_model_edit(clear_run_cache=clear_run_cache)
+        except Exception:
+            pass
+        if self.panel:
+            self.panel.defer_refresh_all(keep_selection=keep_selection)
+
     def compute_body_rigid_edges(self, point_ids: List[int]) -> List[Tuple[int, int, float]]:
         pts = [pid for pid in point_ids if pid in self.points]
         if len(pts) < 2:
@@ -381,6 +512,7 @@ class ControllerModel:
         drag_target_pid: Optional[int] = None,
         drag_target_xy: Optional[Tuple[float, float]] = None,
         drag_alpha: float = 0.45,
+        use_drive_constraints: bool = True,
     ):
         """Solve geometric constraints (interactive PBD backend).
 
@@ -406,30 +538,36 @@ class ControllerModel:
             pl["over"] = False
         for ps in self.point_splines.values():
             ps["over"] = False
+        for pd in getattr(self, "point_spline_dists", {}).values():
+            pd["over"] = False
 
         body_edges: List[Tuple[int, int, float]] = []
         for b in self.bodies.values():
             body_edges.extend(b.get("rigid_edges", []))
 
         driven_pids: set[int] = set()
-        active_drivers = self._active_drivers()
-        active_outputs = self._active_outputs()
+        active_drivers = self._active_drivers() if bool(use_drive_constraints) else []
+        active_outputs = self._active_outputs() if bool(use_drive_constraints) else []
         drive_sources: List[Dict[str, Any]] = []
-        if active_drivers:
-            for drv in active_drivers:
-                entry = dict(drv)
-                entry["mode"] = "driver"
-                drive_sources.append(entry)
-        elif active_outputs:
-            for out in active_outputs:
-                entry = {
-                    "mode": "output",
-                    "type": "angle",
-                    "pivot": out.get("pivot"),
-                    "tip": out.get("tip"),
-                    "rad": out.get("rad", 0.0),
-                }
-                drive_sources.append(entry)
+        if bool(use_drive_constraints):
+            if active_drivers:
+                for drv in active_drivers:
+                    entry = dict(drv)
+                    entry["mode"] = "driver"
+                    drive_sources.append(entry)
+            elif active_outputs:
+                # Outputs are used as a fallback pose reference only during normal
+                # solve/analysis. During direct geometry editing (dragging/moving points),
+                # the editor should stay free and not be locked by saved IO/case setup.
+                for out in active_outputs:
+                    entry = {
+                        "mode": "output",
+                        "type": "angle",
+                        "pivot": out.get("pivot"),
+                        "tip": out.get("tip"),
+                        "rad": out.get("rad", 0.0),
+                    }
+                    drive_sources.append(entry)
 
         for drv in drive_sources:
             if str(drv.get("type", "angle")) == "translation":
@@ -608,6 +746,35 @@ class ControllerModel:
                 )
                 if not ok:
                     ps["over"] = True
+
+            # (3c) Point-to-spline distance constraints (roller cam contact)
+            for pdid, pd in getattr(self, "point_spline_dists", {}).items():
+                if not bool(pd.get("enabled", True)):
+                    continue
+                p_id = int(pd.get("p", -1)); s_id = int(pd.get("s", -1))
+                if p_id not in self.points or s_id not in self.splines:
+                    continue
+                spline = self.splines[s_id]
+                cp_ids = [pid for pid in spline.get("points", []) if pid in self.points]
+                if len(cp_ids) < 2:
+                    continue
+                pp = self.points[p_id]
+                cps = [self.points[cid] for cid in cp_ids]
+                lock_p = bool(pp.get("fixed", False)) or (drag_pid == p_id) or (p_id in driven_pids)
+                lock_controls = [bool(self.points[cid].get("fixed", False)) or (drag_pid == cid) or (cid in driven_pids) for cid in cp_ids]
+                ok, new_hint, _d = ConstraintSolver.solve_point_spline_distance(
+                    pp,
+                    cps,
+                    float(pd.get("dist", 0.0)),
+                    lock_p,
+                    lock_controls,
+                    hint_seg=int(pd.get("hint_seg", -1)),
+                    tol=1e-6,
+                    closed=bool(spline.get("closed", False)),
+                )
+                pd["hint_seg"] = int(new_hint)
+                if not ok:
+                    pd["over"] = True
 
             # (3) Rigid-body edges
             for (i, j, L) in body_edges:
@@ -1127,8 +1294,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         def undo():
             self.parameters.params.clear()
@@ -1136,8 +1302,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Param {name}"))
 
@@ -1152,8 +1317,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         def undo():
             self.parameters.params.clear()
@@ -1161,8 +1325,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         self.stack.push(Command(do=do, undo=undo, desc=f"Delete Param {name}"))
 
@@ -1177,8 +1340,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         def undo():
             self.parameters.params.clear()
@@ -1186,8 +1348,7 @@ class ControllerModel:
             self.recompute_from_parameters()
             self.solve_constraints(iters=30)
             self.update_graphics()
-            if self.panel:
-                self.panel.defer_refresh_all(keep_selection=True)
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         self.stack.push(Command(do=do, undo=undo, desc=f"Rename Param {old}->{new}"))
 
@@ -1224,6 +1385,7 @@ class ControllerModel:
             apply_text("y", "y_expr", y_text)
             self.solve_constraints(iters=30)
             self.update_graphics()
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         def undo():
             p["x"] = before.get("x", p["x"])
@@ -1232,6 +1394,7 @@ class ControllerModel:
             p["y_expr"] = before.get("y_expr", "") or ""
             self.solve_constraints(iters=30)
             self.update_graphics()
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Point Expr P{pid}"))
 
@@ -1263,12 +1426,14 @@ class ControllerModel:
                     l["L_expr_error_msg"] = str(err)
             self.solve_constraints(iters=30)
             self.update_graphics()
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         def undo():
             l["L"] = before.get("L", l["L"])
             l["L_expr"] = before.get("L_expr", "") or ""
             self.solve_constraints(iters=30)
             self.update_graphics()
+            self._after_geometry_model_edit(clear_run_cache=True, keep_selection=True)
 
         self.stack.push(Command(do=do, undo=undo, desc=f"Set Link Expr L{lid}"))
 
@@ -1591,6 +1756,9 @@ class ControllerModel:
         to_del_ps = [psid for psid, ps in self.point_splines.items() if self._safe_int(ps.get("p")) == pid]
         for psid in to_del_ps:
             self._remove_point_spline(psid)
+        to_del_pd = [pdid for pdid, pd in getattr(self, "point_spline_dists", {}).items() if self._safe_int(pd.get("p")) == pid]
+        for pdid in to_del_pd:
+            self._remove_point_spline_dist(pdid)
         to_del_spl = [sid for sid, s in self.splines.items() if pid in s.get("points", [])]
         for sid in to_del_spl:
             self._remove_spline(sid)
@@ -1785,6 +1953,9 @@ class ControllerModel:
         to_del_ps = [psid for psid, ps in self.point_splines.items() if int(ps.get("s", -1)) == sid]
         for psid in to_del_ps:
             self._remove_point_spline(psid)
+        to_del_pd = [pdid for pdid, pd in getattr(self, "point_spline_dists", {}).items() if int(pd.get("s", -1)) == sid]
+        for pdid in to_del_pd:
+            self._remove_point_spline_dist(pdid)
         del self.splines[sid]
         if self.selected_spline_id == sid:
             self.selected_spline_id = None
@@ -1813,8 +1984,49 @@ class ControllerModel:
         if self.selected_point_spline_id == psid:
             self.selected_point_spline_id = None
 
+    def _create_point_spline_dist(
+        self,
+        pdid: int,
+        p: int,
+        s: int,
+        dist: float,
+        hidden: bool,
+        enabled: bool = True,
+        hint_seg: int = -1,
+    ):
+        self.point_spline_dists[pdid] = {
+            "p": int(p),
+            "s": int(s),
+            "dist": float(dist),
+            "hint_seg": int(hint_seg),
+            "hidden": bool(hidden),
+            "enabled": bool(enabled),
+            "over": False,
+        }
+        it = PointSplineDistItem(pdid, self)
+        self.point_spline_dists[pdid]["item"] = it
+        self.scene.addItem(it)
+
+    def _remove_point_spline_dist(self, pdid: int):
+        if pdid not in self.point_spline_dists:
+            return
+        pd = self.point_spline_dists[pdid]
+        try:
+            self.scene.removeItem(pd["item"])
+        except Exception:
+            pass
+        del self.point_spline_dists[pdid]
+        if getattr(self, "selected_point_spline_dist_id", None) == pdid:
+            self.selected_point_spline_dist_id = None
+
     def _create_link(self, lid: int, i: int, j: int, L: float, hidden: bool):
         self.links[lid] = {"i": int(i), "j": int(j), "L": float(L), "hidden": bool(hidden), "over": False, "ref": False}
+        try:
+            solid = SolidLinkItem(lid, self)
+            self.links[lid]["solid_item"] = solid
+            self.scene.addItem(solid)
+        except Exception:
+            pass
         it = LinkItem(lid, self)
         self.links[lid]["item"] = it
         self.scene.addItem(it)
@@ -1825,6 +2037,11 @@ class ControllerModel:
     def _remove_link(self, lid: int):
         if lid not in self.links: return
         l = self.links[lid]
+        try:
+            if "solid_item" in l and l["solid_item"] is not None:
+                self.scene.removeItem(l["solid_item"])
+        except Exception:
+            pass
         self.scene.removeItem(l["item"]); self.scene.removeItem(l["marker"])
         del self.links[lid]
         if self.selected_link_id == lid:
@@ -1852,9 +2069,21 @@ class ControllerModel:
             color_name = "Blue"
         self.bodies[bid] = {"name": str(name), "points": pts, "hidden": bool(hidden), "color_name": color_name}
         self.bodies[bid]["rigid_edges"] = self.compute_body_rigid_edges(pts)
+        try:
+            solid_item = BodySolidItem(bid, self)
+            self.bodies[bid]["solid_item"] = solid_item
+            self.scene.addItem(solid_item)
+        except Exception:
+            pass
 
     def _remove_body(self, bid: int):
         if bid not in self.bodies: return
+        b = self.bodies[bid]
+        try:
+            if "solid_item" in b and b["solid_item"] is not None:
+                self.scene.removeItem(b["solid_item"])
+        except Exception:
+            pass
         del self.bodies[bid]
         if self.selected_body_id == bid:
             self.selected_body_id = None

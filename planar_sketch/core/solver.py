@@ -9,7 +9,14 @@ from __future__ import annotations
 import math
 from typing import Dict, Any
 
-from .geometry import angle_between, clamp_angle_rad, rot2, build_spline_samples, closest_point_on_samples
+from .geometry import (
+    angle_between,
+    clamp_angle_rad,
+    rot2,
+    build_spline_samples,
+    closest_point_on_samples,
+    closest_point_on_samples_hint,
+)
 
 
 class ConstraintSolver:
@@ -288,3 +295,79 @@ class ConstraintSolver:
             control_points[idx]["x"] = control_points[idx]["x"] - (w_i / w) * dx
             control_points[idx]["y"] = control_points[idx]["y"] - (w_i / w) * dy
         return True
+
+    @staticmethod
+    def solve_point_spline_distance(
+        p: Dict[str, Any],
+        control_points: list[Dict[str, Any]],
+        target_dist: float,
+        lock_p: bool,
+        lock_controls: list[bool],
+        hint_seg: int = -1,
+        tol: float = 1e-8,
+        samples_per_segment: int = 16,
+        closed: bool = False,
+    ) -> tuple[bool, int, float]:
+        """Enforce distance from point P to a spline equals target_dist.
+
+        Returns (ok, new_hint_seg, current_dist).
+
+        Notes:
+        - This models a roller-follower contact when P is the roller center and target_dist is roller radius.
+        - hint_seg helps avoid jumping to a different local minimum on closed curves.
+        """
+        if len(control_points) < 2:
+            return True, int(hint_seg) if hint_seg is not None else -1, 0.0
+
+        pts = [(float(cp["x"]), float(cp["y"])) for cp in control_points]
+        samples = build_spline_samples(pts, samples_per_segment=samples_per_segment, closed=closed)
+        if len(samples) < 2:
+            return True, int(hint_seg) if hint_seg is not None else -1, 0.0
+
+        px, py = float(p["x"]), float(p["y"])
+        cx, cy, seg_idx, _t_seg, dist2 = closest_point_on_samples_hint(px, py, samples, hint_seg=int(hint_seg or -1), seg_window=3)
+        d = math.sqrt(max(0.0, dist2))
+
+        err = d - float(target_dist)
+        if abs(err) <= tol:
+            return True, int(seg_idx), d
+
+        if lock_p and all(lock_controls):
+            return False, int(seg_idx), d
+
+        # Direction from closest point to P
+        vx = px - cx
+        vy = py - cy
+        vlen = math.hypot(vx, vy)
+        if vlen < 1e-12:
+            # Degenerate; choose a stable direction.
+            vx, vy = 1.0, 0.0
+            vlen = 1.0
+        nx, ny = vx / vlen, vy / vlen
+
+        # Correction moves P along the normal to satisfy distance.
+        # PBD-style weighting: distribute between P and (optionally) spline control points.
+        w_p = 0.0 if lock_p else 1.0
+        w_ctrl = 0.0 if all(lock_controls) else 0.25  # keep spline mostly rigid
+        w = w_p + w_ctrl
+        if w <= 0.0:
+            return False, int(seg_idx), d
+
+        dx = -err * nx
+        dy = -err * ny
+
+        if w_p > 0.0:
+            p["x"] = px + (w_p / w) * dx
+            p["y"] = py + (w_p / w) * dy
+
+        if w_ctrl > 0.0 and len(control_points) >= 2:
+            # Spread small opposite correction to all unlocked control points (keeps continuity).
+            # This avoids needing segment->control weight mapping, and works well if the spline is part of a rigid body.
+            free = [idx for idx, lk in enumerate(lock_controls) if not lk]
+            if free:
+                per = (w_ctrl / w) / float(len(free))
+                for idx in free:
+                    control_points[idx]["x"] = float(control_points[idx]["x"]) - per * dx
+                    control_points[idx]["y"] = float(control_points[idx]["y"]) - per * dy
+
+        return True, int(seg_idx), d

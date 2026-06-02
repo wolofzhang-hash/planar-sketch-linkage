@@ -12,23 +12,7 @@ from typing import Any, Dict, Optional, Tuple
 import sympy as sp
 
 from .expression import eval_signal_expression as eval_signal_expression_impl
-
-
-_ALLOWED_PARAM_FUNCS: Dict[str, Any] = {
-    # Basic math
-    "sin": sp.sin,
-    "cos": sp.cos,
-    "tan": sp.tan,
-    "asin": sp.asin,
-    "acos": sp.acos,
-    "atan": sp.atan,
-    "sqrt": sp.sqrt,
-    "abs": sp.Abs,
-    "min": sp.Min,
-    "max": sp.Max,
-    "pi": sp.pi,
-    "E": sp.E,
-}
+from .expression_registry import PARAMETER_ALLOWED_FUNCTIONS
 
 
 def eval_param_expression(expr: str, params: Dict[str, float]) -> Tuple[Optional[float], Optional[str]]:
@@ -40,7 +24,7 @@ def eval_param_expression(expr: str, params: Dict[str, float]) -> Tuple[Optional
     if not expr:
         return None, "Empty expression"
 
-    locals_map: Dict[str, Any] = dict(_ALLOWED_PARAM_FUNCS)
+    locals_map: Dict[str, Any] = dict(PARAMETER_ALLOWED_FUNCTIONS)
     for name in params.keys():
         locals_map[name] = sp.Symbol(name)
 

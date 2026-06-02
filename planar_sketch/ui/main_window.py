@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 import traceback
 from typing import Optional
@@ -13,17 +14,40 @@ from PyQt6.QtCore import Qt, QEvent, QSignalBlocker, QCoreApplication, QUrl, QTi
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut, QIcon
 from PyQt6.QtWidgets import (
     QMainWindow, QGraphicsScene, QDockWidget, QStatusBar,
-    QFileDialog, QMessageBox, QInputDialog, QStyle, QToolButton, QLabel, QComboBox, QWidget, QHBoxLayout
+    QFileDialog, QMessageBox, QInputDialog, QStyle, QToolButton, QLabel, QComboBox, QWidget, QHBoxLayout,
+    QScrollArea, QApplication
 )
 
 from ..core.controller import SketchController
 from .view import SketchView
 from .panel import SketchPanel
-from .items import PointItem, LinkItem, AngleItem, SplineItem, PointSplineItem
+from .items import PointItem, LinkItem, AngleItem, SplineItem, PointSplineItem, PointSplineDistItem
 from .sim_panel import SimulationPanel
 from .settings_dialog import SettingsDialog
 from .grid_settings_dialog import GridSettingsDialog
-from .i18n import tr
+from .i18n import tr, set_ui_language
+from ..version import APP_VERSION
+
+
+def _lang(owner) -> str:
+    try:
+        lang = getattr(getattr(owner, "ctrl", None), "ui_language", None)
+        if lang in ("zh", "en"):
+            return lang
+    except Exception:
+        pass
+    return "en"
+
+
+def _tr(owner, key: str, default: str | None = None, **kwargs) -> str:
+    text = tr(_lang(owner), key, default)
+    if kwargs:
+        try:
+            return text.format(**kwargs)
+        except Exception:
+            return text
+    return text
+from .intel_dialog import IntelligentDesignDialog
 from ..common_ui.ribbon.action_registry import ActionRegistry
 from ..common_ui.ribbon.icon_manager import assign_default_icons
 from ..common_ui.ribbon.ribbon_factory import build
@@ -33,24 +57,44 @@ from ..common_ui.ribbon.ribbon_spec import build_planar_ribbon_spec
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Planar Sketch v2.9.0")
+        self.setWindowTitle(f"Planar Sketch v{APP_VERSION}")
         icon_path = Path(__file__).resolve().parents[1] / "assets" / "app_icon.svg"
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
         self.resize(1400, 900)
         self.scene = QGraphicsScene(-2000, -2000, 4000, 4000)
         self.ctrl = SketchController(self.scene, self)
+
+        # Keep controller language in sync with application language.
+        # The application language is set early (app.py) and also used by i18n helpers.
+        try:
+            app_lang = QApplication.instance().property("ui_language")
+            if app_lang in ("zh", "en"):
+                self.ctrl.ui_language = app_lang
+        except Exception:
+            pass
         self.view = SketchView(self.scene, self.ctrl)
         self.setCentralWidget(self.view)
         self.dock = QDockWidget("Sketch", self)
         self.panel = SketchPanel(self.ctrl)
-        self.dock.setWidget(self.panel)
+        self.dock.setWidget(self._wrap_in_scrollarea(self.panel))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock)
         # Simulation dock (driver/measurements, I/O curve export)
         self.sim_dock = QDockWidget("Analysis", self)
         self.sim_panel = SimulationPanel(self.ctrl)
-        self.sim_dock.setWidget(self.sim_panel)
+        self.sim_dock.setWidget(self._wrap_in_scrollarea(self.sim_panel))
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.sim_dock)
+        try:
+            self.panel.tabs.currentChanged.connect(lambda _i: self._sync_right_dock_width_for_current_context())
+            self.sim_panel.tabs.currentChanged.connect(lambda _i: self._sync_right_dock_width_for_current_context())
+            self.dock.topLevelChanged.connect(lambda _f: self._on_right_dock_top_level_changed())
+            self.sim_dock.topLevelChanged.connect(lambda _f: self._on_right_dock_top_level_changed())
+            self.dock.dockLocationChanged.connect(lambda _a: self._on_right_dock_location_changed())
+            self.sim_dock.dockLocationChanged.connect(lambda _a: self._on_right_dock_location_changed())
+        except Exception:
+            pass
+        # Keep the right dock slim by default (more space for the modeling canvas)
+        self._setup_dock_sizes()
         self.setStatusBar(QStatusBar())
         self.statusBar().setVisible(True)
         self.statusBar().show()
@@ -62,10 +106,120 @@ class MainWindow(QMainWindow):
         self.apply_language()
         self._set_dock_visibility(active="sketch")
         self.menuBar().setVisible(True)
-        self.file_new(prompt_for_folder=False)
+        self._new_blank_project_startup()
         self.update_undo_redo_actions()
         self.ctrl.update_status()
         self.scene.selectionChanged.connect(self._scene_selection_changed)
+
+    @staticmethod
+    def _wrap_in_scrollarea(w: QWidget) -> QScrollArea:
+        """Keep all dock controls reachable even when the dock is short."""
+        sa = QScrollArea()
+        sa.setWidgetResizable(True)
+        sa.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        sa.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        sa.setWidget(w)
+        return sa
+
+    def _setup_dock_sizes(self):
+        """Keep the right docks slim by default.
+
+        Dock contents are wrapped in a QScrollArea, so controls remain
+        reachable even when docks are narrow.
+        """
+        for d in (self.dock, self.sim_dock):
+            d.setMinimumWidth(320)
+            d.setMaximumWidth(980)
+
+        # Apply after layout is ready.
+        def _apply():
+            try:
+                self.resizeDocks([self.dock, self.sim_dock], [360, 720], Qt.Orientation.Horizontal)
+            except Exception:
+                pass
+
+        QTimer.singleShot(0, _apply)
+
+
+    def _get_preferred_right_dock_width_for_current_context(self) -> int:
+        """Return a context-aware preferred width for the visible right dock."""
+        # Keep a safe default and clamp later.
+        preferred = 360
+        try:
+            if self.sim_dock.isVisible():
+                preferred = int(getattr(self.sim_panel, "preferred_panel_width", lambda: 500)() or 500)
+            elif self.dock.isVisible():
+                preferred = int(getattr(self.panel, "preferred_panel_width", lambda: 320)() or 320)
+        except Exception:
+            pass
+        return max(320, min(920, preferred))
+
+    def _on_right_dock_top_level_changed(self) -> None:
+        """Avoid fighting Qt layout while docks are floating/reattaching."""
+        try:
+            QTimer.singleShot(0, lambda: self._sync_right_dock_width_for_current_context(force=False))
+        except Exception:
+            pass
+
+    def _on_right_dock_location_changed(self) -> None:
+        """Keep analysis/sketch docks in right area after drag-reattach."""
+        try:
+            # If both docks are docked and one ended up outside the right area,
+            # reattach it to the right and then apply width sync on the next tick.
+            for d in (self.dock, self.sim_dock):
+                if d is None or d.isFloating():
+                    continue
+                area = self.dockWidgetArea(d)
+                if area != Qt.DockWidgetArea.RightDockWidgetArea:
+                    self.removeDockWidget(d)
+                    self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, d)
+            QTimer.singleShot(0, lambda: self._sync_right_dock_width_for_current_context(force=True))
+        except Exception:
+            pass
+
+    def _sync_right_dock_width_for_current_context(self, force: bool = False) -> None:
+        """Phase A: keep the right dock readable but not overly wide.
+
+        Applies a context-aware minimum width to the currently visible dock and
+        nudges dock sizes when needed. This does not force a fixed width and
+        therefore still allows user resizing.
+        """
+        try:
+            active = self.sim_dock if self.sim_dock.isVisible() else self.dock
+        except Exception:
+            return
+        if active is None:
+            return
+        try:
+            if active.isFloating():
+                return
+            if self.dockWidgetArea(active) != Qt.DockWidgetArea.RightDockWidgetArea:
+                return
+        except Exception:
+            return
+
+        target = self._get_preferred_right_dock_width_for_current_context()
+        # Keep both docks within sane bounds but only the active one gets the
+        # context-specific minimum. The inactive one falls back to the base min.
+        for d in (self.dock, self.sim_dock):
+            try:
+                d.setMaximumWidth(980)
+                d.setMinimumWidth(target if d is active else 320)
+            except Exception:
+                pass
+
+        try:
+            cur_w = int(active.width())
+        except Exception:
+            cur_w = target
+
+        # Only resize when forced or the active dock is narrower than needed.
+        if force or cur_w < target:
+            try:
+                # Resize only the active dock; Qt will take space from center/other dock.
+                self.resizeDocks([active], [target], Qt.Orientation.Horizontal)
+            except Exception:
+                pass
 
     def _scene_selection_changed(self):
         if self.panel.sync_guard: return
@@ -80,7 +234,7 @@ class MainWindow(QMainWindow):
                 # The Qt scene can already be destroyed while a queued
                 # selectionChanged signal is still being delivered.
                 return
-            pids, lids, aids, sids, psids = [], [], [], [], []
+            pids, lids, aids, sids, psids, pdids = [], [], [], [], [], []
             for it in items:
                 if isinstance(it, PointItem) and (not self.ctrl.is_point_effectively_hidden(it.pid)) and self.ctrl.show_points_geometry:
                     pids.append(it.pid)
@@ -92,12 +246,15 @@ class MainWindow(QMainWindow):
                     sids.append(it.sid)
                 elif isinstance(it, PointSplineItem):
                     psids.append(it.psid)
+                elif isinstance(it, PointSplineDistItem):
+                    pdids.append(it.pdid)
             self.ctrl.selected_point_ids = set(pids)
             self.ctrl.selected_point_id = pids[-1] if pids else None
             self.ctrl.selected_link_id = lids[-1] if lids else None
             self.ctrl.selected_angle_id = aids[-1] if aids else None
             self.ctrl.selected_spline_id = sids[-1] if sids else None
             self.ctrl.selected_point_spline_id = psids[-1] if psids else None
+            self.ctrl.selected_point_spline_dist_id = pdids[-1] if pdids else None
             if (self.ctrl.selected_link_id is not None) or (self.ctrl.selected_angle_id is not None) or (self.ctrl.selected_spline_id is not None):
                 self.ctrl.selected_body_id = None
             self.panel.select_points_multi(sorted(self.ctrl.selected_point_ids))
@@ -126,7 +283,8 @@ class MainWindow(QMainWindow):
         self.menu_file_action.setCheckable(True)
         self.menu_file_action.triggered.connect(lambda: self._set_active_ribbon("file"))
         self.act_file_new = QAction("", self)
-        self.act_file_new.triggered.connect(self.file_new)
+        # New project should be instant (no folder prompt). Use Save As to choose location.
+        self.act_file_new.triggered.connect(lambda: self.file_new(prompt_for_folder=False))
         self.act_file_open = QAction("", self)
         self.act_file_open.triggered.connect(self.file_open)
         self.act_file_save = QAction("", self)
@@ -170,6 +328,10 @@ class MainWindow(QMainWindow):
         self.act_settings = QAction("", self)
         self.act_settings.triggered.connect(self.open_settings)
 
+        # Intelligent design (recommend + insert templates)
+        self.act_intel_design = QAction("", self)
+        self.act_intel_design.triggered.connect(self.open_intelligent_design)
+
         self.menu_sketch_action = mb.addAction("")
         self.menu_sketch_action.setCheckable(True)
         self.menu_sketch_action.triggered.connect(self._activate_sketch_mode)
@@ -206,6 +368,12 @@ class MainWindow(QMainWindow):
         self.act_dm.triggered.connect(lambda c: self._toggle_dm(c))
         self.act_body_color = QAction("", self, checkable=True); self.act_body_color.setChecked(True)
         self.act_body_color.triggered.connect(lambda c: self._toggle_body_coloring(c))
+        self.act_body_wireframe = QAction("", self, checkable=True)
+        self.act_body_solid = QAction("", self, checkable=True)
+        self.act_body_hybrid = QAction("", self, checkable=True)
+        self.act_body_wireframe.triggered.connect(lambda _=False: self._set_body_display_mode("wireframe"))
+        self.act_body_solid.triggered.connect(lambda _=False: self._set_body_display_mode("solid"))
+        self.act_body_hybrid.triggered.connect(lambda _=False: self._set_body_display_mode("hybrid"))
         self.act_splines = QAction("", self, checkable=True); self.act_splines.setChecked(True)
         self.act_splines.triggered.connect(lambda c: self._toggle_splines(c))
         self.act_load_arrows = QAction("", self, checkable=True); self.act_load_arrows.setChecked(True)
@@ -321,14 +489,21 @@ class MainWindow(QMainWindow):
             self._set_dock_visibility(active="sketch")
         elif current_key == "analysis":
             self._set_dock_visibility(active="analysis")
-            self._show_analysis_simulation_tab()
+            # Do NOT force a specific analysis sub-tab here.
+            # Users (and programmatic handoffs) may intentionally select a different tab
+            # such as Intelligent Synthesis. Forcing Simulation here would override that.
 
     def _show_analysis_simulation_tab(self) -> None:
         tabs = getattr(self.sim_panel, "tabs", None)
         if tabs is None:
             return
-        if tabs.count() > 3:
-            tabs.setCurrentIndex(3)
+        sim_tab = getattr(self.sim_panel, "simulation_tab", None)
+        if sim_tab is not None:
+            tabs.setCurrentWidget(sim_tab)
+            return
+        # Fallback (should not happen): best-effort index.
+        if tabs.count() > 4:
+            tabs.setCurrentIndex(4)
 
     def _rebuild_ribbon(self) -> None:
         active_key = getattr(self, "_active_ribbon", "home")
@@ -344,12 +519,13 @@ class MainWindow(QMainWindow):
                 for name in (
                     "act_file_new", "act_file_open", "act_file_save", "act_file_save_as",
                     "act_undo", "act_redo", "act_delete_selected", "act_repeat_model", "act_cancel_model", "act_settings",
+                    "act_intel_design",
                     "act_create_point", "act_create_line", "act_create_spline",
                     "act_boundary_constraints", "act_boundary_loads", "act_boundary_add_force", "act_boundary_add_torque",
                     "act_boundary_clear_loads", "act_boundary_fix",
                     "act_analysis_play", "act_analysis_stop", "act_analysis_reset_pose", "act_analysis_check",
                     "act_analysis_export", "act_analysis_save_run",
-                    "act_pm", "act_dm", "act_body_color", "act_splines", "act_load_arrows",
+                    "act_pm", "act_dm", "act_body_color", "act_body_wireframe", "act_body_solid", "act_body_hybrid", "act_splines", "act_load_arrows",
                     "act_preset_show_all", "act_preset_points_only", "act_preset_links_only", "act_reset_view", "act_fit_all",
                     "act_grid_horizontal", "act_grid_vertical", "act_grid_settings",
                     "act_bg_load", "act_bg_visible", "act_bg_gray", "act_bg_opacity", "act_bg_clear",
@@ -358,8 +534,31 @@ class MainWindow(QMainWindow):
             },
             widgets={
                 "analysis_solver_widget": lambda: self.analysis_solver_widget,
+                "body_mode_widget": lambda: self._make_body_mode_combo(),
             },
         )
+
+    def _make_body_mode_combo(self) -> QWidget:
+        """Ribbon widget: dropdown for body display mode."""
+        combo = QComboBox()
+        combo.setMinimumWidth(220)
+        items = [
+            ("wireframe", _tr(self, "body.display.wireframe", "Body: Wireframe")),
+            ("solid", _tr(self, "body.display.solid", "Body: Solid")),
+            ("hybrid", _tr(self, "body.display.hybrid", "Body: Hybrid")),
+        ]
+        for key, label in items:
+            combo.addItem(label, key)
+
+        mode = str(getattr(self.ctrl, "body_display_mode", "wireframe")).lower()
+        idx = combo.findData(mode)
+        if idx < 0:
+            idx = combo.findData("wireframe")
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+
+        combo.currentIndexChanged.connect(lambda _i: self._set_body_display_mode(str(combo.currentData())))
+        return combo
 
     def _install_sketch_double_clicks(self) -> None:
         self._double_click_action_widgets = {}
@@ -436,6 +635,7 @@ class MainWindow(QMainWindow):
             self._raise_dock(self.dock)
         if show_analysis:
             self._raise_dock(self.sim_dock)
+        self._sync_right_dock_width_for_current_context()
 
     def _raise_dock(self, dock: QDockWidget) -> None:
         dock.show()
@@ -455,6 +655,7 @@ class MainWindow(QMainWindow):
             "act_repeat_model": QStyle.StandardPixmap.SP_BrowserReload,
             "act_cancel_model": QStyle.StandardPixmap.SP_DialogCancelButton,
             "act_settings": QStyle.StandardPixmap.SP_FileDialogDetailedView,
+            "act_intel_design": QStyle.StandardPixmap.SP_ComputerIcon,
             "act_create_point": QStyle.StandardPixmap.SP_DialogYesButton,
             "act_create_line": QStyle.StandardPixmap.SP_LineEditClearButton,
             "act_create_spline": QStyle.StandardPixmap.SP_FileDialogContentsView,
@@ -551,14 +752,33 @@ class MainWindow(QMainWindow):
             self.combo_analysis_solver.setCurrentIndex(index)
         self.combo_analysis_solver.blockSignals(False)
 
-    def update_model_action_state(self) -> None:
+    def _active_create_mode_name(self) -> Optional[str]:
+        """Return the create action that should be highlighted.
+
+        ``ctrl.mode`` records the active one-shot modeling command, while
+        ``_continuous_model_action`` records repeat/continuous modeling.  The
+        ribbon buttons must reflect both states; otherwise ordinary one-shot
+        create commands enter CreatePoint/CreateLine but the icon is immediately
+        unchecked.
+        """
         continuous_mode = getattr(self.ctrl, "_continuous_model_action", None)
-        with QSignalBlocker(self.act_create_point):
-            self.act_create_point.setChecked(continuous_mode == "CreatePoint")
-        with QSignalBlocker(self.act_create_line):
-            self.act_create_line.setChecked(continuous_mode == "CreateLine")
-        with QSignalBlocker(self.act_create_spline):
-            self.act_create_spline.setChecked(continuous_mode == "CreateSpline")
+        if continuous_mode in ("CreatePoint", "CreateLine", "CreateSpline"):
+            return continuous_mode
+        mode = getattr(self.ctrl, "mode", "Idle")
+        if mode in ("CreatePoint", "CreateLine", "CreateSpline"):
+            return mode
+        return None
+
+    def update_model_action_state(self) -> None:
+        active_mode = self._active_create_mode_name()
+        pairs = (
+            (self.act_create_point, "CreatePoint"),
+            (self.act_create_line, "CreateLine"),
+            (self.act_create_spline, "CreateSpline"),
+        )
+        for action, mode_name in pairs:
+            with QSignalBlocker(action):
+                action.setChecked(active_mode == mode_name)
 
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
@@ -573,12 +793,17 @@ class MainWindow(QMainWindow):
         self.act_cancel_model.setText(tr(lang, "action.cancel", "Cancel"))
         self.act_repeat_model.setText(tr(lang, "action.repeat_last_model_action"))
         self.act_settings.setText(tr(lang, "action.settings"))
+        self.act_intel_design.setText(tr(lang, "action.intelligent_design", "Intelligent Design..."))
         self.act_create_point.setText(tr(lang, "action.create_point"))
         self.act_create_line.setText(tr(lang, "action.create_line"))
         self.act_create_spline.setText(tr(lang, "action.create_spline"))
         self.act_pm.setText(tr(lang, "action.show_point_markers"))
         self.act_dm.setText(tr(lang, "action.show_dimension_markers"))
         self.act_body_color.setText(tr(lang, "action.show_rigid_body_coloring"))
+        self.act_body_wireframe.setText(_tr(self, "body.display.wireframe", "Body: Wireframe"))
+        self.act_body_solid.setText(_tr(self, "body.display.solid", "Body: Solid"))
+        self.act_body_hybrid.setText(_tr(self, "body.display.hybrid", "Body: Hybrid"))
+        self._sync_body_display_actions()
         self.act_splines.setText(tr(lang, "action.show_splines"))
         self.act_load_arrows.setText(tr(lang, "action.show_load_arrows"))
         self.act_bg_load.setText(tr(lang, "action.load_background"))
@@ -614,8 +839,20 @@ class MainWindow(QMainWindow):
         self.sim_panel.apply_language()
         self._refresh_analysis_solver_options()
         self._rebuild_ribbon()
+        self._sync_right_dock_width_for_current_context(force=True)
+
+    def open_intelligent_design(self) -> None:
+        dlg = IntelligentDesignDialog(self.ctrl, self)
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.exec()
 
     def _toggle_create_action(self, kind: str, checked: bool) -> None:
+        mode_by_kind = {
+            "point": "CreatePoint",
+            "line": "CreateLine",
+            "spline": "CreateSpline",
+        }
+        mode_name = mode_by_kind.get(kind)
         if checked:
             if kind == "point":
                 self.ctrl.begin_create_point()
@@ -623,9 +860,13 @@ class MainWindow(QMainWindow):
                 self.ctrl.begin_create_line()
             elif kind == "spline":
                 self.ctrl.begin_create_spline()
-        else:
-            if getattr(self.ctrl, "mode", "Idle") in ("CreatePoint", "CreateLine", "CreateSpline"):
-                self.ctrl.cancel_model_action()
+            return
+
+        # Only cancel when the user manually turns off the currently active
+        # create action.  Switching to another create command is handled by the
+        # checked branch and state synchronization above.
+        if mode_name is not None and self._active_create_mode_name() == mode_name:
+            self.ctrl.cancel_model_action()
 
     def show_constraints_tab(self) -> None:
         self._set_active_ribbon("boundary")
@@ -700,6 +941,31 @@ class MainWindow(QMainWindow):
     def _toggle_body_coloring(self, checked: bool):
         self.ctrl.show_body_coloring = bool(checked)
         self.ctrl.update_graphics()
+    def _set_body_display_mode(self, mode: str) -> None:
+        mode = str(mode).lower()
+        if mode not in ("wireframe", "solid", "hybrid"):
+            mode = "wireframe"
+        if getattr(self.ctrl, "body_display_mode", "wireframe") != mode:
+            self.ctrl.body_display_mode = mode
+            self.ctrl.update_graphics()
+        self._sync_body_display_actions()
+
+    def _sync_body_display_actions(self) -> None:
+        mode = str(getattr(self.ctrl, "body_display_mode", "wireframe")).lower()
+        if mode not in ("wireframe", "solid", "hybrid"):
+            mode = "wireframe"
+        mapping = (
+            ("act_body_wireframe", mode == "wireframe"),
+            ("act_body_solid", mode == "solid"),
+            ("act_body_hybrid", mode == "hybrid"),
+        )
+        for attr, checked in mapping:
+            act = getattr(self, attr, None)
+            if act is None:
+                continue
+            with QSignalBlocker(act):
+                act.setChecked(checked)
+
     def _toggle_splines(self, checked: bool):
         self.ctrl.show_splines_geometry = bool(checked)
         self.ctrl.update_graphics()
@@ -739,6 +1005,9 @@ class MainWindow(QMainWindow):
             selected_language = dlg.language()
             if selected_language != getattr(self.ctrl, "ui_language", "en"):
                 self.ctrl.ui_language = selected_language
+                app = QApplication.instance()
+                if app is not None:
+                    set_ui_language(selected_language, app)
                 self.apply_language()
             self.ctrl.update_graphics()
             self.panel.defer_refresh_all(keep_selection=True)
@@ -856,6 +1125,38 @@ class MainWindow(QMainWindow):
             self.ctrl.cmd_set_point_fixed(pid, True)
         self.ctrl.update_graphics()
 
+    def _new_blank_project_startup(self):
+        """Create a fresh empty project on startup.
+
+        This must be silent (no prompts / no dialogs) and must reliably clear any
+        stale in-memory state if the app is restarted from an IDE.
+        """
+        try:
+            self.ctrl.commit_drag_if_any()
+        except Exception:
+            pass
+        data = self.ctrl.default_project_dict(force_new_uuid=True)
+        # Load without asking to save (startup) and clear undo.
+        self.ctrl.load_dict(data, clear_undo=True, action="start a new file")
+        self._sync_background_actions()
+        self.ctrl.stack.clear()
+        self.current_file = None
+        # Use a per-session scratch project folder so Analysis/Optimization won't pick up
+        # stale cases/runs from the process working directory (common source of 'residual model').
+        try:
+            self.project_dir = tempfile.mkdtemp(prefix="planar_sketch_session_")
+        except Exception:
+            self.project_dir = None
+        if self.project_dir:
+            try:
+                os.makedirs(self.project_dir, exist_ok=True)
+            except Exception:
+                pass
+        if hasattr(self, "sim_panel"):
+            self.sim_panel.reset_analysis_state()
+        if hasattr(self, "sim_panel") and hasattr(self.sim_panel, "animation_tab"):
+            self.sim_panel.animation_tab.refresh_cases()
+
     def file_new(self, prompt_for_folder: bool = True):
         self.ctrl.commit_drag_if_any()
         if not self.confirm_unsaved_run():
@@ -868,7 +1169,17 @@ class MainWindow(QMainWindow):
         self._sync_background_actions()
         self.ctrl.stack.clear()
         self.current_file = None
-        self.project_dir = None
+        # Use a per-session scratch project folder so Analysis/Optimization won't pick up
+        # stale cases/runs from the process working directory (common source of 'residual model').
+        try:
+            self.project_dir = tempfile.mkdtemp(prefix="planar_sketch_session_")
+        except Exception:
+            self.project_dir = None
+        if self.project_dir:
+            try:
+                os.makedirs(self.project_dir, exist_ok=True)
+            except Exception:
+                pass
         if hasattr(self, "sim_panel"):
             self.sim_panel.reset_analysis_state()
         if prompt_for_folder:
@@ -899,7 +1210,7 @@ class MainWindow(QMainWindow):
                 self.sim_panel.animation_tab.refresh_cases()
             self.view.fit_all()
         except Exception as e:
-            QMessageBox.critical(self, "Open failed", str(e))
+            QMessageBox.critical(self, tr(self.ctrl.ui_language, "open.failed"), str(e))
 
     def file_save(self):
         self.ctrl.commit_drag_if_any()
@@ -912,7 +1223,7 @@ class MainWindow(QMainWindow):
             with open(self.current_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            QMessageBox.critical(self, "Save failed", str(e))
+            QMessageBox.critical(self, tr(self.ctrl.ui_language, "save.failed"), str(e))
 
     def file_save_as(self):
         self.ctrl.commit_drag_if_any()

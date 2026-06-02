@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 from ..utils.constants import PURPLE, DARK, YELLOW, GRAY, HILITE, BODY_COLORS
 from ..utils.qt_safe import safe_event
+from .body_render import build_body_paths, build_link_paths
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -323,7 +324,7 @@ class PointItem(QGraphicsEllipseItem):
             self.setBrush(GRAY if fixed else YELLOW)
             self.setPen(QPen(Qt.GlobalColor.black, 1))
 
-        sel = self.isSelected() or (self.pid in self.ctrl.selected_point_ids)
+        sel = self.isSelected() or (self.pid in self.ctrl.selected_point_ids) or (self.pid in getattr(self.ctrl, "_line_sel", []))
         if sel:
             self.setPen(QPen(HILITE, 3))
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, (not fixed) and (not hidden))
@@ -338,6 +339,135 @@ class PointItem(QGraphicsEllipseItem):
             p2 = self.ctrl.points[self.pid]
             return QPointF(p2["x"], p2["y"])
         return super().itemChange(change, val)
+
+
+class BodySolidItem(QGraphicsPathItem):
+    """Non-interactive solid body rendering (background layer)."""
+    def __init__(self, bid: int, ctrl: "SketchController"):
+        super().__init__()
+        self.bid = bid
+        self.ctrl = ctrl
+        self.setZValue(-2)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+        self.boss_item = QGraphicsPathItem(self)
+        self.boss_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.hole_item = QGraphicsPathItem(self)
+        self.hole_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.sync_style()
+        self.update_geometry()
+
+    def sync_style(self):
+        b = self.ctrl.bodies.get(self.bid)
+        if not b:
+            self.setVisible(False)
+            return
+        mode = str(getattr(self.ctrl, 'body_display_mode', 'wireframe'))
+        visible = (not bool(b.get('hidden', False))) and mode in ('solid', 'hybrid')
+        self.setVisible(visible)
+        if not visible:
+            return
+        cname = b.get('color_name', 'Blue')
+        col = BODY_COLORS.get(cname, BODY_COLORS.get('Blue', QColor(60, 120, 255)))
+        fill = QColor(col)
+        fill.setAlpha(50)
+        outline = QColor(col)
+        outline.setAlpha(220)
+        boss = QColor(col)
+        boss.setAlpha(80)
+        hole = QColor(245, 245, 245, 220)
+        self.setBrush(QBrush(fill))
+        self.setPen(QPen(outline, 1.6))
+        self.boss_item.setBrush(QBrush(boss))
+        self.boss_item.setPen(QPen(outline, 1.0))
+        self.hole_item.setBrush(QBrush(hole))
+        self.hole_item.setPen(QPen(outline, 1.0))
+
+    def update_geometry(self):
+        b = self.ctrl.bodies.get(self.bid)
+        if not b:
+            self.setPath(QPainterPath())
+            self.boss_item.setPath(QPainterPath())
+            self.hole_item.setPath(QPainterPath())
+            return
+        fill, boss_paths, hole_paths = build_body_paths(self.ctrl, self.bid)
+        self.setPath(fill)
+        bp = QPainterPath()
+        for p in boss_paths:
+            bp = bp.united(p)
+        hp = QPainterPath()
+        for p in hole_paths:
+            hp = hp.united(p)
+        self.boss_item.setPath(bp)
+        self.hole_item.setPath(hp)
+
+
+class SolidLinkItem(QGraphicsPathItem):
+    """Non-interactive solid visualization for a link (capsule + hole rings)."""
+
+    def __init__(self, lid: int, ctrl: "SketchController"):
+        super().__init__()
+        self.lid = lid
+        self.ctrl = ctrl
+        self.setZValue(-3)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setAcceptHoverEvents(False)
+        self.boss_item = QGraphicsPathItem(self)
+        self.boss_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.hole_item = QGraphicsPathItem(self)
+        self.hole_item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.sync_style()
+        self.update_geometry()
+
+    def _belongs_to_visible_body(self) -> bool:
+        l = self.ctrl.links.get(self.lid)
+        if not l:
+            return False
+        i = int(l.get("i", -1))
+        j = int(l.get("j", -1))
+        bi = self.ctrl.point_body(i)
+        bj = self.ctrl.point_body(j)
+        if bi is None or bj is None:
+            return False
+        if bi != bj:
+            return False
+        b = self.ctrl.bodies.get(bi)
+        return bool(b) and (not bool(b.get("hidden", False)))
+
+    def sync_style(self):
+        l = self.ctrl.links.get(self.lid)
+        if not l:
+            self.setVisible(False)
+            return
+        mode = str(getattr(self.ctrl, 'body_display_mode', 'wireframe'))
+        visible = (mode in ('solid', 'hybrid')) and (not bool(l.get('hidden', False))) and (not self._belongs_to_visible_body())
+        self.setVisible(visible)
+        if not visible:
+            return
+        # Use neutral dark for free links (they might not have body color).
+        outline = QColor(0, 0, 0, 200)
+        fill = QColor(90, 90, 90, 35)
+        boss = QColor(90, 90, 90, 60)
+        hole = QColor(245, 245, 245, 220)
+        self.setBrush(QBrush(fill))
+        self.setPen(QPen(outline, 1.4))
+        self.boss_item.setBrush(QBrush(boss))
+        self.boss_item.setPen(QPen(outline, 1.0))
+        self.hole_item.setBrush(QBrush(hole))
+        self.hole_item.setPen(QPen(outline, 1.0))
+
+    def update_geometry(self):
+        fill, boss_paths, hole_paths = build_link_paths(self.ctrl, self.lid)
+        self.setPath(fill)
+        bp = QPainterPath()
+        for p in boss_paths:
+            bp = bp.united(p)
+        hp = QPainterPath()
+        for p in hole_paths:
+            hp = hp.united(p)
+        self.boss_item.setPath(bp)
+        self.hole_item.setPath(hp)
+
 
 
 class LinkItem(QGraphicsLineItem):
@@ -362,6 +492,7 @@ class LinkItem(QGraphicsLineItem):
 
     def sync_style(self):
         l = self.ctrl.links[self.lid]
+        mode = str(getattr(self.ctrl, "body_display_mode", "wireframe"))
         hidden = bool(l.get("hidden", False)) or (not self.ctrl.show_links_geometry)
         i, j = l["i"], l["j"]
         if self.ctrl.is_point_effectively_hidden(i) and self.ctrl.is_point_effectively_hidden(j):
@@ -373,7 +504,12 @@ class LinkItem(QGraphicsLineItem):
         else:
             base = PURPLE if l.get("over", False) else QColor(0, 0, 0)
         sel = (self.ctrl.selected_link_id == self.lid) or self.isSelected()
-        pen = QPen(HILITE if sel else base, 3 if sel else (2 if not l.get("ref", False) else 2))
+        if mode == "solid" and not sel:
+            # Keep the item visible for hit-testing / context menus, but do not draw the wireframe.
+            transparent = QColor(0, 0, 0, 0)
+            pen = QPen(transparent, 8)
+        else:
+            pen = QPen(HILITE if sel else base, 3 if sel else (2 if not l.get("ref", False) else 2))
         if l.get("ref", False) and not sel:
             pen.setStyle(Qt.PenStyle.DashLine)
         self.setPen(pen)
@@ -402,6 +538,9 @@ class SplineItem(QGraphicsPathItem):
                 e.accept(); return
             if self.ctrl.mode == "PointOnSpline":
                 self.ctrl.on_spline_clicked_point_on_spline(self.sid)
+                e.accept(); return
+            if self.ctrl.mode == "PointSplineDist":
+                self.ctrl.on_spline_clicked_point_spline_dist(self.sid)
                 e.accept(); return
             self.ctrl.select_spline_single(self.sid)
             e.accept(); return
@@ -450,6 +589,47 @@ class PointSplineItem(QGraphicsSimpleTextItem):
             col = GRAY
         else:
             col = PURPLE if ps.get("over", False) else GRAY
+        self.setBrush(HILITE if sel else col)
+        self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
+
+
+class PointSplineDistItem(QGraphicsSimpleTextItem):
+    """Marker for point-to-spline distance constraint (e.g., roller cam contact)."""
+
+    def __init__(self, pdid: int, ctrl: "SketchController"):
+        super().__init__("d")
+        self.pdid = pdid
+        self.ctrl = ctrl
+        self.setZValue(10)
+        self.setFlags(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
+        self.setBrush(GRAY)
+        self.sync()
+
+    @safe_event
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.ctrl.select_point_spline_dist_single(self.pdid)
+            e.accept(); return
+        super().mousePressEvent(e)
+
+    def sync(self):
+        pd = self.ctrl.point_spline_dists.get(self.pdid)
+        if not pd:
+            self.setVisible(False)
+            return
+        p = int(pd.get("p", -1))
+        if p not in self.ctrl.points:
+            self.setVisible(False)
+            return
+        pp = self.ctrl.points[p]
+        self.setPos(pp["x"] + 8, pp["y"] - 12)
+        hidden = bool(pd.get("hidden", False)) or (not self.ctrl.show_dim_markers)
+        self.setVisible(not hidden)
+        sel = (getattr(self.ctrl, "selected_point_spline_dist_id", None) == self.pdid) or self.isSelected()
+        if not bool(pd.get("enabled", True)):
+            col = GRAY
+        else:
+            col = PURPLE if pd.get("over", False) else GRAY
         self.setBrush(HILITE if sel else col)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 

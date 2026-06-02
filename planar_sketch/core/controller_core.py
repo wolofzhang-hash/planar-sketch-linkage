@@ -35,6 +35,8 @@ class ControllerCore:
         self.point_lines: Dict[int, Dict[str, Any]] = {}
         # Point-on-spline constraints: {id: {p,s,hidden,enabled,over}}
         self.point_splines: Dict[int, Dict[str, Any]] = {}
+        # Point-to-spline distance constraints: {id: {p,s,dist,hidden,enabled,over,hint_seg}}
+        self.point_spline_dists: Dict[int, Dict[str, Any]] = {}
 
         # Parameters + expressions
         self.constraint_registry = ConstraintRegistry(self)
@@ -46,6 +48,7 @@ class ControllerCore:
         self._next_cid = 0
         self._next_plid = 0
         self._next_psid = 0
+        self._next_pdid = 0
         self.selected_point_ids: set = set()
         self.selected_point_id: Optional[int] = None
         self.selected_link_id: Optional[int] = None
@@ -55,6 +58,7 @@ class ControllerCore:
         self.selected_coincide_id: Optional[int] = None
         self.selected_point_line_id: Optional[int] = None
         self.selected_point_spline_id: Optional[int] = None
+        self.selected_point_spline_dist_id: Optional[int] = None
 
         self.show_point_markers = True
         self.show_dim_markers = True
@@ -64,6 +68,8 @@ class ControllerCore:
         self.show_angles_geometry = True
         self.show_splines_geometry = True
         self.show_body_coloring = True
+        self.body_display_mode = "wireframe"  # wireframe/solid/hybrid
+        self.body_solid_scale = 1.0
         self.show_trajectories = False
         self.show_load_arrows = True
         self.display_precision = 1
@@ -71,6 +77,7 @@ class ControllerCore:
         self.torque_arrow_width = 1.6
         self.ui_language = "zh"
         self.project_uuid: str = ""
+        self._user_measure_curves: Dict[str, Dict[str, Any]] = {}
 
         self.background_image: Dict[str, Any] = {
             "path": None,
@@ -106,6 +113,11 @@ class ControllerCore:
         self._drag_pid: Optional[int] = None
         self._drag_before: Optional[Dict[int, Tuple[float, float]]] = None
         self._last_model_action: Optional[str] = None
+        # Case specs are part of the model, but run results become stale after edits.
+        self._cases_dirty_by_model_edit: bool = False
+        self._dirty_case_ids: set[str] = set()
+        self._model_edit_revision: int = 0
+        self._last_run_completed_revision: int = 0
         self._continuous_model_action: Optional[str] = None
         self._last_scene_pos: Optional[Tuple[float, float]] = None
         self._last_point_pos: Optional[Tuple[float, float]] = None

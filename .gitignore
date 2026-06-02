@@ -1,31 +1,48 @@
-# Python cache
+# Python caches
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Virtual env
+# Virtual environments
 .venv/
 venv/
-ENV/
 env/
+ENV/
 
-# IDE
+# IDE / OS files
 .idea/
 .vscode/
-
-# OS
 .DS_Store
+__MACOSX/
+._*
 Thumbs.db
 
-# Build / dist
+# Build / packaging output
 build/
 dist/
-*.egg-info/
+*.spec
+*.app/
+*.dmg
+*.exe
+*.msi
 
-# Project artifacts
-*.zip
+# Generated user artifacts
 *.log
+*.zip
 *.csv
 *.svg
-!planar_sketch/assets/app_icon.svg
+*.gif
+*.mp4
+*.png
+*.jpg
+*.jpeg
+exports/
+output/
+
+# Local user state
+.planar_sketch/

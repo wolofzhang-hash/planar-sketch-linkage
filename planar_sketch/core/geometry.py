@@ -138,3 +138,55 @@ def closest_point_on_samples(px: float, py: float, samples: List[tuple[float, fl
                 t_seg = t2 if u > 0.5 else t1
             best = (cx, cy, seg_index, t_seg, dist2)
     return best
+
+
+def closest_point_on_samples_hint(
+    px: float,
+    py: float,
+    samples: List[tuple[float, float, int, float]],
+    hint_seg: int = -1,
+    seg_window: int = 3,
+) -> tuple[float, float, int, float, float]:
+    """Closest point with a segment hint to reduce jumping on closed curves.
+
+    hint_seg is the preferred segment index (control-point segment index, not sample index).
+    The function will search +/- seg_window segments around hint first; if no candidate
+    is found, it falls back to a global search.
+    """
+    if len(samples) < 2:
+        return px, py, -1, 0.0, float("inf")
+
+    # First pass: local search around hinted segment
+    if hint_seg is not None and int(hint_seg) >= 0:
+        hs = int(hint_seg)
+        best = (px, py, -1, 0.0, float("inf"))
+        for idx in range(len(samples) - 1):
+            x1, y1, seg1, t1 = samples[idx]
+            x2, y2, seg2, t2 = samples[idx + 1]
+            if abs(int(seg1) - hs) > seg_window and abs(int(seg2) - hs) > seg_window:
+                continue
+            vx = x2 - x1
+            vy = y2 - y1
+            denom = vx * vx + vy * vy
+            if denom <= 1e-18:
+                continue
+            u = ((px - x1) * vx + (py - y1) * vy) / denom
+            u = max(0.0, min(1.0, u))
+            cx = x1 + u * vx
+            cy = y1 + u * vy
+            dx = cx - px
+            dy = cy - py
+            dist2 = dx * dx + dy * dy
+            if dist2 < best[4]:
+                if seg1 == seg2:
+                    t_seg = t1 + u * (t2 - t1)
+                    seg_index = seg1
+                else:
+                    seg_index = seg2 if u > 0.5 else seg1
+                    t_seg = t2 if u > 0.5 else t1
+                best = (cx, cy, seg_index, t_seg, dist2)
+        if best[2] != -1:
+            return best
+
+    # Fallback: global search
+    return closest_point_on_samples(px, py, samples)

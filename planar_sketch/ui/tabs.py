@@ -17,9 +17,26 @@ from PyQt6.QtWidgets import (
 from ..utils.constants import BODY_COLORS, PURPLE, GRAY
 from ..core.geometry import parse_id_list
 from .expression_builder import ExpressionBuilderDialog
-from .i18n import tr
+from ..core.expression_registry import PARAMETER_FUNCTIONS
+from .i18n import tr, get_ui_language, ui_language
 
-PARAMETER_FUNCTIONS = ["sin(", "cos(", "tan(", "asin(", "acos(", "atan(", "sqrt(", "abs(", "min(", "max(", "pi", "E"]
+
+def _lang(owner) -> str:
+    ctrl = getattr(owner, "ctrl", owner)
+    return get_ui_language(ctrl, fallback="zh")
+
+def _tr(owner, key: str, **kwargs) -> str:
+    return tr(_lang(owner), key, **kwargs)
+
+
+def _is_zh(owner) -> bool:
+    return _lang(owner) == 'zh'
+
+
+def _is_en(owner) -> bool:
+    return _lang(owner) == 'en'
+
+
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
@@ -50,33 +67,21 @@ class ParametersTab(QWidget):
         self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
 
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton()
-        self.btn_del = QPushButton()
-        btn_row.addWidget(self.btn_add)
-        btn_row.addWidget(self.btn_del)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
-
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels([])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked | QAbstractItemView.EditTrigger.SelectedClicked)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         _balance_table_columns(self.table)
         layout.addWidget(self.table)
 
-        self.btn_add.clicked.connect(self._add_param)
-        self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemChanged.connect(self._on_item_changed)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_add.setText(tr(lang, "button.add_param"))
-        self.btn_del.setText(tr(lang, "button.remove_param"))
-        self.table.setHorizontalHeaderLabels([tr(lang, "table.name"), tr(lang, "table.value")])
+        self.table.setHorizontalHeaderLabels([_tr(self, "table.name"), _tr(self, "table.value")])
 
     def _add_param(self):
         # Generate a unique default name.
@@ -132,7 +137,7 @@ class ParametersTab(QWidget):
         try:
             val = float(val_text)
         except Exception:
-            QMessageBox.warning(self, "Invalid value", f"Parameter value must be numeric: {val_text!r}")
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_value"), _tr(self, "tabs.msg.param_value_numeric", value=repr(val_text)))
             self.panel.defer_refresh_all(keep_selection=True)
             return
 
@@ -159,12 +164,6 @@ class PointsTab(QWidget):
         super().__init__()
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton()
-        self.btn_del = QPushButton()
-        btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([])
@@ -174,25 +173,20 @@ class PointsTab(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
-        self.btn_add.clicked.connect(lambda: self.ctrl.cmd_add_point(0.0, 0.0))
-        self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_add.setText(tr(lang, "button.add_point"))
-        self.btn_del.setText(tr(lang, "button.remove_point"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.id"),
-            tr(lang, "table.x"),
-            tr(lang, "table.y"),
-            tr(lang, "table.fixed"),
-            tr(lang, "table.hidden"),
-            tr(lang, "table.trajectory"),
-            tr(lang, "table.body"),
+            _tr(self, "table.id"),
+            _tr(self, "table.x"),
+            _tr(self, "table.y"),
+            _tr(self, "table.fixed"),
+            _tr(self, "table.hidden"),
+            _tr(self, "table.trajectory"),
+            _tr(self, "table.body"),
         ])
 
     def _delete_selected(self):
@@ -275,7 +269,7 @@ class PointsTab(QWidget):
             hidden = (self.table.item(row, 4).text().strip() not in ("0", "", "false", "False", "no", "No"))
             traj = (self.table.item(row, 5).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
-            QMessageBox.warning(self, "Invalid input", str(e))
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_input"), str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
         def apply():
             self.ctrl.commit_drag_if_any()
@@ -300,10 +294,10 @@ class PointsTab(QWidget):
         pid = int(pid_item.text())
         axis = "x" if col == 1 else "y"
         menu = QMenu(self)
-        act_builder = menu.addAction("Expression Builder...")
-        act_new_param = menu.addAction("New Parameter...")
-        act_use_param = menu.addAction("Use Existing Parameter...")
-        act_clear = menu.addAction("Use Numeric Value")
+        act_builder = menu.addAction(_tr(self, "analysis.expression_builder"))
+        act_new_param = menu.addAction(_tr(self, "menu.new_parameter"))
+        act_use_param = menu.addAction(_tr(self, "menu.use_existing_parameter"))
+        act_clear = menu.addAction(_tr(self, "menu.use_numeric"))
         selected = menu.exec(self.table.viewport().mapToGlobal(pos))
         if selected == act_builder:
             self._open_expression_builder(row, pid, axis)
@@ -331,7 +325,7 @@ class PointsTab(QWidget):
             self._apply_point_expr(row, axis, dialog.expression().strip())
 
     def _create_new_parameter(self, row: int, pid: int, axis: str) -> None:
-        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        name, ok = QInputDialog.getText(self, _tr(self, "menu.new_parameter_title"), _tr(self, "menu.parameter_name"))
         if not ok or not name.strip():
             return
         p = self.ctrl.points.get(pid, {})
@@ -342,9 +336,10 @@ class PointsTab(QWidget):
     def _use_existing_parameter(self, row: int, pid: int, axis: str) -> None:
         params = sorted(self.ctrl.parameters.params.keys())
         if not params:
-            QMessageBox.information(self, "Parameters", "No parameters available.")
+            lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+            QMessageBox.information(self, _tr(self, "menu.parameters"), _tr(self, "menu.no_parameters"))
             return
-        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        name, ok = QInputDialog.getItem(self, _tr(self, "menu.use_parameter_title"), _tr(self, "menu.parameter"), params, 0, False)
         if not ok or not name:
             return
         self._apply_point_expr(row, axis, name)
@@ -371,12 +366,6 @@ class LinksTab(QWidget):
         super().__init__()
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton()
-        self.btn_del = QPushButton()
-        btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([])
@@ -385,30 +374,26 @@ class LinksTab(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
-        self.btn_add.clicked.connect(self._add_link_from_points)
-        self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_add.setText(tr(lang, "button.add_length"))
-        self.btn_del.setText(tr(lang, "button.remove_length"))
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.id"),
-            tr(lang, "table.i"),
-            tr(lang, "table.j"),
-            tr(lang, "table.length"),
-            tr(lang, "table.hidden"),
-            tr(lang, "table.state"),
+            _tr(self, "table.id"),
+            _tr(self, "table.i"),
+            _tr(self, "table.j"),
+            _tr(self, "table.length"),
+            _tr(self, "table.hidden"),
+            _tr(self, "table.state"),
         ])
 
     def _add_link_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
         if len(ids) < 2:
-            QMessageBox.information(self, "Need 2 points", "Select two points then click Add Length.")
+            QMessageBox.information(self, _tr(self, "tabs.title.length"), _tr(self, "tabs.msg.need_2_points_add_length"))
             return
         self.ctrl.cmd_add_link(ids[0], ids[1])
 
@@ -484,7 +469,7 @@ class LinksTab(QWidget):
             L_text = (self.table.item(row, 3).text() if self.table.item(row, 3) else "").strip()
             hidden = (self.table.item(row, 4).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
-            QMessageBox.warning(self, "Invalid input", str(e))
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_input"), str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
         def apply():
             self.ctrl.commit_drag_if_any()
@@ -511,13 +496,14 @@ class LinksTab(QWidget):
         lid = int(lid_item.text())
         link = self.ctrl.links.get(lid, {})
         if link.get("ref", False):
-            QMessageBox.information(self, "Link", "Reference links are read-only.")
+            QMessageBox.information(self, _tr(self, "tabs.title.link"), _tr(self, "tabs.msg.ref_links_readonly"))
             return
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
         menu = QMenu(self)
-        act_builder = menu.addAction("Expression Builder...")
-        act_new_param = menu.addAction("New Parameter...")
-        act_use_param = menu.addAction("Use Existing Parameter...")
-        act_clear = menu.addAction("Use Numeric Value")
+        act_builder = menu.addAction(_tr(self, "analysis.expression_builder"))
+        act_new_param = menu.addAction(_tr(self, "menu.new_parameter"))
+        act_use_param = menu.addAction(_tr(self, "menu.use_existing_parameter"))
+        act_clear = menu.addAction(_tr(self, "menu.use_numeric"))
         selected = menu.exec(self.table.viewport().mapToGlobal(pos))
         if selected == act_builder:
             self._open_expression_builder(row, lid)
@@ -545,7 +531,8 @@ class LinksTab(QWidget):
             self._apply_link_expr(row, dialog.expression().strip())
 
     def _create_new_parameter(self, row: int, lid: int) -> None:
-        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        name, ok = QInputDialog.getText(self, _tr(self, "menu.new_parameter_title"), _tr(self, "menu.parameter_name"))
         if not ok or not name.strip():
             return
         link = self.ctrl.links.get(lid, {})
@@ -556,9 +543,11 @@ class LinksTab(QWidget):
     def _use_existing_parameter(self, row: int, lid: int) -> None:
         params = sorted(self.ctrl.parameters.params.keys())
         if not params:
-            QMessageBox.information(self, "Parameters", "No parameters available.")
+            lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+            QMessageBox.information(self, _tr(self, "menu.parameters"), _tr(self, "menu.no_parameters"))
             return
-        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        name, ok = QInputDialog.getItem(self, _tr(self, "menu.use_parameter_title"), _tr(self, "menu.parameter"), params, 0, False)
         if not ok or not name:
             return
         self._apply_link_expr(row, name)
@@ -581,12 +570,6 @@ class AnglesTab(QWidget):
         super().__init__()
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton()
-        self.btn_del = QPushButton()
-        btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
         self.table = QTableWidget()
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([])
@@ -595,26 +578,21 @@ class AnglesTab(QWidget):
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
-        self.btn_add.setVisible(False)
-        self.btn_add.setEnabled(False)
-        self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.customContextMenuRequested.connect(self._open_context_menu)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_add.setText(tr(lang, "button.add_angle"))
-        self.btn_del.setText(tr(lang, "button.remove_angle"))
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.id"),
-            tr(lang, "table.i"),
-            tr(lang, "table.vertex"),
-            tr(lang, "table.k"),
-            tr(lang, "table.deg"),
-            tr(lang, "table.hidden"),
-            tr(lang, "table.state"),
+            _tr(self, "table.id"),
+            _tr(self, "table.i"),
+            _tr(self, "table.vertex"),
+            _tr(self, "table.k"),
+            _tr(self, "table.deg"),
+            _tr(self, "table.hidden"),
+            _tr(self, "table.state"),
         ])
 
     def _delete_selected(self):
@@ -679,7 +657,7 @@ class AnglesTab(QWidget):
             deg_text = (self.table.item(row, 4).text() if self.table.item(row, 4) else "").strip()
             hidden = (self.table.item(row, 5).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
-            QMessageBox.warning(self, "Invalid input", str(e))
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_input"), str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
         def apply():
             self.ctrl.commit_drag_if_any()
@@ -700,11 +678,12 @@ class AnglesTab(QWidget):
         if not aid_item:
             return
         aid = int(aid_item.text())
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
         menu = QMenu(self)
-        act_builder = menu.addAction("Expression Builder...")
-        act_new_param = menu.addAction("New Parameter...")
-        act_use_param = menu.addAction("Use Existing Parameter...")
-        act_clear = menu.addAction("Use Numeric Value")
+        act_builder = menu.addAction(_tr(self, "analysis.expression_builder"))
+        act_new_param = menu.addAction(_tr(self, "menu.new_parameter"))
+        act_use_param = menu.addAction(_tr(self, "menu.use_existing_parameter"))
+        act_clear = menu.addAction(_tr(self, "menu.use_numeric"))
         selected = menu.exec(self.table.viewport().mapToGlobal(pos))
         if selected == act_builder:
             self._open_expression_builder(row, aid)
@@ -732,7 +711,8 @@ class AnglesTab(QWidget):
             self._apply_angle_expr(row, dialog.expression().strip())
 
     def _create_new_parameter(self, row: int, aid: int) -> None:
-        name, ok = QInputDialog.getText(self, "New Parameter", "Parameter name:")
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        name, ok = QInputDialog.getText(self, _tr(self, "menu.new_parameter_title"), _tr(self, "menu.parameter_name"))
         if not ok or not name.strip():
             return
         angle = self.ctrl.angles.get(aid, {})
@@ -743,9 +723,11 @@ class AnglesTab(QWidget):
     def _use_existing_parameter(self, row: int, aid: int) -> None:
         params = sorted(self.ctrl.parameters.params.keys())
         if not params:
-            QMessageBox.information(self, "Parameters", "No parameters available.")
+            lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+            QMessageBox.information(self, _tr(self, "menu.parameters"), _tr(self, "menu.no_parameters"))
             return
-        name, ok = QInputDialog.getItem(self, "Use Parameter", "Parameter:", params, 0, False)
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        name, ok = QInputDialog.getItem(self, _tr(self, "menu.use_parameter_title"), _tr(self, "menu.parameter"), params, 0, False)
         if not ok or not name:
             return
         self._apply_angle_expr(row, name)
@@ -769,12 +751,6 @@ class SplinesTab(QWidget):
         super().__init__()
         self.panel = panel; self.ctrl = panel.ctrl
         layout = QVBoxLayout(self)
-        btn_row = QHBoxLayout()
-        self.btn_add = QPushButton()
-        self.btn_del = QPushButton()
-        btn_row.addWidget(self.btn_add); btn_row.addWidget(self.btn_del)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
@@ -784,27 +760,23 @@ class SplinesTab(QWidget):
         _balance_table_columns(self.table, compact_columns=(0,))
         layout.addWidget(self.table)
 
-        self.btn_add.clicked.connect(self._add_spline_from_points)
-        self.btn_del.clicked.connect(self._delete_selected)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemChanged.connect(self._on_item_changed)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_add.setText(tr(lang, "button.add_spline"))
-        self.btn_del.setText(tr(lang, "button.remove_spline"))
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.id"),
-            tr(lang, "table.points"),
-            tr(lang, "table.hidden"),
-            tr(lang, "table.closed"),
+            _tr(self, "table.id"),
+            _tr(self, "table.points"),
+            _tr(self, "table.hidden"),
+            _tr(self, "table.closed"),
         ])
 
     def _add_spline_from_points(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
         if len(ids) < 2:
-            QMessageBox.information(self, "Need >=2 points", "Select at least 2 points then click Add Spline.")
+            QMessageBox.information(self, _tr(self, "tabs.title.spline"), _tr(self, "tabs.msg.need_2_points_add_spline"))
             return
         self.ctrl.cmd_add_spline(ids)
 
@@ -857,7 +829,7 @@ class SplinesTab(QWidget):
             hidden = (self.table.item(row, 2).text().strip() not in ("0", "", "false", "False", "no", "No"))
             closed = (self.table.item(row, 3).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
-            QMessageBox.warning(self, "Invalid input", str(e))
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_input"), str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
         def apply():
             self.ctrl.commit_drag_if_any()
@@ -880,9 +852,7 @@ class ConstraintsTab(QWidget):
 
         btn_row = QHBoxLayout()
         self.btn_toggle = QPushButton()
-        self.btn_delete = QPushButton()
         btn_row.addWidget(self.btn_toggle)
-        btn_row.addWidget(self.btn_delete)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
@@ -895,20 +865,19 @@ class ConstraintsTab(QWidget):
         layout.addWidget(self.table)
 
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
-        self.btn_delete.clicked.connect(self._delete_selected)
         self.btn_toggle.clicked.connect(self._toggle_selected)
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_toggle.setText(tr(lang, "button.toggle_constraint"))
-        self.btn_delete.setText(tr(lang, "button.remove_constraint"))
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        if getattr(self, "btn_toggle", None) is not None:
+            self.btn_toggle.setText(_tr(self, "button.toggle_constraint"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.key"),
-            tr(lang, "table.type"),
-            tr(lang, "table.entities"),
-            tr(lang, "table.enabled"),
-            tr(lang, "table.state"),
+            _tr(self, "table.key"),
+            _tr(self, "table.type"),
+            _tr(self, "table.entities"),
+            _tr(self, "table.enabled"),
+            _tr(self, "table.state"),
         ])
 
     def _selected_key(self) -> Optional[str]:
@@ -988,6 +957,9 @@ class ConstraintsTab(QWidget):
         elif kind == "S":
             if cid in getattr(self.ctrl, "point_splines", {}):
                 self.ctrl.select_point_spline_single(cid)
+        elif kind == "D":
+            if cid in getattr(self.ctrl, "point_spline_dists", {}):
+                self.ctrl.select_point_spline_dist_single(cid)
 
     def _delete_selected(self):
         key = self._selected_key()
@@ -1052,36 +1024,43 @@ class BodiesTab(QWidget):
         self.apply_language()
 
     def apply_language(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.btn_make.setText(tr(lang, "button.create_body"))
-        self.btn_del.setText(tr(lang, "button.remove_body"))
-        self.label_point_ids.setText(tr(lang, "label.point_ids"))
-        self.edit_ids.setPlaceholderText(tr(lang, "label.point_ids_placeholder"))
-        self.btn_set.setText(tr(lang, "button.set_members"))
-        self.btn_add.setText(tr(lang, "button.add_members"))
-        self.btn_rm.setText(tr(lang, "button.remove_members"))
-        self.btn_add_sel.setText(tr(lang, "button.add_selected"))
-        self.btn_rm_sel.setText(tr(lang, "button.remove_selected"))
+        lang = ui_language(getattr(self.ctrl, "ui_language", "zh"))
+        if getattr(self, "btn_make", None) is not None:
+            self.btn_make.setText(_tr(self, "button.create_body"))
+        if getattr(self, "btn_del", None) is not None:
+            self.btn_del.setText(_tr(self, "button.remove_body"))
+        self.label_point_ids.setText(_tr(self, "label.point_ids"))
+        self.edit_ids.setPlaceholderText(_tr(self, "label.point_ids_placeholder"))
+        if getattr(self, "btn_set", None) is not None:
+            self.btn_set.setText(_tr(self, "button.set_members"))
+        if getattr(self, "btn_add", None) is not None:
+            self.btn_add.setText(_tr(self, "button.add_members"))
+        if getattr(self, "btn_rm", None) is not None:
+            self.btn_rm.setText(_tr(self, "button.remove_members"))
+        if getattr(self, "btn_add_sel", None) is not None:
+            self.btn_add_sel.setText(_tr(self, "button.add_selected"))
+        if getattr(self, "btn_rm_sel", None) is not None:
+            self.btn_rm_sel.setText(_tr(self, "button.remove_selected"))
         self.table.setHorizontalHeaderLabels([
-            tr(lang, "table.id"),
-            tr(lang, "table.name"),
-            tr(lang, "table.points"),
-            tr(lang, "table.color"),
-            tr(lang, "table.hidden"),
-            tr(lang, "table.rigid_edges"),
+            _tr(self, "table.id"),
+            _tr(self, "table.name"),
+            _tr(self, "table.points"),
+            _tr(self, "table.color"),
+            _tr(self, "table.hidden"),
+            _tr(self, "table.rigid_edges"),
         ])
 
     def _make_body(self):
         ids = self.panel.selected_points_from_table(include_hidden=False)
         if len(ids) < 2:
-            QMessageBox.information(self, "Need >=2 points", "Select at least 2 visible points then Make Body.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.need_2_visible_points_make_body"))
             return
         self.ctrl.cmd_add_body_from_points(ids)
 
     def _add_sel_pts(self):
         bid = self.panel.selected_body_from_table()
         if bid is None:
-            QMessageBox.information(self, "Select body", "Select a body first.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.select_body_first"))
             return
         ids = self.panel.selected_points_from_table(include_hidden=False)
         if not ids: return
@@ -1094,7 +1073,7 @@ class BodiesTab(QWidget):
     def _rm_sel_pts(self):
         bid = self.panel.selected_body_from_table()
         if bid is None:
-            QMessageBox.information(self, "Select body", "Select a body first.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.select_body_first"))
             return
         ids = set(self.panel.selected_points_from_table(include_hidden=True))
         if not ids: return
@@ -1104,18 +1083,18 @@ class BodiesTab(QWidget):
     def _set_members_from_text(self):
         bid = self.panel.selected_body_from_table()
         if bid is None:
-            QMessageBox.information(self, "Select body", "Select a body first.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.select_body_first"))
             return
         ids = parse_id_list(self.edit_ids.text())
         if not ids:
-            QMessageBox.information(self, "No IDs", "Enter point IDs like 0,1,2.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.enter_point_ids"))
             return
         self.ctrl.cmd_body_set_members(bid, ids)
 
     def _add_members_from_text(self):
         bid = self.panel.selected_body_from_table()
         if bid is None:
-            QMessageBox.information(self, "Select body", "Select a body first.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.select_body_first"))
             return
         ids = parse_id_list(self.edit_ids.text())
         if not ids: return
@@ -1128,7 +1107,7 @@ class BodiesTab(QWidget):
     def _rm_members_from_text(self):
         bid = self.panel.selected_body_from_table()
         if bid is None:
-            QMessageBox.information(self, "Select body", "Select a body first.")
+            QMessageBox.information(self, _tr(self, "tabs.title.body"), _tr(self, "tabs.msg.select_body_first"))
             return
         ids = set(parse_id_list(self.edit_ids.text()))
         if not ids: return
@@ -1188,7 +1167,7 @@ class BodiesTab(QWidget):
             name = self.table.item(row, 1).text()
             hidden = (self.table.item(row, 4).text().strip() not in ("0", "", "false", "False", "no", "No"))
         except Exception as e:
-            QMessageBox.warning(self, "Invalid input", str(e))
+            QMessageBox.warning(self, _tr(self, "dialog.invalid_input"), str(e))
             self.panel.defer_refresh_all(keep_selection=True); return
         def apply():
             model_before = self.ctrl.snapshot_model()
@@ -1204,3 +1183,8 @@ class BodiesTab(QWidget):
                     ctrl.apply_model_snapshot(model_before)
             ctrl.stack.push(EditBodyMeta())
         QTimer.singleShot(0, apply)
+
+
+# Unified table context menus (single entry framework)
+from .table_context_menu import install_sketch_table_context_menus
+install_sketch_table_context_menus()

@@ -5,9 +5,90 @@ from __future__ import annotations
 
 from .controller_common import *
 from .expression_service import eval_signal_expression
+from .sim_common_queries import SimulationQueryLoadMixin
 
 
-class ControllerSimulation:
+
+class ControllerSimulation(SimulationQueryLoadMixin):
+    def get_live_io_curve_target(self) -> Optional[Dict[str, Any]]:
+        """Return current intelligent-synthesis I/O target curve from UI (no caching).
+
+        Called by optimization/builder/result plotting right before evaluation so curve edits in
+        synthesis tab are reflected immediately without forcing case regeneration.
+        """
+        try:
+            win = getattr(self, "win", None)
+            sim_panel = getattr(win, "sim_panel", None) if win is not None else None
+            synth = getattr(sim_panel, "synthesis_tab", None) if sim_panel is not None else None
+            read_pts = getattr(synth, "_read_mapping_points", None)
+            if not callable(read_pts):
+                return None
+            raw_pts = read_pts() or []
+            pts = []
+            for p in raw_pts:
+                if not isinstance(p, (list, tuple)) or len(p) < 2:
+                    continue
+                try:
+                    pts.append([float(p[0]), float(p[1])])
+                except Exception:
+                    continue
+            if len(pts) < 2:
+                return None
+            pts.sort(key=lambda t: t[0])
+            xs = [float(v[0]) for v in pts]
+            return {
+                "kind": "io_angle",
+                "input_key": "input_deg",
+                "output_key": "output_deg",
+                "points": pts,
+                "sweep": {
+                    "start_deg": float(min(xs)),
+                    "end_deg": float(max(xs)),
+                    "step_count": max(1, len(pts) - 1),
+                },
+            }
+        except Exception:
+            return None
+
+    def apply_live_io_curve_target_to_case_spec(self, case_spec: Dict[str, Any]) -> Dict[str, Any]:
+        """Overlay current intelligent-synthesis curve onto one optimization case spec."""
+        if not isinstance(case_spec, dict):
+            return case_spec
+        live = self.get_live_io_curve_target()
+        if not isinstance(live, dict):
+            return case_spec
+        try:
+            ct0 = case_spec.get("curve_target") if isinstance(case_spec.get("curve_target"), dict) else {}
+            if ct0 and str(ct0.get("kind", "io_angle")) != "io_angle":
+                return case_spec
+            spec = dict(case_spec)
+            ct = dict(ct0)
+            ct["kind"] = "io_angle"
+            ct["input_key"] = str(live.get("input_key", "input_deg"))
+            ct["output_key"] = str(live.get("output_key", "output_deg"))
+            ct["points"] = [list(p) for p in (live.get("points") or [])]
+            spec["curve_target"] = ct
+            sw0 = spec.get("sweep") if isinstance(spec.get("sweep"), dict) else {}
+            sw = dict(sw0)
+            lsw = live.get("sweep") if isinstance(live.get("sweep"), dict) else {}
+            if "start_deg" in lsw:
+                sw["start_deg"] = float(lsw["start_deg"])
+            if "end_deg" in lsw:
+                sw["end_deg"] = float(lsw["end_deg"])
+            try:
+                old_steps = int(sw.get("step_count", 0) or 0)
+            except Exception:
+                old_steps = 0
+            try:
+                live_steps = int(lsw.get("step_count", 0) or 0)
+            except Exception:
+                live_steps = 0
+            sw["step_count"] = max(old_steps, live_steps, 1)
+            spec["sweep"] = sw
+            return spec
+        except Exception:
+            return case_spec
+
     # -------------------- Linkage-style simulation API --------------------
     def set_driver_angle(self, pivot_pid: int, tip_pid: int):
         """Set the input driver as a world-angle direction (pivot -> tip)."""
@@ -81,7 +162,7 @@ class ControllerSimulation:
         self._sync_primary_output()
 
     # ---- Quasi-static loads ----
-    def add_load_force(self, pid: int, fx: float, fy: float):
+    def add_load_force(self, pid: int, fx: float, fy: float = 0.0):
         self.loads.append({
             "type": "force",
             "pid": int(pid),
@@ -265,378 +346,7 @@ class ControllerSimulation:
             self.win.sim_panel._mark_used_solver_unknown()
             self.win.sim_panel.refresh_labels()
 
-    def _build_quasistatic_constraints(self, point_ids: List[int]) -> List[Callable[[np.ndarray], float]]:
-        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
-        funcs: List[Callable[[np.ndarray], float]] = []
-
-        def _xy(q: np.ndarray, pid: int) -> tuple[float, float]:
-            idx = idx_map[pid]
-            return float(q[2 * idx]), float(q[2 * idx + 1])
-
-        # Fixed points (x, y lock)
-        for pid in point_ids:
-            p = self.points[pid]
-            if not bool(p.get("fixed", False)):
-                continue
-            x0, y0 = float(p["x"]), float(p["y"])
-            funcs.append(lambda q, pid=pid, x0=x0: _xy(q, pid)[0] - x0)
-            funcs.append(lambda q, pid=pid, y0=y0: _xy(q, pid)[1] - y0)
-
-        # Coincide constraints (point-point)
-        for c in self.coincides.values():
-            if not bool(c.get("enabled", True)):
-                continue
-            a = int(c.get("a", -1))
-            b = int(c.get("b", -1))
-            if a not in idx_map or b not in idx_map:
-                continue
-            funcs.append(lambda q, a=a, b=b: _xy(q, a)[0] - _xy(q, b)[0])
-            funcs.append(lambda q, a=a, b=b: _xy(q, a)[1] - _xy(q, b)[1])
-
-        # Point-on-line constraints
-        for pl in self.point_lines.values():
-            if not bool(pl.get("enabled", True)):
-                continue
-            p_id = int(pl.get("p", -1))
-            i_id = int(pl.get("i", -1))
-            j_id = int(pl.get("j", -1))
-            if p_id not in idx_map or i_id not in idx_map or j_id not in idx_map:
-                continue
-            if "s" in pl:
-                s_val = float(pl.get("s", 0.0))
-
-                def _polx(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
-                    px, _py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    ux, uy = abx / denom, aby / denom
-                    target_x = ax + ux * s_val
-                    return px - target_x
-
-                def _poly(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id, s_val=s_val) -> float:
-                    _px, py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    ux, uy = abx / denom, aby / denom
-                    target_y = ay + uy * s_val
-                    return py - target_y
-
-                funcs.append(_polx)
-                funcs.append(_poly)
-            else:
-                def _pol(q: np.ndarray, p_id=p_id, i_id=i_id, j_id=j_id) -> float:
-                    px, py = _xy(q, p_id)
-                    ax, ay = _xy(q, i_id)
-                    bx, by = _xy(q, j_id)
-                    abx, aby = bx - ax, by - ay
-                    denom = math.hypot(abx, aby)
-                    if denom < 1e-9:
-                        return 0.0
-                    return ((px - ax) * (-aby) + (py - ay) * abx) / denom
-
-                funcs.append(_pol)
-
-        # Point-on-spline constraints (normal distance to closest sampled segment)
-        for ps in self.point_splines.values():
-            if not bool(ps.get("enabled", True)):
-                continue
-            p_id = int(ps.get("p", -1))
-            s_id = int(ps.get("s", -1))
-            if p_id not in idx_map or s_id not in self.splines:
-                continue
-            spline = self.splines[s_id]
-            cp_ids = [pid for pid in spline.get("points", []) if pid in idx_map]
-            if len(cp_ids) < 2:
-                continue
-
-            def _pos(q: np.ndarray, p_id=p_id, cp_ids=cp_ids) -> float:
-                px, py = _xy(q, p_id)
-                samples = build_spline_samples(
-                    [_xy(q, cid) for cid in cp_ids],
-                    closed=bool(spline.get("closed", False)),
-                )
-                if len(samples) < 2:
-                    return 0.0
-                best_dist2 = float("inf")
-                best = None
-                for idx in range(len(samples) - 1):
-                    x1, y1, _seg1, _t1 = samples[idx]
-                    x2, y2, _seg2, _t2 = samples[idx + 1]
-                    vx = x2 - x1
-                    vy = y2 - y1
-                    denom = vx * vx + vy * vy
-                    if denom <= 1e-18:
-                        continue
-                    u = ((px - x1) * vx + (py - y1) * vy) / denom
-                    u = max(0.0, min(1.0, u))
-                    cx = x1 + u * vx
-                    cy = y1 + u * vy
-                    dx = cx - px
-                    dy = cy - py
-                    dist2 = dx * dx + dy * dy
-                    if dist2 < best_dist2:
-                        best_dist2 = dist2
-                        best = (cx, cy, vx, vy)
-                if best is None:
-                    return 0.0
-                cx, cy, tx, ty = best
-                t_norm = math.hypot(tx, ty)
-                if t_norm <= 1e-12:
-                    return 0.0
-                tx /= t_norm
-                ty /= t_norm
-                nx, ny = -ty, tx
-                return (px - cx) * nx + (py - cy) * ny
-
-            funcs.append(_pos)
-
-        # Rigid body edges
-        body_edges: List[Tuple[int, int, float]] = []
-        for b in self.bodies.values():
-            body_edges.extend(b.get("rigid_edges", []))
-        for (i, j, L) in body_edges:
-            if i not in idx_map or j not in idx_map:
-                continue
-
-            def _len(q: np.ndarray, i=i, j=j, L=L) -> float:
-                xi, yi = _xy(q, i)
-                xj, yj = _xy(q, j)
-                return math.hypot(xj - xi, yj - yi) - float(L)
-
-            funcs.append(_len)
-
-        # Length constraints (links)
-        for l in self.links.values():
-            if l.get("ref", False):
-                continue
-            i, j = int(l.get("i", -1)), int(l.get("j", -1))
-            if i not in idx_map or j not in idx_map:
-                continue
-
-            def _len(q: np.ndarray, i=i, j=j, L=l["L"]) -> float:
-                xi, yi = _xy(q, i)
-                xj, yj = _xy(q, j)
-                return math.hypot(xj - xi, yj - yi) - float(L)
-
-            funcs.append(_len)
-
-        # Angle constraints
-        for a in self.angles.values():
-            if not bool(a.get("enabled", True)):
-                continue
-            i, j, k = int(a.get("i", -1)), int(a.get("j", -1)), int(a.get("k", -1))
-            if i not in idx_map or j not in idx_map or k not in idx_map:
-                continue
-            target = float(a.get("rad", 0.0))
-
-            def _ang(q: np.ndarray, i=i, j=j, k=k, target=target) -> float:
-                xi, yi = _xy(q, i)
-                xj, yj = _xy(q, j)
-                xk, yk = _xy(q, k)
-                v1x, v1y = xi - xj, yi - yj
-                v2x, v2y = xk - xj, yk - yj
-                if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-                    return 0.0
-                cur = angle_between(v1x, v1y, v2x, v2y)
-                return clamp_angle_rad(cur - target)
-
-            funcs.append(_ang)
-
-        # Driver constraint (if enabled)
-        active_drivers = self._active_drivers()
-        active_outputs = self._active_outputs()
-        if active_drivers:
-            for drv in active_drivers:
-                if drv.get("type") != "angle":
-                    continue
-                piv = drv.get("pivot")
-                tip = drv.get("tip")
-                if piv in idx_map and tip in idx_map:
-                    target = float(drv.get("rad", 0.0))
-
-                    def _drv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                        px, py = _xy(q, int(piv))
-                        tx, ty = _xy(q, int(tip))
-                        dx, dy = tx - px, ty - py
-                        if abs(dx) + abs(dy) < 1e-12:
-                            return 0.0
-                        return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                    funcs.append(_drv)
-        elif active_outputs:
-            for out in active_outputs:
-                piv = out.get("pivot")
-                tip = out.get("tip")
-                if piv in idx_map and tip in idx_map:
-                    target = float(out.get("rad", 0.0))
-
-                    def _odrv(q: np.ndarray, piv=piv, tip=tip, target=target) -> float:
-                        px, py = _xy(q, int(piv))
-                        tx, ty = _xy(q, int(tip))
-                        dx, dy = tx - px, ty - py
-                        if abs(dx) + abs(dy) < 1e-12:
-                            return 0.0
-                        return clamp_angle_rad(math.atan2(dy, dx) - target)
-
-                    funcs.append(_odrv)
-
-        return funcs
-
-    def compute_quasistatic_joint_loads(self) -> List[Dict[str, Any]]:
-        point_ids = sorted(list(self.points.keys()))
-        if not point_ids:
-            return []
-
-        idx_map = {pid: idx for idx, pid in enumerate(point_ids)}
-        q = np.array([coord for pid in point_ids for coord in (self.points[pid]["x"], self.points[pid]["y"])], dtype=float)
-        ndof = len(q)
-        f_ext = np.zeros(ndof, dtype=float)
-        torque_map: Dict[int, float] = {pid: 0.0 for pid in point_ids}
-        for load in self.loads:
-            pid = int(load.get("pid", -1))
-            if pid not in self.points:
-                continue
-            idx = idx_map[pid]
-            fx, fy, mz = self._resolve_load_components(load, q, idx_map)
-            f_ext[2 * idx] += fx
-            f_ext[2 * idx + 1] += fy
-            if abs(mz) > 0.0:
-                torque_map[pid] = torque_map.get(pid, 0.0) + float(mz)
-
-        funcs = self._build_quasistatic_constraints(point_ids)
-        if not funcs:
-            out = []
-            for idx, pid in enumerate(point_ids):
-                fx = -float(f_ext[2 * idx])
-                fy = -float(f_ext[2 * idx + 1])
-                fz = float(torque_map.get(pid, 0.0))
-                mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-                out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
-            return out
-
-        def eval_constraints(qvec: np.ndarray) -> np.ndarray:
-            return np.array([fn(qvec) for fn in funcs], dtype=float)
-
-        eps = 1e-6
-        m = len(eval_constraints(q))
-        J = np.zeros((m, ndof), dtype=float)
-        for i in range(ndof):
-            dq = np.zeros_like(q)
-            dq[i] = eps
-            fp = eval_constraints(q + dq)
-            fm = eval_constraints(q - dq)
-            J[:, i] = (fp - fm) / (2.0 * eps)
-
-        if J.size == 0:
-            reaction = np.zeros_like(f_ext)
-        else:
-            try:
-                lam, *_ = np.linalg.lstsq(J.T, -f_ext, rcond=None)
-                reaction = J.T @ lam
-            except np.linalg.LinAlgError:
-                reaction = np.zeros_like(f_ext)
-
-        out: List[Dict[str, Any]] = []
-        for idx, pid in enumerate(point_ids):
-            fx = float(reaction[2 * idx])
-            fy = float(reaction[2 * idx + 1])
-            fz = float(torque_map.get(pid, 0.0))
-            mag = math.sqrt(fx * fx + fy * fy + fz * fz)
-            out.append({"pid": pid, "fx": fx, "fy": fy, "fz": fz, "mag": mag})
-        return out
-
-    @staticmethod
-    def _wrap_angle(angle: float) -> float:
-        return (angle + math.pi) % (2.0 * math.pi) - math.pi
-
-    def _resolve_load_components(
-        self,
-        load: Dict[str, Any],
-        qvec: Optional[np.ndarray] = None,
-        idx_map: Optional[Dict[int, int]] = None,
-    ) -> tuple[float, float, float]:
-        ltype = str(load.get("type", "force")).lower()
-        if ltype == "spring":
-            pid = int(load.get("pid", -1))
-            ref_pid = int(load.get("ref_pid", -1))
-            k = float(load.get("k", 0.0))
-            preload = float(load.get("load", 0.0))
-            if pid not in self.points or ref_pid not in self.points:
-                return 0.0, 0.0, 0.0
-            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
-                i = idx_map[pid]
-                j = idx_map[ref_pid]
-                dx = float(qvec[2 * j]) - float(qvec[2 * i])
-                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
-            else:
-                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
-                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            fx = k * dx
-            fy = k * dy
-            if abs(dx) + abs(dy) > 1e-12 and abs(preload) > 0.0:
-                norm = math.hypot(dx, dy)
-                fx += preload * dx / norm
-                fy += preload * dy / norm
-            return fx, fy, 0.0
-        if ltype == "torsion_spring":
-            pid = int(load.get("pid", -1))
-            ref_pid = int(load.get("ref_pid", -1))
-            k = float(load.get("k", 0.0))
-            theta0 = float(load.get("theta0", 0.0))
-            preload = float(load.get("load", 0.0))
-            if pid not in self.points or ref_pid not in self.points:
-                return 0.0, 0.0, 0.0
-            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
-                i = idx_map[pid]
-                j = idx_map[ref_pid]
-                dx = float(qvec[2 * j]) - float(qvec[2 * i])
-                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
-            else:
-                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
-                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            if abs(dx) + abs(dy) < 1e-12:
-                return 0.0, 0.0, 0.0
-            theta = math.atan2(dy, dx)
-            delta = self._wrap_angle(theta - theta0)
-            return 0.0, 0.0, k * delta + preload
-        fx = float(load.get("fx", 0.0))
-        fy = float(load.get("fy", 0.0))
-        mz = float(load.get("mz", 0.0))
-        return fx, fy, mz
-
     # ---- Quasi-static loads ----
-    def add_load_force(self, pid: int, fx: float, fy: float):
-        self.loads.append({
-            "type": "force",
-            "pid": int(pid),
-            "fx": float(fx),
-            "fy": float(fy),
-            "mz": 0.0,
-            "fx_expr": "",
-            "fy_expr": "",
-            "mz_expr": "",
-        })
-
-    def add_load_torque(self, pid: int, mz: float):
-        self.loads.append({
-            "type": "torque",
-            "pid": int(pid),
-            "fx": 0.0,
-            "fy": 0.0,
-            "mz": float(mz),
-            "fx_expr": "",
-            "fy_expr": "",
-            "mz_expr": "",
-        })
-
     def clear_loads(self):
         self.loads = []
     def _build_quasistatic_constraints(
@@ -1294,80 +1004,9 @@ class ControllerSimulation:
 
         return out
 
-    def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
-        out: List[tuple[str, Optional[float]]] = []
-        if not self.load_measures:
-            return out
-        load_map: Dict[int, Dict[str, float]] = {}
-        for jl in self.compute_quasistatic_joint_loads():
-            pid = int(jl.get("pid", -1))
-            if pid < 0:
-                continue
-            load_map[pid] = {
-                "fx": float(jl.get("fx", 0.0)),
-                "fy": float(jl.get("fy", 0.0)),
-                "mag": float(jl.get("mag", 0.0)),
-            }
-        for m in self.load_measures:
-            nm = str(m.get("name", ""))
-            pid = int(m.get("pid", -1))
-            comp = str(m.get("component", "mag")).lower()
-            val = None
-            if pid in load_map and comp in load_map[pid]:
-                val = float(load_map[pid][comp])
-            out.append((nm, val))
-        return out
-
     # ---- Angles ----
-    def get_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
-        if pivot_pid not in self.points or tip_pid not in self.points:
-            return None
-        p = self.points[pivot_pid]
-        q = self.points[tip_pid]
-        dx = q["x"] - p["x"]
-        dy = q["y"] - p["y"]
-        if abs(dx) + abs(dy) < 1e-12:
-            return None
-        return math.atan2(dy, dx)
-
-    def get_joint_angle_rad(self, i_pid: int, j_pid: int, k_pid: int) -> Optional[float]:
-        if i_pid not in self.points or j_pid not in self.points or k_pid not in self.points:
-            return None
-        pi, pj, pk = self.points[i_pid], self.points[j_pid], self.points[k_pid]
-        v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
-        v2x, v2y = pk["x"] - pj["x"], pk["y"] - pj["y"]
-        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-            return None
-        return angle_between(v1x, v1y, v2x, v2y)
 
     # ---- Relative-zero helpers (for simulation) ----
-    @staticmethod
-    def _rel_deg(abs_deg: float, base_deg: float) -> float:
-        """Return relative angle in [0, 360) degrees."""
-        return (abs_deg - base_deg) % 360.0
-
-    def _get_input_angle_abs_rad(self) -> Optional[float]:
-        primary = self._primary_driver()
-        if not primary or not primary.get("enabled"):
-            return None
-        if primary.get("type") != "angle":
-            return None
-        piv = primary.get("pivot")
-        tip = primary.get("tip")
-        if piv is None or tip is None:
-            return None
-        return self.get_angle_rad(int(piv), int(tip))
-
-    def _get_output_angle_abs_rad(self) -> Optional[float]:
-        primary = self._primary_output()
-        if not primary or not primary.get("enabled"):
-            return None
-        piv = primary.get("pivot")
-        tip = primary.get("tip")
-        if piv is None or tip is None:
-            return None
-        return self.get_angle_rad(int(piv), int(tip))
-
     def _get_output_angle_abs_rad_for(self, output: Dict[str, Any]) -> Optional[float]:
         if not output or not output.get("enabled"):
             return None
