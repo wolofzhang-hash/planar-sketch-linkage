@@ -161,3 +161,41 @@ git push origin vX.Y.Z
 ### 8.3 “四连杆死点时长度被拉长”
 - sweep 必须有可行性检查（max error 阈值）
 - dead-point 步应停或切换策略，不允许变形穿越
+
+---
+
+## 9. 回归测试
+
+长期维护阶段起，修改 `case / run / replay / i18n` 相关代码后，至少执行：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+最低要求：
+- `tests/test_run_models.py` 通过
+- `tests/test_case_run_manager.py` 通过
+- `tests/test_i18n_external.py` 通过
+
+---
+
+## 10. i18n 维护规范
+
+- UI 文案统一维护在：
+  - `planar_sketch/ui/locales/en.json`
+  - `planar_sketch/ui/locales/zh.json`
+- `ui/i18n.py` 只保留加载与 helper 逻辑，不再继续堆大字典。
+- 新增文案时，必须同时补 `en/zh` 两个文件。
+- 不要在业务代码里散落硬编码中英文，优先走 `tr()/tr_ui()`。
+
+---
+
+## 11. case / run / replay 修改守则
+
+每次提交前确认：
+
+1. 这次改动是在改 **case 定义**、**run 结果**，还是 **replay 展示**？
+2. 落盘路径是否唯一明确？
+3. 是否仍然存在通过 `active case` 或当前 UI 状态兜底的逻辑？
+4. 普通求解会不会覆盖保存工况？
+5. replay 会不会反向影响下一次求解？

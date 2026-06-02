@@ -17,10 +17,13 @@ from .items import (
     PointLineItem,
     SplineItem,
     PointSplineItem,
+    PointSplineDistItem,
     ForceArrowItem,
     TorqueArrowItem,
     AngleItem,
     GridItem,
+    BodySolidItem,
+    SolidLinkItem,
 )
 
 if TYPE_CHECKING:
@@ -58,6 +61,15 @@ class SketchView(QGraphicsView):
             cur = cur.parentItem()
         return False
 
+    def _is_body_decor_item(self, item) -> bool:
+        """Skip non-interactive solid body/link decoration items in hit-testing."""
+        cur = item
+        while cur is not None:
+            if isinstance(cur, (BodySolidItem, SolidLinkItem)):
+                return True
+            cur = cur.parentItem()
+        return False
+
     def _item_at_pos(self, pos):
         for item in self.items(pos):
             if isinstance(item, QGraphicsPixmapItem) and item is self.ctrl._background_item:
@@ -65,6 +77,8 @@ class SketchView(QGraphicsView):
             if isinstance(item, GridItem):
                 continue
             if self._is_load_arrow_item(item):
+                continue
+            if self._is_body_decor_item(item):
                 continue
             return item
         return None
@@ -169,6 +183,8 @@ class SketchView(QGraphicsView):
                     self.ctrl.show_spline_context_menu(item.sid, e.globalPosition().toPoint())
                 elif isinstance(item, PointSplineItem):
                     self.ctrl.show_point_spline_context_menu(item.psid, e.globalPosition().toPoint())
+                elif isinstance(item, PointSplineDistItem):
+                    self.ctrl.show_point_spline_dist_context_menu(item.pdid, e.globalPosition().toPoint())
             e.accept(); return
 
         if e.button() == Qt.MouseButton.LeftButton and self._rb_active:
@@ -210,6 +226,10 @@ class SketchView(QGraphicsView):
                 return
             if isinstance(item, PointSplineItem):
                 self.ctrl.focus_point_spline_in_panel(item.psid)
+                e.accept()
+                return
+            if isinstance(item, PointSplineDistItem):
+                self.ctrl.focus_point_spline_dist_in_panel(item.pdid)
                 e.accept()
                 return
         super().mouseDoubleClickEvent(e)

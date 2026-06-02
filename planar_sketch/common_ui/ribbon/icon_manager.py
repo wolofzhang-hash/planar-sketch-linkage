@@ -6,12 +6,16 @@ from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtWidgets import QStyle, QToolButton
 
 
-_FALLBACK_ICON_PATH = Path(__file__).resolve().parents[1] / "assets" / "fallback_action.svg"
+_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+_FALLBACK_ICON_PATH = _ASSETS_DIR / "fallback_action.svg"
+_APP_ICON_PATH = _ASSETS_DIR / "app_icon.svg"
 
 
 def _fallback_icon() -> QIcon:
     if _FALLBACK_ICON_PATH.exists():
         return QIcon(str(_FALLBACK_ICON_PATH))
+    if _APP_ICON_PATH.exists():
+        return QIcon(str(_APP_ICON_PATH))
     return QIcon()
 
 

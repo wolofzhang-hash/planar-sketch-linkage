@@ -15,6 +15,7 @@ from __future__ import annotations
 import csv
 import math
 import os
+import tempfile
 import time
 import importlib.util
 from datetime import datetime, timezone
@@ -24,23 +25,45 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QLineEdit, QCheckBox, QFileDialog, QMessageBox,
-    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QDialog, QComboBox
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QDialog, QComboBox, QSizePolicy, QMenu
 )
 
-from .analysis_tabs import AnimationTab, OptimizationTab
+from .analysis_tabs import AnimationTab
+from .analysis.curves_tab import CurvesTab
+from .analysis.optimization_tab import OptimizationTab
+from .synthesis_tab import SynthesisTab
 from .expression_builder import ExpressionBuilderDialog
-from .i18n import tr
-from ..core.case_run_manager import CaseRunManager
+from ..core.expression_registry import PARAMETER_FUNCTIONS
+from .i18n import tr, get_ui_language
+from .panel_common_i18n import panel_lang as _lang, panel_tr as _tr, panel_is_zh as _is_zh, panel_is_en as _is_en
+from .table_context_menu import exec_table_context_menu
+from .sim_panel_tables_mixin import SimulationPanelTablesMixin
 from ..core.expression_service import eval_signal_expression
+from ..core.headless_sim import simulate_case
+from ..core.project_paths import ProjectPathService
+from ..core.run_service import RunService
 
 if TYPE_CHECKING:
     from ..core.controller import SketchController
 
 
-class SimulationPanel(QWidget):
+
+class SimulationPanel(SimulationPanelTablesMixin, QWidget):
+    def _report_persistence_error(self, title: str, exc: Exception) -> None:
+        message = str(exc) or exc.__class__.__name__
+        win = getattr(self.ctrl, "win", None)
+        try:
+            if win is not None:
+                win.statusBar().showMessage(f"{title}: {message}", 8000)
+        except Exception:
+            pass
+        QMessageBox.critical(self, title, message)
+
     def __init__(self, ctrl: "SketchController"):
         super().__init__()
         self.ctrl = ctrl
+        self._project_paths = ProjectPathService(ctrl)
+        self._run_service = RunService(ctrl, self._project_paths)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -66,10 +89,24 @@ class SimulationPanel(QWidget):
         self._run_context: Optional[Dict[str, Any]] = None
         self._run_start_snapshot: Optional[Dict[str, Any]] = None
         self._last_run_data: Optional[Dict[str, Any]] = None
+        # The last case that has a persisted "current" run (enables "Save run").
+        self._last_saved_case_id: Optional[str] = None
         self._last_used_solver: Optional[str] = None
         self._last_solver_fallback_from: Optional[str] = None
         self._last_solver_error: Optional[str] = None
         self._solver_error_log: List[str] = []
+
+        # Isolated directory for blank/unsaved projects so we never touch cwd.
+        # This directory is only used for listing/loading cases/runs and is
+        # created lazily if needed.
+        self._session_project_dir: Optional[str] = None
+
+        # Performance knobs
+        # - pose_points snapshots are expensive; record only when needed (e.g. Animation/Save Run).
+        self._record_pose_points: bool = True
+        # Throttle UI refresh during sweep to avoid event-queue backlog.
+        self._ui_refresh_stride: int = 3
+        self._ui_refresh_counter: int = 0
 
         layout = QVBoxLayout(self)
         self.title = QLabel()
@@ -175,15 +212,6 @@ class SimulationPanel(QWidget):
         measurements_layout.addWidget(self.table_meas)
         self._measure_row_map: List[Dict[str, Any]] = []
 
-        meas_buttons = QHBoxLayout()
-        self.btn_add_meas_expr = QPushButton()
-        self.btn_clear_meas = QPushButton()
-        self.btn_delete_meas = QPushButton()
-        meas_buttons.addWidget(self.btn_add_meas_expr)
-        meas_buttons.addWidget(self.btn_clear_meas)
-        meas_buttons.addWidget(self.btn_delete_meas)
-        measurements_layout.addLayout(meas_buttons)
-
         measurements_layout.addStretch(1)
         loads_tab = QWidget()
         loads_layout = QVBoxLayout(loads_tab)
@@ -200,13 +228,6 @@ class SimulationPanel(QWidget):
         self.lbl_applied_loads = QLabel()
         loads_layout.addWidget(self.lbl_applied_loads)
         loads_layout.addWidget(self.table_loads)
-
-        load_buttons = QHBoxLayout()
-        self.btn_remove_load = QPushButton()
-        self.btn_clear_loads = QPushButton()
-        load_buttons.addWidget(self.btn_remove_load)
-        load_buttons.addWidget(self.btn_clear_loads)
-        loads_layout.addLayout(load_buttons)
 
         # Quasi-static summary (torques)
         qs_info = QHBoxLayout()
@@ -245,39 +266,34 @@ class SimulationPanel(QWidget):
         self.table_friction.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
         self.table_friction.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         friction_layout.addWidget(self.table_friction)
-
-        friction_buttons = QHBoxLayout()
-        self.btn_add_friction = QPushButton()
-        self.btn_remove_friction = QPushButton()
-        self.btn_clear_friction = QPushButton()
-        friction_buttons.addWidget(self.btn_add_friction)
-        friction_buttons.addWidget(self.btn_remove_friction)
-        friction_buttons.addWidget(self.btn_clear_friction)
-        friction_layout.addLayout(friction_buttons)
+        friction_layout.addStretch(1)
         friction_layout.addStretch(1)
 
-        self.tabs.addTab(loads_tab, "")
-        self.tabs.addTab(friction_tab, "")
-        self.tabs.addTab(measurements_tab, "")
-        self.tabs.addTab(main_tab, "")
-        self.animation_tab = AnimationTab(self.ctrl, on_active_case_changed=self._on_active_case_changed)
-        self.optimization_tab = OptimizationTab(self.ctrl)
-        self.tabs.addTab(self.animation_tab, "")
-        self.tabs.addTab(self.optimization_tab, "")
+        # ---- analysis tabs order ----
+        # Keep most tabs in-place, but:
+        # - Curves goes right after Measurements
+        # - Synthesis goes right before Optimization
+        self.simulation_tab = main_tab
+        self.curves_tab = CurvesTab(self.ctrl)
+        self.animation_tab = AnimationTab(self.ctrl, run_service=self._run_service, run_case_callback=self.run_case, on_active_case_changed=self._on_active_case_changed)
+        self.synthesis_tab = SynthesisTab(self.ctrl, run_service=self._run_service)
+        self.optimization_tab = OptimizationTab(self.ctrl, run_service=self._run_service)
+
+        self.tabs.addTab(loads_tab, "")             # 0
+        self.tabs.addTab(friction_tab, "")          # 1
+        self.tabs.addTab(measurements_tab, "")      # 2
+        self.tabs.addTab(self.curves_tab, "")       # 3
+        self.tabs.addTab(self.simulation_tab, "")   # 4
+        self.tabs.addTab(self.animation_tab, "")    # 5
+        self.tabs.addTab(self.synthesis_tab, "")    # 6
+        self.tabs.addTab(self.optimization_tab, "") # 7
+        self.tabs.currentChanged.connect(self._on_tabs_changed)
         self.input_fields.extend(getattr(self.optimization_tab, "input_fields", []))
 
         # Signals
         self.btn_clear_driver.clicked.connect(self._clear_driver)
         self.btn_clear_output.clicked.connect(self._clear_output)
-        self.btn_add_meas_expr.clicked.connect(self._add_expression_measurement)
-        self.btn_clear_meas.clicked.connect(self._clear_measures)
-        self.btn_delete_meas.clicked.connect(self._delete_selected_measure)
         self.btn_check_analysis.clicked.connect(self._run_analysis_check)
-        self.btn_remove_load.clicked.connect(self._remove_selected_load)
-        self.btn_clear_loads.clicked.connect(self._clear_loads)
-        self.btn_add_friction.clicked.connect(self._add_friction_from_selection)
-        self.btn_remove_friction.clicked.connect(self._remove_selected_friction)
-        self.btn_clear_friction.clicked.connect(self._clear_friction)
         self.btn_play.clicked.connect(self.play)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_reset_pose.clicked.connect(self.reset_pose)
@@ -298,84 +314,187 @@ class SimulationPanel(QWidget):
         self.refresh_labels()
         self._refresh_run_buttons()
 
+        # Explicit registration (no import-time side effects / monkey-patch install)
+        from .table_context_menu import bind_sim_table_context_menus
+        bind_sim_table_context_menus(self)
+
+    def preferred_panel_width(self) -> int:
+        """Preferred width for the analysis dock by current sub-tab."""
+        base_by_idx = {
+            0: 460,  # loads
+            1: 450,  # friction
+            2: 420,  # measurements
+            3: 620,  # curves
+            4: 500,  # simulation
+            5: 520,  # animation
+            6: 480,  # synthesis
+            7: 760,  # optimization
+        }
+        try:
+            idx = int(self.tabs.currentIndex())
+        except Exception:
+            return 500
+        base = int(base_by_idx.get(idx, 500))
+        try:
+            page = self.tabs.widget(idx)
+            extra = int(getattr(page, 'preferred_panel_width', lambda: 0)() or 0)
+            if extra > 0:
+                base = max(base, extra)
+        except Exception:
+            pass
+        return base
+
+    def _configure_panel_width_hints(self) -> None:
+        """Phase B: make analysis controls readable without over-widening the dock."""
+        try:
+            self.tabs.setUsesScrollButtons(True)
+        except Exception:
+            pass
+        for lbl_name in ('lbl_driver', 'lbl_output', 'lbl_driver_sweep', 'lbl_solver_used', 'lbl_qs_mode', 'lbl_tau_in', 'lbl_tau_out'):
+            lbl = getattr(self, lbl_name, None)
+            if isinstance(lbl, QLabel):
+                lbl.setWordWrap(True)
+                lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        for btn_name in ('btn_clear_driver','btn_clear_output','btn_play','btn_stop','btn_reset_pose','btn_export','btn_check_analysis','btn_save_run'):
+            btn = getattr(self, btn_name, None)
+            if isinstance(btn, QPushButton):
+                btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        if hasattr(self, 'combo_solver'):
+            self.combo_solver.setMinimumWidth(130)
+            self.combo_solver.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        if hasattr(self, 'ed_step'):
+            self.ed_step.setMaximumWidth(90)
+        if hasattr(self, 'ed_nfev'):
+            self.ed_nfev.setMaximumWidth(90)
+
+        def _table_policy(table, minw, interactive_cols=()):
+            if not isinstance(table, QTableWidget):
+                return
+            table.setMinimumWidth(minw)
+            hh = table.horizontalHeader()
+            try:
+                hh.setMinimumSectionSize(36)
+                hh.setStretchLastSection(False)
+            except Exception:
+                pass
+            for c in range(table.columnCount()):
+                mode = QHeaderView.ResizeMode.Stretch
+                if c in interactive_cols:
+                    mode = QHeaderView.ResizeMode.Interactive
+                try:
+                    hh.setSectionResizeMode(c, mode)
+                except Exception:
+                    pass
+            for c in interactive_cols:
+                try:
+                    hh.resizeSection(c, 90)
+                except Exception:
+                    pass
+
+        _table_policy(self.table_drivers, 430, interactive_cols=(1,2,3))
+        _table_policy(self.table_outputs, 380, interactive_cols=(1,))
+        _table_policy(self.table_meas, 420, interactive_cols=(2,))
+        _table_policy(self.table_loads, 520, interactive_cols=(2,3,4,5,6,7))
+        _table_policy(self.table_joint_loads, 420, interactive_cols=(1,2,3))
+        _table_policy(self.table_friction, 460, interactive_cols=(1,2,3,4))
+
     def apply_language(self) -> None:
-        lang = getattr(self.ctrl, "ui_language", "en")
-        self.title.setText(tr(lang, "panel.analysis_title"))
-        self.tabs.setTabText(0, tr(lang, "tab.loads"))
-        self.tabs.setTabText(1, tr(lang, "tab.friction"))
-        self.tabs.setTabText(2, tr(lang, "tab.measurements"))
-        self.tabs.setTabText(3, tr(lang, "tab.simulation"))
-        self.tabs.setTabText(4, tr(lang, "tab.animation"))
-        self.tabs.setTabText(5, tr(lang, "tab.optimization"))
-        self.lbl_solver.setText(tr(lang, "sim.solver"))
+        self.title.setText(_tr(self, "panel.analysis_title"))
+        self.tabs.setTabText(0, _tr(self, "tab.loads"))
+        self.tabs.setTabText(1, _tr(self, "tab.friction"))
+        self.tabs.setTabText(2, _tr(self, "tab.measurements"))
+        self.tabs.setTabText(3, _tr(self, "tab.curves"))
+        self.tabs.setTabText(4, _tr(self, "tab.simulation"))
+        self.tabs.setTabText(5, _tr(self, "tab.animation"))
+        self.tabs.setTabText(6, _tr(self, "tab.synthesis"))
+        self.tabs.setTabText(7, _tr(self, "tab.optimization"))
+        self.lbl_solver.setText(_tr(self, "sim.solver"))
         self._refresh_solver_options()
         self._update_used_solver_label()
-        self.lbl_step.setText(tr(lang, "sim.step_deg"))
-        self.lbl_max_nfev.setText(tr(lang, "sim.max_nfev"))
-        self.lbl_driver_sweep.setText(tr(lang, "sim.driver_sweep"))
-        self.btn_clear_driver.setText(tr(lang, "sim.clear"))
-        self.btn_clear_output.setText(tr(lang, "sim.clear"))
-        self.btn_play.setText(tr(lang, "sim.play"))
-        self.btn_stop.setText(tr(lang, "sim.stop"))
-        self.btn_reset_pose.setText(tr(lang, "sim.reset_pose"))
-        self.btn_export.setText(tr(lang, "sim.export_csv"))
-        self.btn_save_run.setText(tr(lang, "sim.save_run"))
-        self.btn_check_analysis.setText(tr(lang, "analysis.check"))
-        self.btn_add_meas_expr.setText(tr(lang, "sim.add_expression_measurement"))
-        self.btn_clear_meas.setText(tr(lang, "sim.clear"))
-        self.btn_delete_meas.setText(tr(lang, "sim.delete"))
-        self.lbl_applied_loads.setText(tr(lang, "sim.applied_loads"))
-        self.btn_remove_load.setText(tr(lang, "sim.remove_selected"))
-        self.btn_clear_loads.setText(tr(lang, "sim.clear"))
-        self.lbl_joint_loads.setText(tr(lang, "sim.joint_loads"))
-        self.lbl_friction.setText(tr(lang, "sim.friction_joints"))
-        self.btn_add_friction.setText(tr(lang, "button.add_selected"))
-        self.btn_remove_friction.setText(tr(lang, "sim.remove_selected"))
-        self.btn_clear_friction.setText(tr(lang, "sim.clear"))
-        self.chk_reset_before_run.setText(tr(lang, "sim.reset_before_run"))
+        self.lbl_step.setText(_tr(self, "sim.step_deg"))
+        self.lbl_max_nfev.setText(_tr(self, "sim.max_nfev"))
+        self.lbl_driver_sweep.setText(_tr(self, "sim.driver_sweep"))
+        self.btn_clear_driver.setText(_tr(self, "sim.clear"))
+        self.btn_clear_output.setText(_tr(self, "sim.clear"))
+        self.btn_play.setText(_tr(self, "sim.play"))
+        self.btn_stop.setText(_tr(self, "sim.stop"))
+        self.btn_reset_pose.setText(_tr(self, "sim.reset_pose"))
+        self.btn_export.setText(_tr(self, "sim.export_csv"))
+        self.btn_save_run.setText(_tr(self, "sim.save_run"))
+        self.btn_check_analysis.setText(_tr(self, "analysis.check"))
+        self.lbl_applied_loads.setText(_tr(self, "sim.applied_loads"))
+        self.lbl_joint_loads.setText(_tr(self, "sim.joint_loads"))
+        self.lbl_friction.setText(_tr(self, "sim.friction_joints"))
+        self.chk_reset_before_run.setText(_tr(self, "sim.reset_before_run"))
         self.table_meas.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.type"),
-            tr(lang, "sim.table.measurement"),
-            tr(lang, "sim.table.value"),
+            _tr(self, "sim.table.type"),
+            _tr(self, "sim.table.measurement"),
+            _tr(self, "sim.table.value"),
         ])
         self.table_loads.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.point"),
-            tr(lang, "sim.table.type"),
-            tr(lang, "sim.table.fx"),
-            tr(lang, "sim.table.fy"),
-            tr(lang, "sim.table.mz"),
-            tr(lang, "sim.table.k"),
-            tr(lang, "sim.table.load"),
-            tr(lang, "sim.table.ref"),
+            _tr(self, "sim.table.point"),
+            _tr(self, "sim.table.type"),
+            _tr(self, "sim.table.fx"),
+            _tr(self, "sim.table.fy"),
+            _tr(self, "sim.table.mz"),
+            _tr(self, "sim.table.k"),
+            _tr(self, "sim.table.load"),
+            _tr(self, "sim.table.ref"),
         ])
         self.table_drivers.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.driver"),
-            tr(lang, "sim.start"),
-            tr(lang, "sim.end"),
-            tr(lang, "sim.table.value"),
+            _tr(self, "sim.table.driver"),
+            _tr(self, "sim.start"),
+            _tr(self, "sim.end"),
+            _tr(self, "sim.table.value"),
         ])
         self.table_outputs.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.output"),
-            tr(lang, "sim.table.angle"),
+            _tr(self, "sim.table.output"),
+            _tr(self, "sim.table.angle"),
         ])
         self.table_joint_loads.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.point"),
-            tr(lang, "sim.table.fx"),
-            tr(lang, "sim.table.fy"),
-            tr(lang, "sim.table.mag"),
+            _tr(self, "sim.table.point"),
+            _tr(self, "sim.table.fx"),
+            _tr(self, "sim.table.fy"),
+            _tr(self, "sim.table.mag"),
         ])
         self.table_friction.setHorizontalHeaderLabels([
-            tr(lang, "sim.table.point"),
-            tr(lang, "sim.table.mu"),
-            tr(lang, "sim.table.diameter"),
-            tr(lang, "sim.table.local_load"),
-            tr(lang, "sim.table.friction_torque"),
+            _tr(self, "sim.table.point"),
+            _tr(self, "sim.table.mu"),
+            _tr(self, "sim.table.diameter"),
+            _tr(self, "sim.table.local_load"),
+            _tr(self, "sim.table.friction_torque"),
         ])
         if hasattr(self, "animation_tab"):
             self.animation_tab.apply_language()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.apply_language()
+        if hasattr(self, "curves_tab"):
+            try:
+                self.curves_tab.apply_language()
+            except Exception:
+                pass
+        if hasattr(self, "synthesis_tab"):
+            try:
+                self.synthesis_tab.apply_language()
+            except Exception:
+                pass
+        self._apply_compact_action_button_widths()
+        self._configure_panel_width_hints()
         self.refresh_labels()
+
+    def _apply_compact_action_button_widths(self) -> None:
+        """Keep action buttons sized to text, not stretched to full row width."""
+        buttons = [
+        ]
+        for btn in buttons:
+            if btn is None:
+                continue
+            btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            btn.setMinimumWidth(0)
+            try:
+                btn.setMaximumWidth(max(80, btn.sizeHint().width() + 8))
+            except Exception:
+                pass
 
     def reset_analysis_state(self) -> None:
         if self._timer.isActive():
@@ -397,26 +516,36 @@ class SimulationPanel(QWidget):
             self.animation_tab.reset_state()
         if hasattr(self, "optimization_tab"):
             self.optimization_tab.reset_state()
+        if hasattr(self, "synthesis_tab"):
+            try:
+                self.synthesis_tab.reset_for_new_project()
+            except Exception:
+                pass
+        try:
+            # Clear project-scoped curve/template customizations on 新建.
+            if hasattr(self.ctrl, "clear_project_user_curves"):
+                self.ctrl.clear_project_user_curves()
+            elif hasattr(self.ctrl, "_user_measure_curves"):
+                self.ctrl._user_measure_curves = {}
+            if hasattr(self.ctrl, "_expression_builder_template_overrides"):
+                self.ctrl._expression_builder_template_overrides = {}
+        except Exception:
+            pass
         self._refresh_run_buttons()
         self.refresh_labels()
 
     def _project_dir(self) -> str:
-        if getattr(self.ctrl, "win", None) and getattr(self.ctrl.win, "current_file", None):
-            project_dir = getattr(self.ctrl.win, "project_dir", None)
-            if project_dir:
-                return project_dir
-            return os.path.dirname(self.ctrl.win.current_file)
-        return os.getcwd()
+        return self._project_paths.project_dir()
 
-    def _run_manager(self) -> CaseRunManager:
-        project_uuid = getattr(self.ctrl, "project_uuid", "") if self.ctrl else ""
-        return CaseRunManager(self._project_dir(), project_uuid=project_uuid)
+    def _run_manager(self):
+        return self._run_service.manager()
 
     def is_running(self) -> bool:
         return self._timer.isActive()
 
     def has_unsaved_run(self) -> bool:
-        return bool(self._last_run_data)
+        # Runs are always written to "current" automatically; there is no unsaved run state.
+        return False
 
     def _utc_now(self) -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -425,36 +554,35 @@ class SimulationPanel(QWidget):
     def _selected_two_points(self) -> Optional[tuple[int, int]]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 2:
-            lang = getattr(self.ctrl, "ui_language", "en")
+            lang = _lang(self)
             if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
-                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_two_points"))
+                self.ctrl.win.statusBar().showMessage(_tr(self, "status.select_two_points"))
             return None
         return pids[0], pids[1]
 
     def _selected_three_points(self) -> Optional[tuple[int, int, int]]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 3:
-            lang = getattr(self.ctrl, "ui_language", "en")
+            lang = _lang(self)
             if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
-                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_three_points"))
+                self.ctrl.win.statusBar().showMessage(_tr(self, "status.select_three_points"))
             return None
         return pids[0], pids[1], pids[2]
 
     def _selected_one_point(self) -> Optional[int]:
         pids = sorted(list(self.ctrl.selected_point_ids))
         if len(pids) != 1:
-            lang = getattr(self.ctrl, "ui_language", "en")
+            lang = _lang(self)
             if getattr(self.ctrl, "win", None) and self.ctrl.win.statusBar():
-                self.ctrl.win.statusBar().showMessage(tr(lang, "status.select_one_point"))
+                self.ctrl.win.statusBar().showMessage(_tr(self, "status.select_one_point"))
             return None
         return pids[0]
 
     def _solver_options(self) -> List[tuple[str, str]]:
-        lang = getattr(self.ctrl, "ui_language", "en")
         return [
-            ("pbd", tr(lang, "sim.solver.pbd")),
-            ("scipy", tr(lang, "sim.solver.scipy")),
-            ("exudyn", tr(lang, "sim.solver.exudyn")),
+            ("pbd", _tr(self, "sim.solver.pbd")),
+            ("scipy", _tr(self, "sim.solver.scipy")),
+            ("exudyn", _tr(self, "sim.solver.exudyn")),
         ]
 
     def _exudyn_available(self) -> bool:
@@ -512,8 +640,7 @@ class SimulationPanel(QWidget):
         return solver_name
 
     def _solver_display_label(self, solver_name: str) -> str:
-        lang = getattr(self.ctrl, "ui_language", "en")
-        label = tr(lang, f"sim.solver.{solver_name}")
+        label = _tr(self, f"sim.solver.{solver_name}")
         if label == f"sim.solver.{solver_name}":
             return solver_name
         return label
@@ -533,12 +660,11 @@ class SimulationPanel(QWidget):
         fallback_from = self._last_solver_fallback_from
         if solver_name is None:
             solver_name = "NA"
-        lang = getattr(self.ctrl, "ui_language", "en")
         display = self._solver_display_label(str(solver_name))
         if fallback_from:
             display_fallback = self._solver_display_label(str(fallback_from))
             display = f"{display} (fallback from {display_fallback})"
-        self.lbl_solver_used.setText(tr(lang, "sim.solver.used").format(solver=display))
+        self.lbl_solver_used.setText(_tr(self, "sim.solver.used").format(solver=display))
 
     def _set_used_solver(self, solver_name: str, fallback_from: Optional[str] = None) -> None:
         self._last_used_solver = solver_name
@@ -619,614 +745,19 @@ class SimulationPanel(QWidget):
         self._sync_sweep_settings_from_fields()
 
     # ---- UI actions ----
-    def refresh_labels(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
-        outputs = [o for o in self.ctrl.outputs if o.get("enabled")]
-        if drivers:
-            labels = []
-            for d in drivers:
-                if d.get("type") == "angle" and d.get("pivot") is not None and d.get("tip") is not None:
-                    labels.append(tr(lang, "sim.driver_angle").format(pivot=d["pivot"], tip=d["tip"]))
-                elif d.get("type") == "translation":
-                    plid = d.get("plid")
-                    pl = self.ctrl.point_lines.get(plid, None)
-                    if pl:
-                        labels.append(tr(lang, "sim.driver_translation").format(p=pl.get("p"), i=pl.get("i"), j=pl.get("j")))
-                    else:
-                        labels.append(tr(lang, "sim.driver_translation_invalid"))
-                else:
-                    labels.append(tr(lang, "sim.driver_invalid"))
-            if len(labels) == 1:
-                self.lbl_driver.setText(labels[0])
-            else:
-                self.lbl_driver.setText(tr(lang, "sim.driver_multi").format(drivers="; ".join(labels)))
-        else:
-            if outputs:
-                self.lbl_driver.setText(tr(lang, "sim.driver_using_output"))
-            else:
-                self.lbl_driver.setText(tr(lang, "sim.driver_unset"))
-
-        if outputs:
-            labels = []
-            for o in outputs:
-                if o.get("pivot") is not None and o.get("tip") is not None:
-                    labels.append(tr(lang, "sim.output_angle").format(pivot=o["pivot"], tip=o["tip"]))
-                else:
-                    labels.append(tr(lang, "sim.output_unset"))
-            if len(labels) == 1:
-                self.lbl_output.setText(labels[0])
-            else:
-                self.lbl_output.setText(tr(lang, "sim.output_multi").format(outputs="; ".join(labels)))
-        else:
-            self.lbl_output.setText(tr(lang, "sim.output_unset"))
-
-        self._refresh_driver_table(drivers)
-        self._refresh_output_table(outputs)
-        self._refresh_load_tables()
-        self._refresh_friction_table()
-        self._update_used_solver_label()
-        if hasattr(self, "optimization_tab"):
-            self.optimization_tab.refresh_active_case()
-            self.optimization_tab.refresh_model_values()
-
-    def _driver_label(self, driver: Dict[str, Any]) -> str:
-        lang = getattr(self.ctrl, "ui_language", "en")
-        if driver.get("type") == "angle" and driver.get("pivot") is not None and driver.get("tip") is not None:
-            return tr(lang, "sim.driver_angle").format(pivot=driver["pivot"], tip=driver["tip"])
-        if driver.get("type") == "translation":
-            plid = driver.get("plid")
-            pl = self.ctrl.point_lines.get(plid, None)
-            if pl:
-                return tr(lang, "sim.driver_translation").format(p=pl.get("p"), i=pl.get("i"), j=pl.get("j"))
-            return tr(lang, "sim.driver_translation_invalid")
-        return tr(lang, "sim.driver_invalid")
-
-    def _refresh_driver_table(self, drivers: List[Dict[str, Any]]) -> None:
-        values = self.ctrl.get_driver_display_values()
-        self.table_drivers.blockSignals(True)
-        try:
-            self.table_drivers.setRowCount(len(drivers))
-            for row, drv in enumerate(drivers):
-                label = f"{row + 1}. {self._driver_label(drv)}"
-                start_val = drv.get("sweep_start", self.ctrl.sweep_settings.get("start", 0.0))
-                end_val = drv.get("sweep_end", self.ctrl.sweep_settings.get("end", 360.0))
-                value_val, _unit = values[row] if row < len(values) else (None, "")
-                items = [
-                    QTableWidgetItem(label),
-                    QTableWidgetItem(f"{float(start_val)}"),
-                    QTableWidgetItem(f"{float(end_val)}"),
-                    QTableWidgetItem("--" if value_val is None else self.ctrl.format_number(value_val)),
-                ]
-                items[0].setFlags(items[0].flags() & ~Qt.ItemFlag.ItemIsEditable)
-                items[3].setFlags(items[3].flags())
-                for col, item in enumerate(items):
-                    self.table_drivers.setItem(row, col, item)
-        finally:
-            self.table_drivers.blockSignals(False)
-
-    def _output_label(self, output: Dict[str, Any]) -> str:
-        lang = getattr(self.ctrl, "ui_language", "en")
-        if output.get("pivot") is not None and output.get("tip") is not None:
-            return tr(lang, "sim.output_angle").format(pivot=output["pivot"], tip=output["tip"])
-        return tr(lang, "sim.output_unset")
-
-    def _refresh_output_table(self, outputs: List[Dict[str, Any]]) -> None:
-        angles = self.ctrl.get_output_angles_deg()
-        self.table_outputs.blockSignals(True)
-        try:
-            self.table_outputs.setRowCount(len(outputs))
-            for row, out in enumerate(outputs):
-                label = f"{row + 1}. {self._output_label(out)}"
-                angle_val = angles[row] if row < len(angles) else None
-                items = [
-                    QTableWidgetItem(label),
-                    QTableWidgetItem("--" if angle_val is None else self.ctrl.format_number(angle_val)),
-                ]
-                for item in items:
-                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                for col, item in enumerate(items):
-                    self.table_outputs.setItem(row, col, item)
-        finally:
-            self.table_outputs.blockSignals(False)
-
-    def _on_driver_table_changed(self, row: int, col: int) -> None:
-        active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
-        if row < 0 or row >= len(active_drivers):
-            return
-        if col not in (1, 2, 3):
-            return
-        item = self.table_drivers.item(row, col)
-        if item is None:
-            return
-        try:
-            value = float(item.text())
-        except Exception:
-            if col == 3:
-                QMessageBox.warning(self, "Sweep", "Angle must be numbers.")
-            else:
-                QMessageBox.warning(self, "Sweep", "Start/End must be numbers.")
-            self._refresh_driver_table(active_drivers)
-            return
-        if col in (1, 2):
-            key = "sweep_start" if col == 1 else "sweep_end"
-            active_drivers[row][key] = value
-            if len(active_drivers) == 1:
-                self.ctrl.sweep_settings[key.replace("sweep_", "")] = value
-            self.refresh_labels()
-            return
-        display_vals = [val if val is not None else 0.0 for val, _unit in self.ctrl.get_driver_display_values()]
-        if row >= len(display_vals):
-            self._refresh_driver_table(active_drivers)
-            return
-        display_vals[row] = value
-        self.ctrl.drive_to_multi_values(display_vals, iters=80)
-        self.refresh_labels()
-
-    def _set_driver_from_selection(self):
-        pair = self._selected_two_points()
-        if not pair:
-            return
-        pivot, tip = pair
-        self.ctrl.set_driver_angle(pivot, tip)
-        self.refresh_labels()
-
-    def _clear_driver(self):
-        row = self.table_drivers.currentRow()
-        if row >= 0:
-            active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
-            if row < len(active_drivers):
-                target = active_drivers[row]
-                for idx, drv in enumerate(self.ctrl.drivers):
-                    if drv is target:
-                        del self.ctrl.drivers[idx]
-                        break
-            self.ctrl._sync_primary_driver()
-        else:
-            self.ctrl.clear_driver()
-        self.refresh_labels()
-
-    def _set_output_from_selection(self):
-        pair = self._selected_two_points()
-        if not pair:
-            return
-        pivot, tip = pair
-        self.ctrl.set_output(pivot, tip)
-        self.refresh_labels()
-
-    def _clear_output(self):
-        self.ctrl.clear_output()
-        self.refresh_labels()
-
-    def _add_measure_angle_from_selection(self):
-        pair = self._selected_two_points()
-        if not pair:
-            return
-        pivot, tip = pair
-        self.ctrl.add_measure_angle(pivot, tip)
-        self.refresh_labels()
-
-    def _add_measure_joint_from_selection(self):
-        tri = self._selected_three_points()
-        if not tri:
-            return
-        i, j, k = tri
-        self.ctrl.add_measure_joint(i, j, k)
-        self.refresh_labels()
-
-    def _measurement_expression_functions(self) -> Dict[str, List[str]]:
-        return {
-            "Functions": ["max(", "min(", "mean(", "rms(", "abs(", "first(", "last("],
-            "Operators": ["+", "-", "*", "/", "(", ")", ","],
-        }
-
-    def _measurement_expression_tokens(self) -> Dict[str, List[str]]:
-        measurements = [name for name, _val, _unit in self.ctrl.get_measure_values()]
-        load_measures = [name for name, _val in self.ctrl.get_load_measure_values()]
-        groups: Dict[str, List[str]] = {}
-        if measurements:
-            groups["Measurements"] = sorted({str(item) for item in measurements if str(item).strip()})
-        if load_measures:
-            groups["Load Measurements"] = sorted({str(item) for item in load_measures if str(item).strip()})
-        return groups
-
-    def _measurement_expression_signals(self) -> Dict[str, float]:
-        signals: Dict[str, float] = {}
-        for nm, val, _unit in self.ctrl.get_measure_values():
-            if nm and val is not None:
-                signals[str(nm)] = float(val)
-        for nm, val in self.ctrl.get_load_measure_values():
-            if nm and val is not None:
-                signals[str(nm)] = float(val)
-        return signals
-
-    def _add_expression_measurement(self) -> None:
-        lang = getattr(self.ctrl, "ui_language", "en")
-        signals = self._measurement_expression_signals()
-        token_groups = self._measurement_expression_tokens()
-        tokens: Any = token_groups if token_groups else []
-        dialog = ExpressionBuilderDialog(
-            self,
-            initial="",
-            tokens=tokens,
-            functions=self._measurement_expression_functions(),
-            evaluator=lambda expr: eval_signal_expression(expr, signals),
-            title=tr(lang, "analysis.expression_builder"),
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        expr = dialog.expression().strip()
-        if not expr:
-            return
-        name, ok = QInputDialog.getText(
-            self,
-            tr(lang, "sim.measure_expression_title"),
-            tr(lang, "sim.measure_expression_name"),
-            text=expr,
-        )
-        if not ok or not name.strip():
-            return
-        unit, ok = QInputDialog.getText(
-            self,
-            tr(lang, "sim.measure_expression_title"),
-            tr(lang, "sim.measure_expression_unit"),
-            text="",
-        )
-        if not ok:
-            return
-        self.ctrl.add_measure_expression(name.strip(), expr, unit.strip())
-        self.refresh_labels()
-
-    def _clear_measures(self):
-        self.ctrl.clear_measures()
-        self.refresh_labels()
-
-    def _delete_selected_measure(self):
-        row = self.table_meas.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
-            return
-        if row >= len(self._measure_row_map):
-            QMessageBox.information(self, "Measurements", "Select a measurement row to delete.")
-            return
-        row_info = self._measure_row_map[row]
-        if row_info["kind"] == "measure":
-            self.ctrl.remove_measure_at(row_info["index"])
-        elif row_info["kind"] == "load":
-            self.ctrl.remove_load_measure_at(row_info["index"])
-        elif row_info["kind"] == "point_line":
-            QMessageBox.information(self, "Measurements", "Point-on-line (s) measurements are tied to constraints.")
-        self.refresh_labels()
-
-    def _refresh_measure_table(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        all_measures = self.ctrl.get_measure_values()
-        mv = [(nm, val, unit) for (nm, val, unit) in all_measures if unit == "deg"]
-        mv_line = [(nm, val, unit) for (nm, val, unit) in all_measures if unit != "deg"]
-        load_mv = self.ctrl.get_load_measure_values()
-        self._measure_row_map = []
-        total_rows = len(mv) + len(mv_line) + len(load_mv)
-        self.table_meas.setRowCount(total_rows)
-        row = 0
-        for index, (nm, val, unit) in enumerate(mv):
-            type_item = QTableWidgetItem(tr(lang, "sim.measurement"))
-            name_item = QTableWidgetItem(str(nm))
-            if val is None:
-                value_text = "--"
-            elif unit == "deg":
-                value_text = f"{self.ctrl.format_number(val)}°"
-            else:
-                value_text = f"{self.ctrl.format_number(val)} {unit}"
-            value_item = QTableWidgetItem(value_text)
-            for item in (type_item, name_item, value_item):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_meas.setItem(row, 0, type_item)
-            self.table_meas.setItem(row, 1, name_item)
-            self.table_meas.setItem(row, 2, value_item)
-            self._measure_row_map.append({"kind": "measure", "index": index})
-            row += 1
-        for index, (nm, val, unit) in enumerate(mv_line):
-            type_item = QTableWidgetItem(tr(lang, "sim.measurement"))
-            name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else f"{self.ctrl.format_number(val)} {unit}")
-            for item in (type_item, name_item, value_item):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_meas.setItem(row, 0, type_item)
-            self.table_meas.setItem(row, 1, name_item)
-            self.table_meas.setItem(row, 2, value_item)
-            self._measure_row_map.append({"kind": "point_line", "index": index})
-            row += 1
-        for index, (nm, val) in enumerate(load_mv):
-            type_item = QTableWidgetItem(tr(lang, "sim.load"))
-            name_item = QTableWidgetItem(str(nm))
-            value_item = QTableWidgetItem("--" if val is None else self.ctrl.format_number(val))
-            for item in (type_item, name_item, value_item):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.table_meas.setItem(row, 0, type_item)
-            self.table_meas.setItem(row, 1, name_item)
-            self.table_meas.setItem(row, 2, value_item)
-            self._measure_row_map.append({"kind": "load", "index": index})
-            row += 1
-
-    def _add_force_from_selection(self):
-        pid = self._selected_one_point()
-        if pid is None:
-            return
-        fx, ok = QInputDialog.getDouble(
-            self,
-            "Force X",
-            "Fx",
-            0.0,
-            decimals=int(self.ctrl.display_precision),
-        )
-        if not ok:
-            return
-        fy, ok = QInputDialog.getDouble(
-            self,
-            "Force Y",
-            "Fy",
-            0.0,
-            decimals=int(self.ctrl.display_precision),
-        )
-        if not ok:
-            return
-        self.ctrl.add_load_force(pid, fx, fy)
-        self.refresh_labels()
-
-    def _add_torque_from_selection(self):
-        pid = self._selected_one_point()
-        if pid is None:
-            return
-        mz, ok = QInputDialog.getDouble(
-            self,
-            "Torque",
-            "Mz (out-of-plane)",
-            0.0,
-            decimals=int(self.ctrl.display_precision),
-        )
-        if not ok:
-            return
-        self.ctrl.add_load_torque(pid, mz)
-        self.refresh_labels()
-
-    def _clear_loads(self):
-        self.ctrl.clear_loads()
-        self.refresh_labels()
-
-    def _remove_selected_load(self):
-        row = self.table_loads.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Loads", "Select a load row to remove.")
-            return
-        self.ctrl.remove_load_at(row)
-        self.refresh_labels()
-
-    def _add_friction_from_selection(self):
-        pid = self._selected_one_point()
-        if pid is None:
-            return
-        self.ctrl.add_friction_joint(pid, 0.0, 0.0)
-        self.refresh_labels()
-
-    def _clear_friction(self):
-        self.ctrl.clear_friction_joints()
-        self.refresh_labels()
-
-    def _remove_selected_friction(self):
-        row = self.table_friction.currentRow()
-        if row < 0:
-            QMessageBox.information(self, "Friction", "Select a friction row to remove.")
-            return
-        self.ctrl.remove_friction_joint_at(row)
-        self.refresh_labels()
-
-    def _on_load_table_changed(self, row: int, col: int) -> None:
-        if col not in (2, 3, 4, 5, 6, 7):
-            return
-        if row < 0 or row >= len(self.ctrl.loads):
-            return
-        item = self.table_loads.item(row, col)
-        if item is None:
-            return
-        load = self.ctrl.loads[row]
-        ltype = str(load.get("type", "force")).lower()
-        if col in (2, 3, 4) and ltype in ("force", "torque"):
-            key_map = {
-                2: ("fx", "fx_expr"),
-                3: ("fy", "fy_expr"),
-                4: ("mz", "mz_expr"),
-            }
-            key_num, key_expr = key_map.get(col, ("", ""))
-            if not key_num:
-                return
-            raw = item.text().strip()
-            try:
-                value = float(raw)
-            except ValueError:
-                if not raw:
-                    self._refresh_load_tables()
-                    return
-                self.ctrl.loads[row][key_expr] = raw
-                self.ctrl.recompute_from_parameters()
-            else:
-                self.ctrl.loads[row][key_num] = value
-                self.ctrl.loads[row][key_expr] = ""
-        elif col == 5 and ltype in ("spring", "torsion_spring"):
-            raw = item.text().strip()
-            try:
-                value = float(raw)
-            except ValueError:
-                if not raw:
-                    self._refresh_load_tables()
-                    return
-                self.ctrl.loads[row]["k_expr"] = raw
-                self.ctrl.recompute_from_parameters()
-            else:
-                self.ctrl.loads[row]["k"] = value
-                self.ctrl.loads[row]["k_expr"] = ""
-        elif col == 6 and ltype in ("spring", "torsion_spring"):
-            raw = item.text().strip()
-            try:
-                value = float(raw)
-            except ValueError:
-                if not raw:
-                    self._refresh_load_tables()
-                    return
-                self.ctrl.loads[row]["load_expr"] = raw
-                self.ctrl.recompute_from_parameters()
-            else:
-                self.ctrl.loads[row]["load"] = value
-                self.ctrl.loads[row]["load_expr"] = ""
-        elif col == 7 and ltype in ("spring", "torsion_spring"):
-            try:
-                raw = item.text().strip()
-                if raw.lower().startswith("p"):
-                    raw = raw[1:]
-                value = int(raw)
-            except ValueError:
-                self._refresh_load_tables()
-                return
-            if value not in self.ctrl.points:
-                self._refresh_load_tables()
-                return
-            self.ctrl.loads[row]["ref_pid"] = value
-            if ltype == "torsion_spring":
-                theta0 = self.ctrl.get_angle_rad(int(load.get("pid", -1)), value)
-                if theta0 is not None:
-                    self.ctrl.loads[row]["theta0"] = float(theta0)
-        else:
-            return
-        self.refresh_labels()
-
-    def _on_friction_table_changed(self, row: int, col: int) -> None:
-        if col not in (1, 2):
-            return
-        if row < 0 or row >= len(self.ctrl.friction_joints):
-            return
-        item = self.table_friction.item(row, col)
-        if item is None:
-            return
-        raw = item.text().strip()
-        key_map = {
-            1: ("mu", "mu_expr"),
-            2: ("diameter", "diameter_expr"),
-        }
-        key_num, key_expr = key_map.get(col, ("", ""))
-        if not key_num:
-            return
-        try:
-            value = float(raw)
-        except ValueError:
-            if not raw:
-                self._refresh_friction_table()
-                return
-            self.ctrl.friction_joints[row][key_expr] = raw
-            self.ctrl.recompute_from_parameters()
-        else:
-            self.ctrl.friction_joints[row][key_num] = value
-            self.ctrl.friction_joints[row][key_expr] = ""
-        self.refresh_labels()
-
-    def _refresh_load_tables(self):
-        lang = getattr(self.ctrl, "ui_language", "en")
-        loads = list(self.ctrl.loads)
-        self.table_loads.blockSignals(True)
-        try:
-            self.table_loads.setRowCount(len(loads))
-            for row, ld in enumerate(loads):
-                pid = ld.get("pid", "--")
-                ltype = str(ld.get("type", "force"))
-                fx, fy, mz = self.ctrl._resolve_load_components(ld)
-                k = ld.get("k", "")
-                preload = ld.get("load", "")
-                ref_pid = ld.get("ref_pid", "")
-                fx_expr = str(ld.get("fx_expr", "") or "")
-                fy_expr = str(ld.get("fy_expr", "") or "")
-                mz_expr = str(ld.get("mz_expr", "") or "")
-                k_expr = str(ld.get("k_expr", "") or "")
-                load_expr = str(ld.get("load_expr", "") or "")
-                items = [
-                    QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
-                    QTableWidgetItem(ltype),
-                    QTableWidgetItem(fx_expr if fx_expr else self.ctrl.format_number(fx)),
-                    QTableWidgetItem(fy_expr if fy_expr else self.ctrl.format_number(fy)),
-                    QTableWidgetItem(mz_expr if mz_expr else self.ctrl.format_number(mz)),
-                    QTableWidgetItem(k_expr if k_expr else ("" if k == "" else self.ctrl.format_number(k))),
-                    QTableWidgetItem(load_expr if load_expr else ("" if preload == "" else self.ctrl.format_number(preload))),
-                    QTableWidgetItem("" if ref_pid == "" else f"P{ref_pid}"),
-                ]
-                for col, item in enumerate(items):
-                    if col in (0, 1):
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    elif ltype.lower() in ("force", "torque") and col in (5, 6, 7):
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    elif ltype.lower() not in ("force", "torque") and col in (2, 3, 4):
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    self.table_loads.setItem(row, col, item)
-        finally:
-            self.table_loads.blockSignals(False)
-
-        joint_loads, qs = self.ctrl.compute_quasistatic_report()
-
-        mode = qs.get("mode", "--")
-        self.lbl_qs_mode.setText(tr(lang, "sim.quasi_static").format(mode=mode))
-
-        tau_in = qs.get("tau_input", None)
-        tau_out = qs.get("tau_output", None)
-        if tau_in is None:
-            self.lbl_tau_in.setText(tr(lang, "sim.input_tau_none"))
-        else:
-            self.lbl_tau_in.setText(tr(lang, "sim.input_tau").format(value=self.ctrl.format_number(tau_in)))
-        if tau_out is None:
-            self.lbl_tau_out.setText(tr(lang, "sim.output_tau_none"))
-        else:
-            self.lbl_tau_out.setText(tr(lang, "sim.output_tau").format(value=self.ctrl.format_number(tau_out)))
-
-        self.table_joint_loads.setRowCount(len(joint_loads))
-        for row, jl in enumerate(joint_loads):
-            items = [
-                QTableWidgetItem(f"P{jl.get('pid')}"),
-                QTableWidgetItem(self.ctrl.format_number(jl.get("fx", 0.0))),
-                QTableWidgetItem(self.ctrl.format_number(jl.get("fy", 0.0))),
-                QTableWidgetItem(self.ctrl.format_number(jl.get("mag", 0.0))),
-            ]
-            for col, item in enumerate(items):
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                self.table_joint_loads.setItem(row, col, item)
-
-        self._refresh_measure_table()
-
-    def _refresh_friction_table(self) -> None:
-        rows = self.ctrl.get_friction_table()
-        self.table_friction.blockSignals(True)
-        try:
-            self.table_friction.setRowCount(len(rows))
-            for row, entry in enumerate(rows):
-                pid = entry.get("pid", "--")
-                mu = entry.get("mu", 0.0)
-                diameter = entry.get("diameter", 0.0)
-                mu_expr = entry.get("mu_expr", "")
-                diameter_expr = entry.get("diameter_expr", "")
-                local_load = entry.get("local_load", None)
-                torque = entry.get("torque", None)
-                items = [
-                    QTableWidgetItem(f"P{pid}" if isinstance(pid, int) else str(pid)),
-                    QTableWidgetItem(mu_expr if mu_expr else self.ctrl.format_number(mu)),
-                    QTableWidgetItem(diameter_expr if diameter_expr else self.ctrl.format_number(diameter)),
-                    QTableWidgetItem("--" if local_load is None else self.ctrl.format_number(local_load)),
-                    QTableWidgetItem("--" if torque is None else self.ctrl.format_number(torque)),
-                ]
-                for col, item in enumerate(items):
-                    if col in (0, 3, 4):
-                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-                    self.table_friction.setItem(row, col, item)
-        finally:
-            self.table_friction.blockSignals(False)
     # ---- sweep ----
-    def play(self):
-        if not self.ctrl.drivers and not self.ctrl.outputs:
-            QMessageBox.information(self, "Driver", "Set a driver or output first.")
-            return
+    def _start_numeric_playback(self, explicit_case_name: Optional[str] = None, explicit_case_spec: Optional[Dict[str, Any]] = None) -> None:
+        # Numeric run must be independent from any replay payload that may have
+        # temporarily moved the live model to a saved run pose.
+        # Always record pose_points so replay depends only on saved run data,
+        # never on the current live model / active case / current tab.
+        self._record_pose_points = True
+        try:
+            anim = getattr(self, "animation_tab", None)
+            if anim is not None and hasattr(anim, "release_replay_model_state"):
+                anim.release_replay_model_state()
+        except Exception:
+            pass
         if hasattr(self, "chk_reset_before_run") and self.chk_reset_before_run.isChecked():
             if self.ctrl.reset_pose_to_sim_start():
                 self.ctrl.update_graphics()
@@ -1235,11 +766,11 @@ class SimulationPanel(QWidget):
         try:
             step = float(self.ed_step.text())
         except ValueError:
-            QMessageBox.warning(self, "Sweep", "Step must be numbers.")
+            QMessageBox.warning(self, _tr(self, "sweep.title"), _tr(self, "sweep.msg.step_numbers"))
             return
         step = int(round(abs(step)))
         if step <= 0:
-            QMessageBox.warning(self, "Sweep", "Step must be greater than 0.")
+            QMessageBox.warning(self, _tr(self, "sweep.title"), _tr(self, "sweep.msg.step_positive"))
             return
         active_drivers = [d for d in self.ctrl.drivers if d.get("enabled")]
         start = self.ctrl.sweep_settings.get("start", 0.0)
@@ -1325,17 +856,235 @@ class SimulationPanel(QWidget):
             self._theta_step_min = max(abs(base_step) / 128.0, 1e-4)
             self._driver_step_scale_max = 1.0
 
-        case_spec = self._build_case_spec()
+        case_spec = dict(explicit_case_spec) if isinstance(explicit_case_spec, dict) and explicit_case_spec else self._build_case_spec()
+        run_case_name = str(explicit_case_name) if explicit_case_name not in (None, "") else None
         self._run_context = {
             "started_utc": self._utc_now(),
             "start_time": time.time(),
             "case_spec": case_spec,
+            "case_name": run_case_name,
         }
         self._refresh_run_buttons()
 
-        # Do one immediate tick for responsiveness
         self._on_tick()
         self._timer.start(15)
+
+    def _try_play_saved_case_run(self) -> bool:
+        try:
+            manager = self._run_manager()
+            active_case_name = manager.get_active_case() if manager else None
+        except Exception:
+            active_case_name = None
+            manager = None
+        if not active_case_name or manager is None:
+            return False
+        try:
+            dirty = bool(self.ctrl.case_needs_rerun(active_case_name)) if hasattr(self.ctrl, "case_needs_rerun") else False
+        except Exception:
+            dirty = False
+        runs = manager.list_runs(str(active_case_name))
+        run = runs[0] if runs else None
+        anim = getattr(self, "animation_tab", None)
+        already_loaded = bool(anim is not None and getattr(anim, "_loaded_case_id", None) == str(active_case_name) and getattr(anim, "_frames", None))
+        if run and not dirty:
+            if already_loaded:
+                if anim is not None and hasattr(anim, "play_replay"):
+                    anim.play_replay()
+                    return True
+                return False
+            ask = QMessageBox.question(
+                self,
+                _tr(self, "run.title"),
+                _tr(self, "analysis.msg.load_run_for_play", default="Load saved run data for the current case and start replay?")
+            )
+            if ask == QMessageBox.StandardButton.Yes:
+                if anim is not None and hasattr(anim, "_load_run_data_for_run") and hasattr(anim, "play_replay"):
+                    anim._load_run_data_for_run(run, str(active_case_name))
+                    anim.play_replay()
+                    return True
+            return False
+        if run is None:
+            msg = _tr(self, "analysis.msg.no_saved_run_run_now", default="This case has no saved run data. Run it now?")
+        else:
+            msg = _tr(self, "analysis.msg.model_changed_rerun", default="The model changed after the saved run. Re-run this case now?")
+        ask = QMessageBox.question(self, _tr(self, "run.title"), msg)
+        if ask == QMessageBox.StandardButton.Yes:
+            self._start_numeric_playback()
+            return True
+        return True
+
+    def play(self):
+        if not self.ctrl.drivers and not self.ctrl.outputs:
+            QMessageBox.information(self, _tr(self, "driver.title"), _tr(self, "driver.msg.set_driver_or_output"))
+            return
+        # Clean rule: when the Animation tab is the current context, the toolbar
+        # Run button delegates to the animation table's explicit selection.
+        # SimPanel no longer guesses a case by mixing selection/active/UI state.
+        try:
+            tabs = getattr(self, "tabs", None)
+            current_tab = tabs.currentWidget() if tabs is not None else None
+            anim = getattr(self, "animation_tab", None)
+            if anim is not None and current_tab is anim and hasattr(anim, "run_selected_case"):
+                if anim.run_selected_case(autoload_after_run=False):
+                    return
+        except Exception:
+            pass
+        # Numeric run must be independent from animation replay. Saved replay
+        # data is handled only from the Animation tab's playback button.
+        self._start_numeric_playback()
+
+    def _restore_case_start_pose(self, case_name: str) -> bool:
+        """Restore the saved *start pose* of a case before rerunning it.
+
+        Root cause fixed here:
+        different cases were sharing one global ``sim start pose`` from the most
+        recent run. As a result, rerunning case "30" right after case "-40"
+        would still start from the "-40" pose and produce the same branch.
+
+        We now restore the selected case's own saved ``model.json`` point pose
+        (runs/<case>/current/model.json) when available and topology matches.
+        """
+        try:
+            manager = self._run_manager()
+            runs = manager.list_runs(str(case_name)) if manager is not None else []
+            run = runs[0] if runs else None
+            if not run:
+                return False
+            path = str(run.get("path") or "")
+            if not path:
+                return False
+            model_path = os.path.join(path, "model.json")
+            if not os.path.exists(model_path):
+                return False
+            with open(model_path, "r", encoding="utf-8") as fh:
+                snapshot = json.load(fh)
+            point_rows = snapshot.get("points", []) if isinstance(snapshot, dict) else []
+            pose = {}
+            for item in point_rows:
+                if not isinstance(item, dict):
+                    continue
+                pid = item.get("id")
+                if pid is None:
+                    continue
+                try:
+                    pose[int(pid)] = (float(item.get("x", 0.0)), float(item.get("y", 0.0)))
+                except Exception:
+                    continue
+            if not pose:
+                return False
+            current_ids = set(getattr(self.ctrl, "points", {}).keys())
+            if set(pose.keys()) != current_ids:
+                return False
+            self.ctrl.apply_points_snapshot(pose)
+            self.ctrl.solve_constraints()
+            self.ctrl.update_graphics()
+            if getattr(self.ctrl, "panel", None):
+                self.ctrl.panel.defer_refresh_all(keep_selection=True)
+            # Very important: replace the shared global sim-start baseline with
+            # this case's own restored start pose before the numeric run begins.
+            self.ctrl.mark_sim_start_pose()
+            return True
+        except Exception as exc:
+            return False
+
+    def run_case(self, case_name: str, case_spec: Dict[str, Any]) -> None:
+        """Run one saved case in isolation from live UI/run/replay state.
+
+        Clean rule:
+        - use the *current* model topology/geometry as the model snapshot,
+        - use the selected case's stored spec as the only run spec,
+        - generate/save frames headlessly,
+        - do not let replay or the live simulation timer influence the result.
+        """
+        case_name = str(case_name)
+        spec = dict(case_spec or {})
+        manager = self._run_manager()
+        if manager is not None:
+            try:
+                manager.set_active_case(case_name)
+            except Exception:
+                pass
+
+        # A case rerun must not inherit any loaded replay or active timer state.
+        try:
+            anim = getattr(self, "animation_tab", None)
+            if anim is not None and hasattr(anim, "release_replay_model_state"):
+                anim.release_replay_model_state()
+        except Exception:
+            pass
+        self.stop()
+
+        # Use the current model as the geometry/topology source so ordinary model
+        # edits rerun against the latest mechanism, while the case spec still
+        # controls drivers/outputs/sweep independently.
+        model_snapshot = self.ctrl.snapshot_model()
+        started_utc = self._utc_now()
+        start_time = time.time()
+        try:
+            frames, status, end_snapshot = simulate_case(model_snapshot, spec)
+            success = bool((status or {}).get("success", False))
+            reason = str((status or {}).get("reason", ""))
+        except Exception as exc:
+            frames = []
+            end_snapshot = model_snapshot
+            success = False
+            reason = str(exc)
+            status = {
+                "success": False,
+                "reason": reason,
+                "solver_error": reason,
+                "solver_error_log": [reason],
+            }
+        elapsed = max(0.0, time.time() - start_time)
+        status = dict(status or {})
+        status.setdefault("success", success)
+        status.setdefault("reason", reason)
+        status.setdefault("elapsed_sec", elapsed)
+        status.setdefault("started_utc", started_utc)
+        status.setdefault("finished_utc", self._utc_now())
+
+        self._last_run_data = {
+            "case_spec": spec,
+            "start_snapshot": model_snapshot,
+            "end_snapshot": end_snapshot if isinstance(end_snapshot, dict) else model_snapshot,
+            "records": list(frames or []),
+            "status": status,
+        }
+        self._last_saved_case_id = None
+        self._refresh_run_buttons()
+
+        try:
+            if success and hasattr(self.ctrl, "mark_cases_clean_after_run"):
+                self.ctrl.mark_cases_clean_after_run(case_name)
+            if manager is not None:
+                run_dir = self._run_service.save_case_run(
+                    case_name,
+                    spec,
+                    self._last_run_data.get("start_snapshot", {}),
+                    self._last_run_data.get("records", []),
+                    self._last_run_data.get("status", {}),
+                    end_snapshot=self._last_run_data.get("end_snapshot"),
+                )
+                self._run_service.save_last_run(
+                    spec,
+                    self._last_run_data.get("start_snapshot", {}),
+                    self._last_run_data.get("records", []),
+                    self._last_run_data.get("status", {}),
+                    end_snapshot=self._last_run_data.get("end_snapshot"),
+                )
+        except Exception as exc:
+            self._report_persistence_error(_tr(self, "save.failed"), exc)
+
+        try:
+            anim = getattr(self, "animation_tab", None)
+            if anim is not None and hasattr(anim, "on_case_run_saved"):
+                anim.on_case_run_saved(case_name)
+        except Exception:
+            pass
+
+        if hasattr(self.ctrl, "win") and self.ctrl.win:
+            msg = "Run finished" if success else f"Run failed: {reason or 'failed'}"
+            self.ctrl.win.statusBar().showMessage(msg)
 
     def stop(self):
         if self._timer.isActive():
@@ -1347,7 +1096,7 @@ class SimulationPanel(QWidget):
         self.stop()
         ok = self.ctrl.reset_pose_to_sim_start()
         if not ok:
-            QMessageBox.information(self, "Reset", "No start pose captured yet. Press Run once first.")
+            QMessageBox.information(self, _tr(self, "reset.title"), _tr(self, "reset.msg.no_start_pose"))
         self.refresh_labels()
         self.ctrl.update_graphics()
 
@@ -1377,6 +1126,34 @@ class SimulationPanel(QWidget):
 
 
 
+
+    def _on_tabs_changed(self, idx: int) -> None:
+        """Refresh lightweight UI only.
+
+        Replay correctness must not depend on which tab happened to be open
+        during the numeric run. We therefore keep per-frame pose recording
+        enabled for all runs and only do UI refresh work here.
+        """
+        try:
+            w = self.tabs.widget(idx)
+            if w is self.animation_tab:
+                try:
+                    self.animation_tab.reset_to_first_frame()
+                except Exception:
+                    pass
+            if w is getattr(self, "curves_tab", None):
+                try:
+                    self.curves_tab.refresh_curves()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            win = getattr(self.ctrl, "win", None)
+            if win is not None and hasattr(win, "_sync_right_dock_width_for_current_context"):
+                win._sync_right_dock_width_for_current_context()
+        except Exception:
+            pass
     def _on_tick(self):
         if self._sweep_reached_end():
             self._finalize_end_pose()
@@ -1430,6 +1207,7 @@ class SimulationPanel(QWidget):
                 theta_target = max(theta_target, self._theta_end)
             step_target = theta_target - self._theta_last_ok
         tol = 1e-3
+        hard_err_value = None
         while True:
             pose_before = self.ctrl.snapshot_points()
             has_non_angle_driver = any(d.get("type") != "angle" for d in self.ctrl._active_drivers())
@@ -1500,6 +1278,7 @@ class SimulationPanel(QWidget):
                     detail.get("point_line", 0.0),
                     detail.get("point_spline", 0.0),
                 )
+                hard_err_value = hard_err
                 if hard_err > tol:
                     # rollback to previous pose
                     self.ctrl.apply_points_snapshot(pose_before)
@@ -1540,20 +1319,10 @@ class SimulationPanel(QWidget):
             self.ctrl.append_trajectories()
         fallback_from = solver_name if actual_solver == "pbd" and solver_name != "pbd" else None
         self._set_used_solver(actual_solver, fallback_from=fallback_from)
-        self.refresh_labels()
+        self._ui_refresh_counter += 1
+        if self._ui_refresh_counter % max(1, self._ui_refresh_stride) == 0:
+            self.refresh_labels()
 
-        hard_err_value = None
-        try:
-            _max_err, detail = self.ctrl.max_constraint_error()
-            hard_err_value = max(
-                detail.get("length", 0.0),
-                detail.get("angle", 0.0),
-                detail.get("coincide", 0.0),
-                detail.get("point_line", 0.0),
-                detail.get("point_spline", 0.0),
-            )
-        except Exception:
-            hard_err_value = None
 
         rec: Dict[str, Any] = {
             "time": self._frame,
@@ -1563,6 +1332,13 @@ class SimulationPanel(QWidget):
             "output_deg": self.ctrl.get_output_angle_deg(),
             "driver_deg": list(self.ctrl.get_driver_angles_deg()),
         }
+        # Fast replay payload (see AnimationTab._apply_frame).
+        if self._record_pose_points:
+            try:
+                pts = self.ctrl.snapshot_points()
+                rec["pose_points"] = [[int(pid), float(x), float(y)] for pid, (x, y) in pts.items()]
+            except Exception:
+                pass
         rec["hard_err"] = hard_err_value
         for nm, val, _unit in self.ctrl.get_measure_values():
             rec[nm] = val
@@ -1670,9 +1446,22 @@ class SimulationPanel(QWidget):
         signals = ["input_deg", "output_deg", "hard_err", "success"]
         signals.extend([name for name, _val, _unit in self.ctrl.get_measure_values()])
         signals.extend([name for name, _val in self.ctrl.get_load_measure_values()])
+        target_inputs = []
+        for drv in self.ctrl.drivers:
+            if not isinstance(drv, dict):
+                continue
+            try:
+                target_inputs.append(float(drv.get("sweep_end", self.ctrl.sweep_settings.get("end", 360.0))))
+            except Exception:
+                target_inputs.append(float(self.ctrl.sweep_settings.get("end", 360.0)))
         return {
             "schema_version": "1.0",
+            "target_input_deg": target_inputs[0] if target_inputs else float(self.ctrl.sweep_settings.get("end", 360.0)),
+            "target_input_deg_list": target_inputs,
             "analysis_mode": "quasi_static",
+            # Record per-frame point positions so the Animation tab can replay
+            # smoothly without invoking the numeric solver on every frame.
+            "record_pose": True,
             "driver": dict(self.ctrl.driver),
             "drivers": [dict(d) for d in self.ctrl.drivers],
             "output": dict(self.ctrl.output),
@@ -1708,12 +1497,106 @@ class SimulationPanel(QWidget):
             },
         }
 
+    # ---- cases/runs integration ----
+    def apply_case_spec(self, case_spec: Dict[str, Any]) -> None:
+        """Apply a stored case spec to the current controller + UI.
+
+        A *case* is just a definition of drivers/outputs/sweep/loads/measurements.
+        It should not lock editing.
+        """
+        if not isinstance(case_spec, dict):
+            return
+        # Drivers / outputs / loads / friction / measurements
+        try:
+            drivers_list = case_spec.get("drivers")
+            driver = case_spec.get("driver")
+            if isinstance(drivers_list, list):
+                self.ctrl.drivers = [self.ctrl._normalize_driver(d) for d in drivers_list if isinstance(d, dict)]
+                self.ctrl._sync_primary_driver()
+            elif isinstance(driver, dict):
+                self.ctrl.drivers = [self.ctrl._normalize_driver(driver)]
+                self.ctrl._sync_primary_driver()
+        except Exception:
+            pass
+        try:
+            outputs_list = case_spec.get("outputs")
+            output = case_spec.get("output")
+            if isinstance(outputs_list, list):
+                self.ctrl.outputs = [self.ctrl._normalize_output(o) for o in outputs_list if isinstance(o, dict)]
+                self.ctrl._sync_primary_output()
+            elif isinstance(output, dict):
+                self.ctrl.outputs = [self.ctrl._normalize_output(output)]
+                self.ctrl._sync_primary_output()
+        except Exception:
+            pass
+        try:
+            loads = case_spec.get("loads")
+            if isinstance(loads, list):
+                self.ctrl.loads = [dict(ld) for ld in loads]
+        except Exception:
+            pass
+        try:
+            friction_joints = case_spec.get("friction_joints")
+            if isinstance(friction_joints, list):
+                self.ctrl.friction_joints = [dict(fj) for fj in friction_joints]
+        except Exception:
+            pass
+        try:
+            measurements = case_spec.get("measurements", {}) or {}
+            measures = measurements.get("measures")
+            if isinstance(measures, list):
+                self.ctrl.measures = [dict(m) for m in measures]
+            load_measures = measurements.get("load_measures")
+            if isinstance(load_measures, list):
+                self.ctrl.load_measures = [dict(m) for m in load_measures]
+        except Exception:
+            pass
+
+        # Sweep
+        try:
+            sweep = case_spec.get("sweep", {}) or {}
+            fallback_target = case_spec.get("target_input_deg", self.ctrl.sweep_settings.get("end", 360.0))
+            start = float(sweep.get("start_deg", self.ctrl.sweep_settings.get("start", 0.0)))
+            end = float(sweep.get("end_deg", fallback_target))
+            step = int(float(sweep.get("step_count", self.ctrl.sweep_settings.get("step", 200))))
+            step = max(1, step)
+            self.ctrl.sweep_settings = {"start": start, "end": end, "step": step}
+            if hasattr(self, "ed_step"):
+                self.ed_step.setText(f"{step}")
+        except Exception:
+            pass
+
+        # Solver (UI fields only)
+        try:
+            solver = case_spec.get("solver", {}) or {}
+            name = str(solver.get("name", ""))
+            if name:
+                self.set_solver_name(name)
+            if "max_nfev" in solver and hasattr(self, "ed_nfev"):
+                self.ed_nfev.setText(str(int(float(solver.get("max_nfev") or 250))))
+        except Exception:
+            pass
+
+        try:
+            self._mark_used_solver_unknown()
+        except Exception:
+            pass
+        try:
+            self.refresh_labels()
+        except Exception:
+            pass
+        try:
+            self.ctrl.update_graphics()
+        except Exception:
+            pass
+
     def _complete_run(self, success: bool, reason: str) -> None:
         if self._timer.isActive():
             self._timer.stop()
         if not self._run_context:
             return
-        start_time = self._run_context.get("start_time", time.time())
+        run_context = dict(self._run_context)
+        start_time = run_context.get("start_time", time.time())
         elapsed = max(0.0, time.time() - float(start_time))
         status = {
             "success": bool(success),
@@ -1721,10 +1604,10 @@ class SimulationPanel(QWidget):
             "reason": reason,
             "solver_error": self._last_solver_error,
             "solver_error_log": list(self._solver_error_log),
-            "started_utc": self._run_context.get("started_utc"),
+            "started_utc": run_context.get("started_utc"),
             "finished_utc": self._utc_now(),
         }
-        case_spec = self._run_context.get("case_spec", {})
+        case_spec = run_context.get("case_spec", {})
         end_snapshot = self.ctrl.snapshot_model()
         self._last_run_data = {
             "case_spec": case_spec,
@@ -1734,17 +1617,66 @@ class SimulationPanel(QWidget):
             "status": status,
         }
         self._run_context = None
+        explicit_case_name = run_context.get("case_name")
+        manager = None
+        active_case_name = None
+        try:
+            manager = self._run_manager()
+            active_case_name = manager.get_active_case() if manager else None
+        except Exception:
+            manager = None
+            active_case_name = None
+
+        try:
+            # Critical rule: a plain numeric Run must never overwrite a saved case
+            # just because some case happens to be active in the UI. Only runs that
+            # were explicitly started for a specific case may save back into that
+            # case's current run directory.
+            if bool(success) and explicit_case_name and hasattr(self.ctrl, "mark_cases_clean_after_run"):
+                self.ctrl.mark_cases_clean_after_run(str(explicit_case_name))
+            if bool(success) and explicit_case_name and manager is not None:
+                run_dir = self._run_service.save_case_run(
+                    str(explicit_case_name),
+                    case_spec,
+                    self._last_run_data.get("start_snapshot", {}),
+                    self._last_run_data.get("records", []),
+                    self._last_run_data.get("status", {}),
+                    end_snapshot=self._last_run_data.get("end_snapshot"),
+                )
+                anim = getattr(self, "animation_tab", None)
+                if anim is not None and hasattr(anim, "on_case_run_saved"):
+                    anim.on_case_run_saved(str(explicit_case_name))
+        except Exception as exc:
+            self._report_persistence_error(_tr(self, "save.failed"), exc)
+
+        # Persist an overwriteable "last run" snapshot WITHOUT creating a case.
+        # Promoting the last run to a new Case is an explicit user action ("Save run").
+        try:
+            manager = self._run_manager()
+            last_dir = self._run_service.save_last_run(
+                case_spec,
+                self._last_run_data.get("start_snapshot", {}),
+                self._last_run_data.get("records", []),
+                self._last_run_data.get("status", {}),
+                end_snapshot=self._last_run_data.get("end_snapshot"),
+            )
+        except Exception as exc:
+            self._report_persistence_error(_tr(self, "save.failed"), exc)
+        self._last_saved_case_id = None
+
         self._refresh_run_buttons()
+        # Last-run does not create a case; case list remains unchanged.
         if hasattr(self.ctrl, "win") and self.ctrl.win:
             if success:
-                message = "Run finished (not saved)"
+                message = "Run finished"
             else:
                 detail = reason or "failed"
                 message = f"Run failed: {detail}"
             self.ctrl.win.statusBar().showMessage(message)
 
     def _refresh_run_buttons(self) -> None:
-        self.btn_save_run.setEnabled(bool(self._last_run_data))
+        # "Save run" promotes the last run into a brand-new Case.
+        self.btn_save_run.setEnabled(bool(getattr(self, "_last_run_data", None)))
 
     def _record_solver_error(self, solver_name: str, msg: str) -> None:
         if not msg:
@@ -1761,38 +1693,36 @@ class SimulationPanel(QWidget):
         over, over_detail = self.ctrl.check_overconstraint()
         summary_lines = self._format_dof_summary()
         issues = []
-        lang = getattr(self.ctrl, "ui_language", "en")
         if over:
-            issues.append(tr(lang, "analysis.issue.overconstrained").format(detail=over_detail))
+            issues.append(_tr(self, "analysis.issue.overconstrained").format(detail=over_detail))
         if max_err > 1e-6:
             issues.append(
-                tr(lang, "analysis.issue.constraint_error").format(
+                _tr(self, "analysis.issue.constraint_error").format(
                     value=max_err,
                     detail=" ".join(f"{k}={v:.4g}" for k, v in detail.items()),
                 )
             )
         if not issues:
-            issues.append(tr(lang, "analysis.issue.none"))
+            issues.append(_tr(self, "analysis.issue.none"))
         message = (
-            tr(lang, "analysis.check.summary_title")
+            _tr(self, "analysis.check.summary_title")
             + "\n"
             + "\n".join(summary_lines)
             + "\n\n"
-            + tr(lang, "analysis.check.issues_title")
+            + _tr(self, "analysis.check.issues_title")
             + "\n"
             + "\n".join(issues)
         )
-        QMessageBox.information(self, tr(lang, "analysis.check"), message)
+        QMessageBox.information(self, _tr(self, "analysis.check"), message)
 
     def _format_dof_summary(self) -> List[str]:
         summaries = self.ctrl.constraint_dof_summary()
-        lang = getattr(self.ctrl, "ui_language", "en")
         if not summaries:
-            return [tr(lang, "analysis.dof.no_points")]
+            return [_tr(self, "analysis.dof.no_points")]
         lines: List[str] = []
         for item in summaries:
             lines.append(
-                tr(lang, "analysis.dof.component").format(
+                _tr(self, "analysis.dof.component").format(
                     idx=item["component"],
                     dof=item["dof"],
                     total=item["total"],
@@ -1808,30 +1738,43 @@ class SimulationPanel(QWidget):
         return lines
 
     def save_last_run(self) -> None:
-        if not self._last_run_data:
-            QMessageBox.information(self, "Run", "No completed run to save yet.")
+        data = getattr(self, "_last_run_data", None)
+        if not isinstance(data, dict) or not data:
+            QMessageBox.information(self, _tr(self, "run.title"), _tr(self, "run.msg.no_completed_run_to_save"))
             return
         manager = self._run_manager()
-        payload = self._last_run_data
-        manager.save_run(
-            payload.get("case_spec", {}),
-            payload.get("start_snapshot", {}),
-            payload.get("records", []),
-            payload.get("status", {}),
-            end_snapshot=payload.get("end_snapshot"),
-        )
-        self._last_run_data = None
+        case_spec = data.get("case_spec") or {}
+        # Create a new Case unconditionally (multi-condition workflow).
+        try:
+            # Naming rule: case name == case id. Do not generate additional names.
+            info = manager.create_case(case_spec)
+            manager.set_active_case(str(info.name))
+            self._run_service.save_case_run(
+                str(info.name),
+                case_spec,
+                data.get("start_snapshot", {}),
+                data.get("records", []),
+                data.get("status", {}),
+                end_snapshot=data.get("end_snapshot"),
+            )
+        except Exception as exc:
+            self._report_persistence_error(_tr(self, "save.failed"), exc)
+            return
+
         self._refresh_run_buttons()
-        if hasattr(self, "animation_tab"):
-            self.animation_tab.refresh_cases()
+        try:
+            if hasattr(self, "animation_tab"):
+                self.animation_tab.refresh_cases()
+        except Exception:
+            pass
         if hasattr(self.ctrl, "win") and self.ctrl.win:
-            self.ctrl.win.statusBar().showMessage("Run saved")
+            self.ctrl.win.statusBar().showMessage("Case saved")
 
     def open_last_run(self) -> None:
         manager = self._run_manager()
         path = manager.last_run_path()
         if not path:
-            QMessageBox.information(self, "Run", "No last run available.")
+            QMessageBox.information(self, _tr(self, "run.title"), _tr(self, "run.msg.no_last_run"))
             return
         from PyQt6.QtCore import QUrl
         from PyQt6.QtGui import QDesktopServices
@@ -1839,10 +1782,28 @@ class SimulationPanel(QWidget):
 
     def _on_active_case_changed(self) -> None:
         self.optimization_tab.refresh_active_case()
+        # When switching active case, apply its stored case spec to the Simulation UI
+        # so that re-run uses the case-specific sweep/input settings (multi-condition).
+        try:
+            manager = self._run_manager()
+            active_id = manager.get_active_case() if manager else None
+            if active_id:
+                spec = manager.load_case_spec(active_id) or {}
+                if isinstance(spec, dict) and spec:
+                    self.apply_case_spec(spec)
+        except Exception:
+            pass
+        # Keep Synthesis mapping in sync when cases change (without overwriting user edits).
+        try:
+            st = getattr(self, 'synthesis_tab', None)
+            if st is not None and hasattr(st, 'sync_from_project'):
+                st.sync_from_project(force=False)
+        except Exception:
+            pass
     # ---- export ----
     def export_csv(self):
         if not self._records:
-            QMessageBox.information(self, "Export", "No sweep data yet. Run first.")
+            QMessageBox.information(self, _tr(self, "export.title"), _tr(self, "run.msg.no_sweep_run_first"))
             return
         path, _ = QFileDialog.getSaveFileName(self, "Export Sweep CSV", "", "CSV (*.csv)")
         if not path:
@@ -1866,4 +1827,5 @@ class SimulationPanel(QWidget):
                 for r in self._records:
                     w.writerow([r.get(c) for c in cols])
         except Exception as e:
-            QMessageBox.critical(self, "Export failed", str(e))
+            QMessageBox.critical(self, _tr(self, "export.failed"), str(e))
+

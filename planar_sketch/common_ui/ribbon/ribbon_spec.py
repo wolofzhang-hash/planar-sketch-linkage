@@ -95,6 +95,9 @@ def build_planar_ribbon_spec(translate: Callable[[str, str], str] | None = None)
                 title=t("menu.analysis", "Analysis"),
                 key="analysis",
                 panels=(
+                    RibbonPanelSpec(t("ribbon.panel.intel", "Intelligent"), (
+                        RibbonItemSpec("act_intel_design", "action"),
+                    )),
                     RibbonPanelSpec(t("ribbon.panel.run", "Run"), (
                         RibbonItemSpec("act_analysis_play", "action"),
                         RibbonItemSpec("act_analysis_stop", "action"),
@@ -122,6 +125,9 @@ def build_planar_ribbon_spec(translate: Callable[[str, str], str] | None = None)
                         RibbonItemSpec("act_body_color", "toggle"),
                         RibbonItemSpec("act_splines", "toggle"),
                         RibbonItemSpec("act_load_arrows", "toggle"),
+                    )),
+                    RibbonPanelSpec(t("ribbon.panel.body_mode", "Body Mode"), (
+                        RibbonItemSpec("body_mode_widget", "widget"),
                     )),
                     RibbonPanelSpec(t("menu.presets", "Presets"), (
                         RibbonItemSpec("act_preset_show_all", "action"),

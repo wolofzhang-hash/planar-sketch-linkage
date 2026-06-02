@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QGraphicsScene, QMenu, QInputDialog, QGraphicsPixmap
 import numpy as np
 
 from .commands import Command, CommandStack
-from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples
+from .geometry import clamp_angle_rad, angle_between, build_spline_samples, closest_point_on_samples, closest_point_on_samples_hint
 from .solver import ConstraintSolver
 from .constraints_registry import ConstraintRegistry
 from .parameters import ParameterRegistry
@@ -29,10 +29,13 @@ from ..ui.items import (
     PointLineItem,
     SplineItem,
     PointSplineItem,
+    PointSplineDistItem,
     TrajectoryItem,
     ForceArrowItem,
     TorqueArrowItem,
     GridItem,
+    BodySolidItem,
+    SolidLinkItem,
 )
 from ..ui.i18n import tr
 from ..utils.constants import BODY_COLORS

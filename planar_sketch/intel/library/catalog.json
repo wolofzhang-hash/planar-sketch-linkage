@@ -1,0 +1,153 @@
+{
+  "concepts": [
+    {
+      "id": "cam_translating",
+      "family": "cam",
+      "name": "Cam + Translating follower (disk cam)",
+      "tags": ["function", "actuator", "motion_program"],
+      "typical_dof": 1,
+      "pros": [
+        "Best-in-class for arbitrary motion program (s-θ)",
+        "Compact, easy to package",
+        "Can achieve dwell, quick return, special timing"
+      ],
+      "cons": [
+        "Requires contact/rolling design (pressure angle, undercut)",
+        "Wear and lubrication considerations",
+        "Harder to represent with pure pin-joint link models"
+      ],
+      "template": "cam_roller_translating"
+    },
+    {
+      "id": "cam_oscillating",
+      "family": "cam",
+      "name": "Cam + Oscillating follower (rocker follower)",
+      "tags": ["function", "actuator", "motion_program"],
+      "typical_dof": 1,
+      "pros": [
+        "Outputs angular motion directly",
+        "Good packaging when follower pivot is fixed",
+        "Supports dwell/quick-return timing"
+      ],
+      "cons": [
+        "Pressure angle can be limiting",
+        "Follower swing can cause large contact loads",
+        "Often needs careful spring/preload design"
+      ],
+      "template": "cam_roller_oscillating"
+    },
+
+    {
+      "id": "4bar",
+      "family": "4bar",
+      "name": "Four-bar linkage (generic)",
+      "tags": ["general", "door", "function", "path"],
+      "typical_dof": 1,
+      "pros": ["Simple", "Easy to manufacture", "Good for door/hatch opening"],
+      "cons": ["Limited trajectory complexity", "May require careful Grashof selection"],
+      "template": "4bar_door"
+    },
+    {
+      "id": "4bar_crank_rocker",
+      "family": "4bar",
+      "name": "Four-bar (crank-rocker)",
+      "tags": ["door", "path", "actuator", "compact"],
+      "typical_dof": 1,
+      "pros": ["Continuous rotation input", "Rocker output is bounded", "Good for door/hatch"],
+      "cons": ["May have toggle positions", "Coupler curve depends strongly on proportions"],
+      "template": "4bar_crank_rocker"
+    },
+    {
+      "id": "4bar_double_rocker",
+      "family": "4bar",
+      "name": "Four-bar (double-rocker)",
+      "tags": ["door", "hinge", "compact", "path"],
+      "typical_dof": 1,
+      "pros": ["Both links oscillate (good for limited-angle hinges)", "Can be very compact"],
+      "cons": ["No full rotation link", "Limited stroke"],
+      "template": "4bar_double_rocker"
+    },
+    {
+      "id": "4bar_toggle",
+      "family": "4bar",
+      "name": "Four-bar (toggle / clamp)",
+      "tags": ["function", "force_amplification", "toggle"],
+      "typical_dof": 1,
+      "pros": ["Very high mechanical advantage near toggle", "Good for clamps/locks"],
+      "cons": ["Sensitive near singularity", "Large joint loads"],
+      "template": "4bar_toggle"
+    },
+
+    {
+      "id": "slider_crank",
+      "family": "slider_rail",
+      "name": "Slider-crank (in-line)",
+      "tags": ["function", "conversion", "actuator", "slider"],
+      "typical_dof": 1,
+      "pros": ["Converts rotary/linear motion", "Common actuation pattern"],
+      "cons": ["Slider guide needed", "Side load possible"],
+      "template": "slider_crank"
+    },
+    {
+      "id": "offset_slider_crank",
+      "family": "slider_rail",
+      "name": "Offset slider-crank",
+      "tags": ["function", "conversion", "quick_return", "slider"],
+      "typical_dof": 1,
+      "pros": ["Allows packaging offset", "Can create asymmetry in stroke"],
+      "cons": ["More side load", "More sensitive to offset"],
+      "template": "offset_slider_crank"
+    },
+    {
+      "id": "dual_slider",
+      "family": "slider_rail",
+      "name": "Dual-slider linkage (two rails)",
+      "tags": ["path", "guidance", "slider", "compact"],
+      "typical_dof": 1,
+      "pros": ["Good for guidance with two linear constraints", "Easy to package as rails"],
+      "cons": ["Rail alignment matters", "Friction/stiction in sliders"],
+      "template": "dual_slider"
+    },
+
+    {
+      "id": "6bar_watt1",
+      "family": "6bar",
+      "name": "Six-bar (Watt I)",
+      "tags": ["door", "hinge", "compact", "path"],
+      "typical_dof": 1,
+      "pros": ["Richer motion than 4-bar", "Used in hinges / packaging"],
+      "cons": ["More parameters", "Needs good initial layout"],
+      "template": "6bar_watt1"
+    },
+    {
+      "id": "6bar_watt2",
+      "family": "6bar",
+      "name": "Six-bar (Watt II)",
+      "tags": ["door", "hinge", "path"],
+      "typical_dof": 1,
+      "pros": ["Good for door trajectories and compact hinges"],
+      "cons": ["Can have multiple branches; needs good starting pose"],
+      "template": null
+    },
+    {
+      "id": "6bar_stephenson1",
+      "family": "6bar",
+      "name": "Six-bar (Stephenson I)",
+      "tags": ["path", "guidance", "function"],
+      "typical_dof": 1,
+      "pros": ["Very flexible trajectory/guidance", "Good for function generation"],
+      "cons": ["Harder to size", "Can be sensitive"],
+      "template": "6bar_stephenson1"
+    },
+    {
+      "id": "6bar_stephenson2",
+      "family": "6bar",
+      "name": "Six-bar (Stephenson II)",
+      "tags": ["path", "guidance"],
+      "typical_dof": 1,
+      "pros": ["Alternative Stephenson topology; rich coupler curves"],
+      "cons": ["More joints; possible singular configurations"],
+      "template": null
+    }
+  ]
+}

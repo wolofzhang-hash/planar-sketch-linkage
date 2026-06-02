@@ -7,9 +7,14 @@ import time
 import uuid
 
 from .controller_common import *
+from .controller_selection_io_mixin import ControllerSelectionIOMixin
+from .controller_selection_context_menu_mixin import ControllerSelectionContextMenuMixin
 
 
-class ControllerSelection:
+class ControllerSelection(ControllerSelectionContextMenuMixin, ControllerSelectionIOMixin):
+    def _undo_name_localized(self, en: str, zh: str) -> str:
+        return zh if getattr(self, "ui_language", "en") == "zh" else en
+
     # ------ selection helpers ------
     def _clear_scene_link_selection(self):
         for l in self.links.values(): l["item"].setSelected(False)
@@ -52,6 +57,14 @@ class ControllerSelection:
                 pass
         self.selected_point_spline_id = None
 
+    def _clear_scene_point_spline_dist_selection(self):
+        for pd in getattr(self, "point_spline_dists", {}).values():
+            try:
+                pd["item"].setSelected(False)
+            except Exception:
+                pass
+        self.selected_point_spline_dist_id = None
+
     def select_link_single(self, lid: int):
         if lid not in self.links: return
         self.commit_drag_if_any()
@@ -61,6 +74,7 @@ class ControllerSelection:
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
         self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
         self._clear_scene_link_selection()
         self.links[lid]["item"].setSelected(True)
         self.selected_link_id = lid
@@ -75,8 +89,22 @@ class ControllerSelection:
             self.panel.clear_bodies_selection_only()
         self.update_status()
 
+
+    def _ensure_sketch_panel_visible(self) -> None:
+        win = getattr(self, "win", None)
+        if win is None:
+            return
+        try:
+            if hasattr(win, "_activate_sketch_mode"):
+                win._activate_sketch_mode()
+            elif hasattr(win, "_set_dock_visibility"):
+                win._set_dock_visibility(active="sketch")
+        except Exception:
+            pass
+
     def focus_link_in_panel(self, lid: int) -> None:
         self.select_link_single(lid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_link(lid)
 
@@ -105,6 +133,7 @@ class ControllerSelection:
 
     def focus_angle_in_panel(self, aid: int) -> None:
         self.select_angle_single(aid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_angle(aid)
 
@@ -135,6 +164,7 @@ class ControllerSelection:
 
     def focus_coincide_in_panel(self, cid: int) -> None:
         self.select_coincide_single(cid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_constraint_key(f"C{cid}")
 
@@ -149,6 +179,7 @@ class ControllerSelection:
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
         self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
         self.point_lines[plid]["item"].setSelected(True)
         self.selected_point_line_id = plid
         self.selected_link_id = None
@@ -164,6 +195,7 @@ class ControllerSelection:
 
     def focus_point_line_in_panel(self, plid: int) -> None:
         self.select_point_line_single(plid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_constraint_key(f"P{plid}")
 
@@ -178,6 +210,7 @@ class ControllerSelection:
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
         self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
         self.point_splines[psid]["item"].setSelected(True)
         self.selected_point_spline_id = psid
         self.selected_link_id = None
@@ -193,8 +226,40 @@ class ControllerSelection:
 
     def focus_point_spline_in_panel(self, psid: int) -> None:
         self.select_point_spline_single(psid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_constraint_key(f"S{psid}")
+
+    def select_point_spline_dist_single(self, pdid: int):
+        if not hasattr(self, "point_spline_dists") or pdid not in self.point_spline_dists:
+            return
+        self.commit_drag_if_any()
+        self._clear_scene_point_selection()
+        self._clear_scene_link_selection()
+        self._clear_scene_angle_selection()
+        self._clear_scene_spline_selection()
+        self._clear_scene_coincide_selection()
+        self._clear_scene_point_line_selection()
+        self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
+        self.point_spline_dists[pdid]["item"].setSelected(True)
+        self.selected_point_spline_dist_id = pdid
+        self.selected_link_id = None
+        self.selected_angle_id = None
+        self.selected_body_id = None
+        self.update_graphics()
+        if self.panel:
+            try:
+                self.panel.select_constraints_row(f"D{pdid}")
+            except Exception:
+                pass
+        self.update_status()
+
+    def focus_point_spline_dist_in_panel(self, pdid: int) -> None:
+        self.select_point_spline_dist_single(pdid)
+        self._ensure_sketch_panel_visible()
+        if self.panel:
+            self.panel.focus_constraint_key(f"D{pdid}")
 
     def select_body_single(self, bid: int):
         if bid not in self.bodies: return
@@ -206,6 +271,7 @@ class ControllerSelection:
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
         self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
         self.selected_body_id = bid
         self.selected_link_id = None
         self.selected_angle_id = None
@@ -220,6 +286,7 @@ class ControllerSelection:
 
     def focus_body_in_panel(self, bid: int) -> None:
         self.select_body_single(bid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_body(bid)
 
@@ -234,6 +301,7 @@ class ControllerSelection:
         self._clear_scene_coincide_selection()
         self._clear_scene_point_line_selection()
         self._clear_scene_point_spline_selection()
+        self._clear_scene_point_spline_dist_selection()
         self.splines[sid]["item"].setSelected(True)
         self.selected_spline_id = sid
         self.selected_link_id = None
@@ -253,6 +321,7 @@ class ControllerSelection:
 
     def focus_spline_in_panel(self, sid: int) -> None:
         self.select_spline_single(sid)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_spline(sid)
 
@@ -261,7 +330,7 @@ class ControllerSelection:
         if not toggle:
             self._clear_scene_link_selection(); self._clear_scene_angle_selection()
             self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
-            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
+            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection(); self._clear_scene_point_spline_dist_selection()
             self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
             for pid in list(self.selected_point_ids):
                 if pid in self.points:
@@ -282,7 +351,7 @@ class ControllerSelection:
                     self.selected_point_id = pid
             self._clear_scene_link_selection(); self._clear_scene_angle_selection()
             self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
-            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
+            self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection(); self._clear_scene_point_spline_dist_selection()
             self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
@@ -305,7 +374,7 @@ class ControllerSelection:
         self.selected_point_id = pid
         self._clear_scene_link_selection(); self._clear_scene_angle_selection()
         self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
-        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
+        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection(); self._clear_scene_point_spline_dist_selection()
         self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
@@ -317,6 +386,7 @@ class ControllerSelection:
 
     def focus_point_in_panel(self, pid: int) -> None:
         self.select_point_single(pid, keep_others=False)
+        self._ensure_sketch_panel_visible()
         if self.panel:
             self.panel.focus_point(pid)
 
@@ -333,7 +403,7 @@ class ControllerSelection:
             self.selected_point_id = pid
         self._clear_scene_link_selection(); self._clear_scene_angle_selection()
         self._clear_scene_spline_selection(); self._clear_scene_coincide_selection()
-        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection()
+        self._clear_scene_point_line_selection(); self._clear_scene_point_spline_selection(); self._clear_scene_point_spline_dist_selection()
         self.selected_link_id = None; self.selected_angle_id = None; self.selected_body_id = None
         self.update_graphics()
         if self.panel:
@@ -343,6 +413,16 @@ class ControllerSelection:
             self.panel.clear_bodies_selection_only()
 
     # ------ commands ------
+    def _solve_after_model_edit(self):
+        """Re-solve geometry after topology/model edits without re-applying saved IO pose.
+
+        Editing actions such as creating points/links/constraints should preserve the
+        current live pose and must not snap the model back to driver/output reference
+        angles during a refresh.
+        """
+        self.solve_constraints(use_drive_constraints=False)
+        self.update_graphics()
+
     def cmd_add_point(self, x: float, y: float):
         if not self._confirm_stop_replay("modify the model"):
             return
@@ -356,7 +436,7 @@ class ControllerSelection:
             def do(self_):
                 ctrl._create_point(pid, x, y, fixed=False, hidden=False, traj_enabled=False)
                 ctrl.select_point_single(pid, keep_others=False)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 ctrl.update_status()
             def undo(self_):
@@ -426,12 +506,12 @@ class ControllerSelection:
             def do(self_):
                 ctrl._create_link(lid, i, j, L, hidden=False)
                 ctrl.select_link_single(lid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 ctrl.update_status()
             def undo(self_):
                 ctrl._remove_link(lid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
                 ctrl.update_status()
         self.stack.push(AddLink())
@@ -448,12 +528,12 @@ class ControllerSelection:
             def do(self_):
                 ctrl._create_angle(aid, i, j, k, deg, hidden=False)
                 ctrl.select_angle_single(aid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 ctrl.update_status()
             def undo(self_):
                 ctrl._remove_angle(aid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
                 ctrl.update_status()
         self.stack.push(AddAngle())
@@ -472,12 +552,12 @@ class ControllerSelection:
             def do(self_):
                 ctrl._create_spline(sid, pts, hidden=False, closed=False)
                 ctrl.select_spline_single(sid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 ctrl.update_status()
             def undo(self_):
                 ctrl._remove_spline(sid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
                 ctrl.update_status()
         self.stack.push(AddSpline())
@@ -494,7 +574,7 @@ class ControllerSelection:
             def do(self_):
                 pts = [pid for pid in point_ids if pid in ctrl.points]
                 ctrl.splines[sid]["points"] = pts
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -528,7 +608,7 @@ class ControllerSelection:
             name = "Set Spline Closed"
             def do(self_):
                 ctrl.splines[sid]["closed"] = bool(closed)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -545,7 +625,7 @@ class ControllerSelection:
             name = "Delete Spline"
             def do(self_):
                 ctrl._remove_spline(sid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -562,7 +642,7 @@ class ControllerSelection:
             name = "Set Angle Enabled"
             def do(self_):
                 ctrl.angles[aid]["enabled"] = bool(enabled)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -584,7 +664,7 @@ class ControllerSelection:
                         b["rigid_edges"] = ctrl.compute_body_rigid_edges(b["points"])
                     ctrl._create_body(bid, name, pts, hidden=False, color_name="Blue")
                     ctrl.select_body_single(bid)
-                    ctrl.solve_constraints(); ctrl.update_graphics()
+                    ctrl._solve_after_model_edit()
                     if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
                 def undo(self_):
                     ctrl.apply_model_snapshot(model_before)
@@ -606,7 +686,7 @@ class ControllerSelection:
                     b["rigid_edges"] = ctrl.compute_body_rigid_edges(b["points"])
                 ctrl.bodies[bid]["points"] = pts
                 ctrl.bodies[bid]["rigid_edges"] = ctrl.compute_body_rigid_edges(pts)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -641,7 +721,7 @@ class ControllerSelection:
             name = "Delete Body"
             def do(self_):
                 ctrl._remove_body(bid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -661,7 +741,7 @@ class ControllerSelection:
                 for pid in sorted(ids, reverse=True):
                     if pid in ctrl.points:
                         ctrl._remove_point(pid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -680,7 +760,7 @@ class ControllerSelection:
             name = "Delete Link"
             def do(self_):
                 ctrl._remove_link(lid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -696,7 +776,7 @@ class ControllerSelection:
             name = "Delete Angle"
             def do(self_):
                 ctrl._remove_angle(aid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all()
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -742,7 +822,7 @@ class ControllerSelection:
             name = "Delete Coincide"
             def do(self_):
                 ctrl._remove_coincide(cid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -774,7 +854,7 @@ class ControllerSelection:
             name = "Set Coincide Enabled"
             def do(self_):
                 ctrl.coincides[cid]["enabled"] = bool(enabled)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -799,7 +879,7 @@ class ControllerSelection:
         model_before = self.snapshot_model()
         plid = self._next_plid
         class AddPointLine(Command):
-            name = "Add Point On Line"
+            name = ctrl._undo_name_localized("Add Point On Line", "添加点在线")
             def do(self_):
                 ctrl._next_plid = max(ctrl._next_plid, plid + 1)
                 ctrl._create_point_line(plid, p, i, j, hidden=False, enabled=True)
@@ -836,7 +916,7 @@ class ControllerSelection:
         name = self._point_line_offset_name({"p": p, "i": i, "j": j})
 
         class AddPointLineOffset(Command):
-            name = "Add Point On Line (s)"
+            name = ctrl._undo_name_localized("Add Point On Line (s)", "添加点在线（s）")
             def do(self_):
                 ctrl._next_plid = max(ctrl._next_plid, plid + 1)
                 ctrl._create_point_line(
@@ -874,7 +954,7 @@ class ControllerSelection:
         model_before = self.snapshot_model()
         psid = self._next_psid
         class AddPointSpline(Command):
-            name = "Add Point On Spline"
+            name = ctrl._undo_name_localized("Add Point On Spline", "添加点在线样条")
             def do(self_):
                 ctrl._next_psid = max(ctrl._next_psid, psid + 1)
                 ctrl._create_point_spline(psid, p, s, hidden=False, enabled=True)
@@ -898,6 +978,55 @@ class ControllerSelection:
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(AddPointSpline())
 
+    def cmd_add_point_spline_dist(self, p: int, s: int, dist: float):
+        """Add a point-to-spline distance constraint: dist(P, spline) = dist."""
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if p not in self.points or s not in self.splines:
+            return
+        if p in self.splines[s].get("points", []):
+            return
+        for pd in getattr(self, "point_spline_dists", {}).values():
+            if int(pd.get("p", -1)) == int(p) and int(pd.get("s", -1)) == int(s):
+                return
+        ctrl = self
+        model_before = self.snapshot_model()
+        pdid = self._next_pdid
+
+        class AddPointSplineDist(Command):
+            name = ctrl._undo_name_localized("Add Point-Spline Distance", "添加点-样条距离")
+
+            def do(self_):
+                ctrl._next_pdid = max(ctrl._next_pdid, pdid + 1)
+                ctrl._create_point_spline_dist(pdid, p, s, float(dist), hidden=False, enabled=True, hint_seg=-1)
+                pp = ctrl.points[p]
+                cp_ids = [pid for pid in ctrl.splines[s].get("points", []) if pid in ctrl.points]
+                cps = [ctrl.points[cid] for cid in cp_ids]
+                lock_p = bool(pp.get("fixed", False))
+                lock_controls = [bool(ctrl.points[cid].get("fixed", False)) for cid in cp_ids]
+                ok, new_hint, _d = ConstraintSolver.solve_point_spline_distance(
+                    pp,
+                    cps,
+                    float(dist),
+                    lock_p,
+                    lock_controls,
+                    hint_seg=-1,
+                    tol=1e-6,
+                    closed=bool(ctrl.splines[s].get("closed", False)),
+                )
+                ctrl.point_spline_dists[pdid]["hint_seg"] = int(new_hint)
+                if not ok:
+                    ctrl.point_spline_dists[pdid]["over"] = True
+                ctrl.solve_constraints(drag_pid=p)
+                ctrl.update_graphics()
+                if ctrl.panel:
+                    ctrl.panel.defer_refresh_all(keep_selection=True)
+
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+
+        self.stack.push(AddPointSplineDist())
+
     def cmd_delete_point_line(self, plid: int):
         if not self._confirm_stop_replay("modify the model"):
             return
@@ -906,10 +1035,10 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class DelPL(Command):
-            name = "Delete Point On Line"
+            name = ctrl._undo_name_localized("Delete Point On Line", "删除点在线")
             def do(self_):
                 ctrl._remove_point_line(plid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -923,14 +1052,35 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class DelPS(Command):
-            name = "Delete Point On Spline"
+            name = ctrl._undo_name_localized("Delete Point On Spline", "删除点在线样条")
             def do(self_):
                 ctrl._remove_point_spline(psid)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(DelPS())
+
+    def cmd_delete_point_spline_dist(self, pdid: int):
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if not hasattr(self, "point_spline_dists") or pdid not in self.point_spline_dists:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+
+        class DelPD(Command):
+            name = ctrl._undo_name_localized("Delete Point-Spline Distance", "删除点-样条距离")
+
+            def do(self_):
+                ctrl._remove_point_spline_dist(pdid)
+                ctrl._solve_after_model_edit()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+
+        self.stack.push(DelPD())
 
     def cmd_set_point_line_hidden(self, plid: int, hidden: bool):
         if not self._confirm_stop_replay("modify the model"):
@@ -940,7 +1090,7 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class SetPLH(Command):
-            name = "Set Point On Line Hidden"
+            name = ctrl._undo_name_localized("Set Point On Line Hidden", "设置点在线隐藏")
             def do(self_):
                 ctrl.point_lines[plid]["hidden"] = bool(hidden)
                 ctrl.update_graphics()
@@ -957,7 +1107,7 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class SetPSH(Command):
-            name = "Set Point On Spline Hidden"
+            name = ctrl._undo_name_localized("Set Point On Spline Hidden", "设置点在线样条隐藏")
             def do(self_):
                 ctrl.point_splines[psid]["hidden"] = bool(hidden)
                 ctrl.update_graphics()
@@ -965,6 +1115,27 @@ class ControllerSelection:
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetPSH())
+
+    def cmd_set_point_spline_dist_hidden(self, pdid: int, hidden: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if not hasattr(self, "point_spline_dists") or pdid not in self.point_spline_dists:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+
+        class SetPDH(Command):
+            name = ctrl._undo_name_localized("Set Point-Spline Distance Hidden", "设置点-样条距离隐藏")
+
+            def do(self_):
+                ctrl.point_spline_dists[pdid]["hidden"] = bool(hidden)
+                ctrl.update_graphics()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+
+        self.stack.push(SetPDH())
 
     def cmd_set_point_line_enabled(self, plid: int, enabled: bool):
         if not self._confirm_stop_replay("modify the model"):
@@ -974,10 +1145,10 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class SetPLE(Command):
-            name = "Set Point On Line Enabled"
+            name = ctrl._undo_name_localized("Set Point On Line Enabled", "设置点在线启用")
             def do(self_):
                 ctrl.point_lines[plid]["enabled"] = bool(enabled)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -991,14 +1162,35 @@ class ControllerSelection:
         ctrl = self
         model_before = self.snapshot_model()
         class SetPSE(Command):
-            name = "Set Point On Spline Enabled"
+            name = ctrl._undo_name_localized("Set Point On Spline Enabled", "设置点在线样条启用")
             def do(self_):
                 ctrl.point_splines[psid]["enabled"] = bool(enabled)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
         self.stack.push(SetPSE())
+
+    def cmd_set_point_spline_dist_enabled(self, pdid: int, enabled: bool):
+        if not self._confirm_stop_replay("modify the model"):
+            return
+        if not hasattr(self, "point_spline_dists") or pdid not in self.point_spline_dists:
+            return
+        ctrl = self
+        model_before = self.snapshot_model()
+
+        class SetPDE(Command):
+            name = "Set Point-Spline Distance Enabled"
+
+            def do(self_):
+                ctrl.point_spline_dists[pdid]["enabled"] = bool(enabled)
+                ctrl._solve_after_model_edit()
+                if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
+
+            def undo(self_):
+                ctrl.apply_model_snapshot(model_before)
+
+        self.stack.push(SetPDE())
 
     def cmd_set_point_fixed(self, pid: int, fixed: bool):
         if not self._confirm_stop_replay("modify the model"):
@@ -1013,7 +1205,7 @@ class ControllerSelection:
             name = "Set Fixed"
             def do(self_):
                 ctrl.points[pid]["fixed"] = fixed
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -1122,7 +1314,7 @@ class ControllerSelection:
                     curL = _measured_length()
                     if curL is not None and curL > 1e-9:
                         ctrl.links[lid]["L"] = float(curL)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -1160,10 +1352,18 @@ class ControllerSelection:
             name = "Set Length"
             def do(self_):
                 ctrl.links[lid]["L"] = L
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
+                try:
+                    ctrl._mark_cases_dirty_after_model_edit(clear_run_cache=True)
+                except Exception:
+                    pass
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
+                try:
+                    ctrl._mark_cases_dirty_after_model_edit(clear_run_cache=True)
+                except Exception:
+                    pass
         self.stack.push(SetLen())
 
     def cmd_set_angle_deg(self, aid: int, deg: float):
@@ -1178,7 +1378,7 @@ class ControllerSelection:
             def do(self_):
                 ctrl.angles[aid]["deg"] = deg
                 ctrl.angles[aid]["rad"] = math.radians(deg)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl._solve_after_model_edit()
                 if ctrl.panel: ctrl.panel.defer_refresh_all(keep_selection=True)
             def undo(self_):
                 ctrl.apply_model_snapshot(model_before)
@@ -1192,13 +1392,21 @@ class ControllerSelection:
             name = "Move"
             def do(self_):
                 ctrl.apply_points_snapshot(after)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl.solve_constraints(use_drive_constraints=False); ctrl.update_graphics()
                 ctrl.update_sim_start_pose_snapshot()
+                try:
+                    ctrl._mark_cases_dirty_after_model_edit(clear_run_cache=True)
+                except Exception:
+                    pass
                 if ctrl.panel: ctrl.panel.refresh_fast()
             def undo(self_):
                 ctrl.apply_points_snapshot(before)
-                ctrl.solve_constraints(); ctrl.update_graphics()
+                ctrl.solve_constraints(use_drive_constraints=False); ctrl.update_graphics()
                 ctrl.update_sim_start_pose_snapshot()
+                try:
+                    ctrl._mark_cases_dirty_after_model_edit(clear_run_cache=True)
+                except Exception:
+                    pass
                 if ctrl.panel: ctrl.panel.refresh_fast()
         self.stack.push(MoveSystem())
 
@@ -1208,15 +1416,17 @@ class ControllerSelection:
         if pid not in self.points: return
         before = self.snapshot_points()
         self.points[pid]["x"] = float(x); self.points[pid]["y"] = float(y)
-        self.solve_constraints(drag_pid=pid)
+        self.solve_constraints(drag_pid=pid, use_drive_constraints=False)
         after = self.snapshot_points()
         self.cmd_move_system(before, after)
 
     def on_drag_update(self, pid: int, nx: float, ny: float):
-        if not self._confirm_stop_replay("modify the model"):
-            return
         if pid not in self.points: return
+        # Ask to stop replay only once at drag start. Re-checking on every mouse
+        # move can make editing feel locked when many cases/runs exist.
         if not self._drag_active:
+            if not self._confirm_stop_replay("modify the model"):
+                return
             self._drag_active = True
             self._drag_pid = pid
             self._drag_before = self.snapshot_points()
@@ -1224,6 +1434,7 @@ class ControllerSelection:
             drag_target_pid=pid,
             drag_target_xy=(float(nx), float(ny)),
             drag_pid=None,
+            use_drive_constraints=False,
         )
         self.update_graphics()
         self.append_trajectories()
@@ -1295,6 +1506,15 @@ class ControllerSelection:
         self.mode = "PointOnSpline"
         self._set_continuous_model_action(None)
         self._pos_master = int(master)
+        self.update_status()
+
+    def begin_point_spline_dist(self, master: int, dist: float):
+        """Start point-to-spline distance creation: choose a spline."""
+        self.commit_drag_if_any()
+        self.mode = "PointSplineDist"
+        self._set_continuous_model_action(None)
+        self._psd_master = int(master)
+        self._psd_dist = float(dist)
         self.update_status()
 
     def on_point_clicked_create_line(self, pid: int):
@@ -1378,6 +1598,21 @@ class ControllerSelection:
         self.mode = "Idle"
         self._pos_master = None
         self.cmd_add_point_spline(p, sid)
+        self.update_status()
+
+    def on_spline_clicked_point_spline_dist(self, sid: int):
+        master = getattr(self, "_psd_master", None)
+        dist = getattr(self, "_psd_dist", 0.0)
+        if master is None:
+            self.mode = "Idle"
+            self.update_status()
+            return
+        if master not in self.points or sid not in self.splines:
+            self.mode = "Idle"
+            self.update_status()
+            return
+        self.mode = "Idle"
+        self.cmd_add_point_spline_dist(int(master), int(sid), float(dist))
         self.update_status()
 
     def on_point_clicked_idle(self, pid: int, modifiers):
@@ -1477,287 +1712,6 @@ class ControllerSelection:
         self._add_spline_from_selection()
         self.update_status()
 
-    def show_point_context_menu(self, pid: int, global_pos):
-        self.commit_drag_if_any()
-        self.select_point_single(pid, keep_others=False)
-        p = self.points[pid]
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        m.addAction(
-            tr(lang, "context.fix") if not p.get("fixed", False) else tr(lang, "context.unfix"),
-            lambda: self.cmd_set_point_fixed(pid, not p.get("fixed", False)),
-        )
-        m.addAction(
-            tr(lang, "context.hide") if not p.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_point_hidden(pid, not p.get("hidden", False)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.coincide_with"), lambda: self.begin_coincide(pid))
-
-        # --- Simulation helpers (driver / measurement) ---
-        nbrs = []
-        for l in self.links.values():
-            i, j = int(l.get("i")), int(l.get("j"))
-            if i == pid and j != pid:
-                nbrs.append(j)
-            elif j == pid and i != pid:
-                nbrs.append(i)
-        # unique, stable order
-        seen = set()
-        nbrs = [x for x in nbrs if (x not in seen and not seen.add(x))]
-
-        if len(nbrs) >= 2:
-            m.addSeparator()
-            sub_angle_constraint = m.addMenu(tr(lang, "context.add_angle_constraint"))
-            for idx, i in enumerate(nbrs[:-1]):
-                for k in nbrs[idx + 1:]:
-                    sub_angle_constraint.addAction(
-                        f"A(P{i}-P{pid}-P{k})",
-                        lambda i=i, k=k: self._add_angle_constraint(i, pid, k),
-                    )
-
-        point_line_ids = [plid for plid, pl in self.point_lines.items() if int(pl.get("p", -1)) == pid]
-        if nbrs or point_line_ids:
-            m.addSeparator()
-            sub_drv = m.addMenu(tr(lang, "context.set_driver"))
-
-            if nbrs:
-                sub_angle = sub_drv.addMenu(tr(lang, "context.angle_pivot_tip"))
-                for nb in nbrs:
-                    sub_angle.addAction(
-                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                        lambda nb=nb: self.set_driver_angle(pid, nb),
-                    )
-            if point_line_ids:
-                if nbrs:
-                    sub_drv.addSeparator()
-                if len(point_line_ids) == 1:
-                    plid = point_line_ids[0]
-                    sub_drv.addAction(tr(lang, "context.set_translation_driver"), lambda plid=plid: self.set_driver_translation(plid))
-                else:
-                    sub_trans = sub_drv.addMenu(tr(lang, "context.set_translation_driver"))
-                    for plid in point_line_ids:
-                        pl = self.point_lines.get(plid, {})
-                        sub_trans.addAction(
-                            tr(lang, "context.translation_line").format(
-                                p=pl.get("p"),
-                                i=pl.get("i"),
-                                j=pl.get("j"),
-                            ),
-                            lambda plid=plid: self.set_driver_translation(plid),
-                        )
-
-            sub_drv.addSeparator()
-            sub_drv.addAction(tr(lang, "context.clear_driver"), self.clear_driver)
-
-            sub_meas = m.addMenu(tr(lang, "context.add_measurement"))
-
-            sub_mvec = sub_meas.addMenu(tr(lang, "context.angle_world"))
-            for nb in nbrs:
-                sub_mvec.addAction(f"A(P{pid}->P{nb})", lambda nb=nb: self.add_measure_angle(pid, nb))
-
-            sub_mjoint = sub_meas.addMenu(tr(lang, "context.joint_angle"))
-            if len(nbrs) >= 2:
-                for i in nbrs:
-                    for k in nbrs:
-                        if i == k:
-                            continue
-                        sub_mjoint.addAction(f"A(P{i}-P{pid}-P{k})", lambda i=i, k=k: self.add_measure_joint(i, pid, k))
-
-            if point_line_ids:
-                if len(point_line_ids) == 1:
-                    plid = point_line_ids[0]
-                    sub_meas.addAction(
-                        tr(lang, "context.translation_measurement"),
-                        lambda plid=plid: self.add_measure_translation(plid),
-                    )
-                else:
-                    sub_trans_meas = sub_meas.addMenu(tr(lang, "context.translation_measurement"))
-                    for plid in point_line_ids:
-                        pl = self.point_lines.get(plid, {})
-                        sub_trans_meas.addAction(
-                            tr(lang, "context.translation_line").format(
-                                p=pl.get("p"),
-                                i=pl.get("i"),
-                                j=pl.get("j"),
-                            ),
-                            lambda plid=plid: self.add_measure_translation(plid),
-                        )
-
-            sub_load_meas = sub_meas.addMenu(tr(lang, "context.load"))
-            sub_load_meas.addAction(tr(lang, "context.joint_load_fx"), lambda: self.add_load_measure_joint(pid, "fx"))
-            sub_load_meas.addAction(tr(lang, "context.joint_load_fy"), lambda: self.add_load_measure_joint(pid, "fy"))
-            sub_load_meas.addAction(tr(lang, "context.joint_load_mag"), lambda: self.add_load_measure_joint(pid, "mag"))
-
-            sub_meas.addSeparator()
-            sub_meas.addAction(tr(lang, "context.clear_measurements"), self.clear_measures)
-
-            sub_out = m.addMenu(tr(lang, "context.set_output"))
-            for nb in nbrs:
-                sub_out.addAction(
-                    tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                    lambda nb=nb: self.set_output(pid, nb),
-                )
-            sub_out.addSeparator()
-            sub_out.addAction(tr(lang, "context.clear_output"), self.clear_output)
-
-            sub_load = m.addMenu(tr(lang, "context.loads"))
-            sub_load.addAction(tr(lang, "context.add_force"), lambda: self._prompt_add_force(pid))
-            sub_load.addAction(tr(lang, "context.add_torque"), lambda: self._prompt_add_torque(pid))
-            sub_load.addAction(tr(lang, "context.add_friction"), lambda: self._prompt_add_friction(pid))
-            if nbrs:
-                sub_spring = sub_load.addMenu(tr(lang, "context.add_spring"))
-                for nb in nbrs:
-                    sub_spring.addAction(
-                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                        lambda nb=nb: self._prompt_add_spring(pid, nb),
-                    )
-                sub_torsion = sub_load.addMenu(tr(lang, "context.add_torsion_spring"))
-                for nb in nbrs:
-                    sub_torsion.addAction(
-                        tr(lang, "context.pivot_tip").format(pivot=pid, tip=nb),
-                        lambda nb=nb: self._prompt_add_torsion_spring(pid, nb),
-                    )
-            else:
-                sub_load.addAction(tr(lang, "context.add_spring"), lambda: self._prompt_add_spring(pid))
-                sub_load.addAction(tr(lang, "context.add_torsion_spring"), lambda: self._prompt_add_torsion_spring(pid))
-            sub_load.addSeparator()
-            sub_load.addAction(tr(lang, "context.clear_loads"), self.clear_loads)
-
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point(pid))
-        m.exec(global_pos)
-        self.update_status()
-
-        # refresh sim panel labels if present
-        try:
-            if hasattr(self.win, "sim_panel") and self.win.sim_panel is not None:
-                self.win.sim_panel._mark_used_solver_unknown()
-                self.win.sim_panel.refresh_labels()
-        except Exception:
-            pass
-
-    def show_link_context_menu(self, lid: int, global_pos):
-        self.commit_drag_if_any()
-        self.select_link_single(lid)
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        l = self.links[lid]
-        m.addAction(
-            tr(lang, "context.hide") if not l.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_link_hidden(lid, not l.get("hidden", False)),
-        )
-        m.addAction(
-            tr(lang, "context.set_as_constraint") if l.get("ref", False) else tr(lang, "context.set_as_reference"),
-            lambda: self.cmd_set_link_reference(lid, not l.get("ref", False)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_link(lid))
-        m.exec(global_pos)
-        self.update_status()
-
-
-    def show_coincide_context_menu(self, cid: int, global_pos):
-        self.commit_drag_if_any()
-        if cid not in self.coincides:
-            return
-        self.select_coincide_single(cid)
-        c = self.coincides[cid]
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        m.addAction(
-            tr(lang, "context.hide") if not c.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_coincide_hidden(cid, not c.get("hidden", False)),
-        )
-        m.addAction(
-            tr(lang, "context.disable") if c.get("enabled", True) else tr(lang, "context.enable"),
-            lambda: self.cmd_set_coincide_enabled(cid, not c.get("enabled", True)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_coincide(cid))
-        m.exec(global_pos)
-        self.update_status()
-        try:
-            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
-        except Exception:
-            pass
-
-    def show_point_line_context_menu(self, plid: int, global_pos):
-        self.commit_drag_if_any()
-        if plid not in self.point_lines:
-            return
-        self.select_point_line_single(plid)
-        pl = self.point_lines[plid]
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        m.addAction(
-            tr(lang, "context.hide") if not pl.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_point_line_hidden(plid, not pl.get("hidden", False)),
-        )
-        m.addAction(
-            tr(lang, "context.disable") if pl.get("enabled", True) else tr(lang, "context.enable"),
-            lambda: self.cmd_set_point_line_enabled(plid, not pl.get("enabled", True)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.set_translation_driver"), lambda: self.set_driver_translation(plid))
-        sub_meas = m.addMenu(tr(lang, "context.add_measurement"))
-        sub_meas.addAction(tr(lang, "context.translation_measurement"), lambda: self.add_measure_translation(plid))
-        sub_meas.addSeparator()
-        sub_meas.addAction(tr(lang, "context.clear_measurements"), self.clear_measures)
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_line(plid))
-        m.exec(global_pos)
-        self.update_status()
-        try:
-            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
-        except Exception:
-            pass
-
-    def show_point_spline_context_menu(self, psid: int, global_pos):
-        self.commit_drag_if_any()
-        if psid not in self.point_splines:
-            return
-        self.select_point_spline_single(psid)
-        ps = self.point_splines[psid]
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        m.addAction(
-            tr(lang, "context.hide") if not ps.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_point_spline_hidden(psid, not ps.get("hidden", False)),
-        )
-        m.addAction(
-            tr(lang, "context.disable") if ps.get("enabled", True) else tr(lang, "context.enable"),
-            lambda: self.cmd_set_point_spline_enabled(psid, not ps.get("enabled", True)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_point_spline(psid))
-        m.exec(global_pos)
-        self.update_status()
-        try:
-            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
-        except Exception:
-            pass
-
-    def show_spline_context_menu(self, sid: int, global_pos):
-        self.commit_drag_if_any()
-        if sid not in self.splines:
-            return
-        self.select_spline_single(sid)
-        s = self.splines[sid]
-        lang = getattr(self, "ui_language", "en")
-        m = QMenu(self.win)
-        m.addAction(
-            tr(lang, "context.hide") if not s.get("hidden", False) else tr(lang, "context.show"),
-            lambda: self.cmd_set_spline_hidden(sid, not s.get("hidden", False)),
-        )
-        m.addSeparator()
-        m.addAction(tr(lang, "context.delete"), lambda: self.cmd_delete_spline(sid))
-        m.exec(global_pos)
-        self.update_status()
-        try:
-            if self.panel: self.panel.defer_refresh_all(keep_selection=True)
-        except Exception:
-            pass
 
     def update_graphics(self):
         if self._graphics_update_in_progress:
@@ -1908,7 +1862,26 @@ class ControllerSelection:
                 )
                 titem.setVisible(show_traj)
 
+        for bid, b in self.bodies.items():
+            it = b.get("solid_item")
+            if it is None:
+                continue
+            try:
+                it.sync_style()
+                if it.isVisible():
+                    it.update_geometry()
+            except Exception:
+                pass
+
         for lid, l in self.links.items():
+            sit = l.get("solid_item")
+            if sit is not None:
+                try:
+                    sit.sync_style()
+                    if sit.isVisible():
+                        sit.update_geometry()
+                except Exception:
+                    pass
             it: LinkItem = l["item"]
             it.update_position()
             it.sync_style()
@@ -1948,6 +1921,10 @@ class ControllerSelection:
 
         for psid, ps in self.point_splines.items():
             it: PointSplineItem = ps["item"]
+            it.sync()
+
+        for pdid, pd in getattr(self, "point_spline_dists", {}).items():
+            it: PointSplineDistItem = pd["item"]
             it.sync()
 
         for aid, a in self.angles.items():
@@ -2107,861 +2084,3 @@ class ControllerSelection:
                 scale=friction_scale,
                 label=str(vec.get("label", "")),
             )
-
-    def to_dict(self) -> Dict[str, Any]:
-        payload = self.default_project_dict(project_uuid=self._ensure_project_uuid())
-        simulation_settings = dict(getattr(self, "simulation_settings", {}) or {})
-        optimization_settings = dict(getattr(self, "optimization_settings", {}) or {})
-        measurement_settings = {
-            "measures": list(self.measures),
-            "load_measures": list(self.load_measures),
-        }
-        win = getattr(self, "win", None)
-        sim_panel = getattr(win, "sim_panel", None) if win else None
-        if sim_panel is not None:
-            if hasattr(sim_panel, "get_simulation_settings"):
-                simulation_settings = sim_panel.get_simulation_settings()
-            opt_tab = getattr(sim_panel, "optimization_tab", None)
-            if opt_tab is not None and hasattr(opt_tab, "export_settings"):
-                optimization_settings = opt_tab.export_settings()
-        if simulation_settings:
-            self.simulation_settings = dict(simulation_settings)
-        if optimization_settings:
-            self.optimization_settings = dict(optimization_settings)
-        payload.update(
-            {
-                "display_precision": int(getattr(self, "display_precision", 3)),
-                "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
-                "torque_arrow_width": float(getattr(self, "torque_arrow_width", 1.6)),
-                "parameters": self.parameters.to_list(),
-                "background_image": {
-                    "path": self.background_image.get("path"),
-                    "visible": bool(self.background_image.get("visible", True)),
-                    "opacity": float(self.background_image.get("opacity", 0.6)),
-                    "grayscale": bool(self.background_image.get("grayscale", False)),
-                    "scale": float(self.background_image.get("scale", 1.0)),
-                    "pos": list(self.background_image.get("pos", (0.0, 0.0))),
-                },
-                "grid_settings": {
-                    "show_horizontal": bool(self.grid_settings.get("show_horizontal", False)),
-                    "show_vertical": bool(self.grid_settings.get("show_vertical", False)),
-                    "spacing_x": float(self.grid_settings.get("spacing_x", 100.0)),
-                    "spacing_y": float(self.grid_settings.get("spacing_y", 100.0)),
-                    "range_x": float(self.grid_settings.get("range_x", 2000.0)),
-                    "range_y": float(self.grid_settings.get("range_y", 2000.0)),
-                    "center": list(self.grid_settings.get("center", (0.0, 0.0))),
-                },
-                "points": [
-                    {
-                        "id": pid,
-                        "x": p["x"], "y": p["y"],
-                        "x_expr": (p.get("x_expr") or ""),
-                        "y_expr": (p.get("y_expr") or ""),
-                        "fixed": bool(p.get("fixed", False)),
-                        "hidden": bool(p.get("hidden", False)),
-                        "traj": bool(p.get("traj", False)),
-                    }
-                    for pid, p in sorted(self.points.items(), key=lambda kv: kv[0])
-                ],
-                "constraints": self.constraint_registry.to_list(),
-                "links": [
-                    {
-                        "id": lid, "i": l["i"], "j": l["j"],
-                        "L": l["L"],
-                        "L_expr": (l.get("L_expr") or ""),
-                        "hidden": bool(l.get("hidden", False)),
-                        "ref": bool(l.get("ref", False)),
-                    }
-                    for lid, l in sorted(self.links.items(), key=lambda kv: kv[0])
-                ],
-                "angles": [
-                    {
-                        "id": aid, "i": a["i"], "j": a["j"], "k": a["k"],
-                        "deg": a["deg"],
-                        "deg_expr": (a.get("deg_expr") or ""),
-                        "hidden": bool(a.get("hidden", False)),
-                        "enabled": bool(a.get("enabled", True)),
-                    }
-                    for aid, a in sorted(self.angles.items(), key=lambda kv: kv[0])
-                ],
-                "splines": [
-                    {
-                        "id": sid,
-                        "points": list(s.get("points", [])),
-                        "hidden": bool(s.get("hidden", False)),
-                        "closed": bool(s.get("closed", False)),
-                    }
-                    for sid, s in sorted(self.splines.items(), key=lambda kv: kv[0])
-                ],
-                "coincides": [
-                    {"id": cid, "a": c["a"], "b": c["b"], "hidden": bool(c.get("hidden", False)), "enabled": bool(c.get("enabled", True))}
-                    for cid, c in sorted(self.coincides.items(), key=lambda kv: kv[0])
-                ],
-                "point_lines": [
-                    {
-                        "id": plid,
-                        "p": pl.get("p"),
-                        "i": pl.get("i"),
-                        "j": pl.get("j"),
-                        "hidden": bool(pl.get("hidden", False)),
-                        "enabled": bool(pl.get("enabled", True)),
-                        **({"s": float(pl.get("s", 0.0))} if "s" in pl else {}),
-                        **({"s_expr": str(pl.get("s_expr", ""))} if pl.get("s_expr") else {}),
-                        **({"name": str(pl.get("name", ""))} if pl.get("name") else {}),
-                    }
-                    for plid, pl in sorted(self.point_lines.items(), key=lambda kv: kv[0])
-                ],
-                "point_splines": [
-                    {"id": psid, "p": ps.get("p"), "s": ps.get("s"),
-                     "hidden": bool(ps.get("hidden", False)), "enabled": bool(ps.get("enabled", True))}
-                    for psid, ps in sorted(self.point_splines.items(), key=lambda kv: kv[0])
-                ],
-                "bodies": [
-                    {"id": bid, "name": b.get("name", f"B{bid}"), "points": list(b.get("points", [])),
-                     "hidden": bool(b.get("hidden", False)), "color_name": b.get("color_name", "Blue"),
-                     "rigid_edges": list(b.get("rigid_edges", []))}
-                    for bid, b in sorted(self.bodies.items(), key=lambda kv: kv[0])
-                ],
-                "driver": {
-                    "enabled": bool(self.driver.get("enabled", False)),
-                    "type": str(self.driver.get("type", "angle")),
-                    "pivot": self.driver.get("pivot"),
-                    "tip": self.driver.get("tip"),
-                    "rad": float(self.driver.get("rad", 0.0)),
-                    "plid": self.driver.get("plid"),
-                    "s_base": self.driver.get("s_base"),
-                    "value": self.driver.get("value"),
-                    "sweep_start": self.driver.get("sweep_start"),
-                    "sweep_end": self.driver.get("sweep_end"),
-                },
-                "drivers": [
-                    {
-                        "enabled": bool(d.get("enabled", False)),
-                        "type": str(d.get("type", "angle")),
-                        "pivot": d.get("pivot"),
-                        "tip": d.get("tip"),
-                        "rad": float(d.get("rad", 0.0)),
-                        "plid": d.get("plid"),
-                        "s_base": d.get("s_base"),
-                        "value": d.get("value"),
-                        "sweep_start": d.get("sweep_start"),
-                        "sweep_end": d.get("sweep_end"),
-                    }
-                    for d in self.drivers
-                ],
-                "output": {
-                    "enabled": bool(self.output.get("enabled", False)),
-                    "pivot": self.output.get("pivot"),
-                    "tip": self.output.get("tip"),
-                    "rad": float(self.output.get("rad", 0.0)),
-                },
-                "outputs": [
-                    {
-                        "enabled": bool(o.get("enabled", False)),
-                        "pivot": o.get("pivot"),
-                        "tip": o.get("tip"),
-                        "rad": float(o.get("rad", 0.0)),
-                    }
-                    for o in self.outputs
-                ],
-                "measures": [
-                    {
-                        "type": str(m.get("type", "")),
-                        "name": str(m.get("name", "")),
-                        "pivot": m.get("pivot"),
-                        "tip": m.get("tip"),
-                        "i": m.get("i"),
-                        "j": m.get("j"),
-                        "k": m.get("k"),
-                    }
-                    for m in self.measures
-                ],
-                "loads": [
-                    {
-                        "type": str(ld.get("type", "force")),
-                        "pid": int(ld.get("pid", -1)),
-                        "fx": float(ld.get("fx", 0.0)),
-                        "fy": float(ld.get("fy", 0.0)),
-                        "mz": float(ld.get("mz", 0.0)),
-                    }
-                    for ld in self.loads
-                ],
-                "load_measures": [
-                    {
-                        "type": str(lm.get("type", "joint_load")),
-                        "pid": int(lm.get("pid", -1)),
-                        "component": str(lm.get("component", "mag")),
-                        "name": str(lm.get("name", "")),
-                    }
-                    for lm in self.load_measures
-                ],
-                "friction_joints": [
-                    {
-                        "pid": int(fj.get("pid", -1)),
-                        "mu": float(fj.get("mu", 0.0)),
-                        "diameter": float(fj.get("diameter", 0.0)),
-                        "mu_expr": str(fj.get("mu_expr", "") or ""),
-                        "diameter_expr": str(fj.get("diameter_expr", "") or ""),
-                    }
-                    for fj in self.friction_joints
-                ],
-                "sweep": {
-                    "start": float(self.sweep_settings.get("start", 0.0)),
-                    "end": float(self.sweep_settings.get("end", 360.0)),
-                    "step": float(self.sweep_settings.get("step", 200.0)),
-                },
-                "measurement_settings": measurement_settings,
-                "simulation_settings": simulation_settings,
-                "optimization_settings": optimization_settings,
-            }
-        )
-        return payload
-
-    def _ensure_project_uuid(self, candidate: Optional[str] = None) -> str:
-        if candidate and isinstance(candidate, str) and candidate.strip():
-            self.project_uuid = candidate.strip()
-        if not getattr(self, "project_uuid", ""):
-            self.project_uuid = str(uuid.uuid4())
-        return self.project_uuid
-
-    def default_project_dict(self, project_uuid: Optional[str] = None, force_new_uuid: bool = False) -> Dict[str, Any]:
-        if force_new_uuid:
-            uuid_val = str(uuid.uuid4())
-            self.project_uuid = uuid_val
-        else:
-            uuid_val = self._ensure_project_uuid(project_uuid)
-        return {
-            "version": "2.9.0",
-            "project_uuid": uuid_val,
-            "display_precision": int(getattr(self, "display_precision", 3)),
-            "load_arrow_width": float(getattr(self, "load_arrow_width", 1.6)),
-            "torque_arrow_width": float(getattr(self, "torque_arrow_width", 1.6)),
-            "parameters": [],
-            "background_image": {
-                "path": None,
-                "visible": True,
-                "opacity": 0.6,
-                "grayscale": False,
-                "scale": 1.0,
-                "pos": [0.0, 0.0],
-            },
-            "grid_settings": {
-                "show_horizontal": False,
-                "show_vertical": False,
-                "spacing_x": 100.0,
-                "spacing_y": 100.0,
-                "range_x": 2000.0,
-                "range_y": 2000.0,
-                "center": [0.0, 0.0],
-            },
-            "points": [],
-            "constraints": [],
-            "links": [],
-            "angles": [],
-            "splines": [],
-            "coincides": [],
-            "point_lines": [],
-            "point_splines": [],
-            "bodies": [],
-            "driver": dict(self._default_driver()),
-            "drivers": [],
-            "output": dict(self._default_output()),
-            "outputs": [],
-            "measures": [],
-            "loads": [],
-            "load_measures": [],
-            "friction_joints": [],
-            "sweep": {
-                "start": float(self.sweep_settings.get("start", 0.0)),
-                "end": float(self.sweep_settings.get("end", 360.0)),
-                "step": float(self.sweep_settings.get("step", 200.0)),
-            },
-            "measurement_settings": {
-                "measures": [],
-                "load_measures": [],
-            },
-            "simulation_settings": dict(getattr(self, "simulation_settings", {}) or {}),
-            "optimization_settings": dict(getattr(self, "optimization_settings", {}) or {}),
-        }
-
-    def merge_project_dict(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        has_uuid = isinstance(data, dict) and str(data.get("project_uuid", "")).strip()
-        base = self.default_project_dict(
-            project_uuid=(data.get("project_uuid") if has_uuid else None),
-            force_new_uuid=not has_uuid,
-        )
-        if not isinstance(data, dict):
-            return base
-        for key, val in data.items():
-            if key in (
-                "background_image",
-                "grid_settings",
-                "driver",
-                "output",
-                "sweep",
-                "measurement_settings",
-                "simulation_settings",
-                "optimization_settings",
-            ) and isinstance(val, dict):
-                base[key] = {**base.get(key, {}), **val}
-            else:
-                base[key] = val
-        return base
-
-    def validate_project_schema(self, data: Any) -> tuple[list[str], list[str]]:
-        warnings: list[str] = []
-        errors: list[str] = []
-        if not isinstance(data, dict):
-            errors.append("Project data must be a JSON object.")
-            return warnings, errors
-        schema_keys = {
-            "version",
-            "project_uuid",
-            "display_precision",
-            "load_arrow_width",
-            "torque_arrow_width",
-            "parameters",
-            "background_image",
-            "grid_settings",
-            "points",
-            "constraints",
-            "links",
-            "angles",
-            "splines",
-            "coincides",
-            "point_lines",
-            "point_splines",
-            "bodies",
-            "driver",
-            "drivers",
-            "output",
-            "outputs",
-            "measures",
-            "loads",
-            "load_measures",
-            "friction_joints",
-            "sweep",
-            "measurement_settings",
-            "simulation_settings",
-            "optimization_settings",
-        }
-        for key in sorted(schema_keys):
-            if key not in data:
-                warnings.append(f"Missing key: {key}")
-        list_keys = [
-            "points",
-            "constraints",
-            "links",
-            "angles",
-            "splines",
-            "coincides",
-            "point_lines",
-            "point_splines",
-            "bodies",
-            "parameters",
-            "drivers",
-            "outputs",
-            "measures",
-            "loads",
-            "load_measures",
-            "friction_joints",
-        ]
-        dict_keys = [
-            "background_image",
-            "grid_settings",
-            "driver",
-            "output",
-            "sweep",
-            "measurement_settings",
-            "simulation_settings",
-            "optimization_settings",
-        ]
-        for key in list_keys:
-            if key in data and not isinstance(data.get(key), list):
-                errors.append(f"Key '{key}' should be a list.")
-        for key in dict_keys:
-            if key in data and not isinstance(data.get(key), dict):
-                errors.append(f"Key '{key}' should be an object.")
-        if "project_uuid" in data and not isinstance(data.get("project_uuid"), str):
-            errors.append("Key 'project_uuid' should be a string.")
-        return warnings, errors
-
-    def load_dict(self, data: Dict[str, Any], clear_undo: bool = True, action: str = "load a new model") -> bool:
-        if not self._confirm_stop_replay(action):
-            return False
-        if isinstance(data, dict):
-            self._ensure_project_uuid(data.get("project_uuid"))
-        else:
-            self._ensure_project_uuid()
-        if hasattr(self.win, "sim_panel"):
-            self.win.sim_panel.stop()
-            if hasattr(self.win.sim_panel, "animation_tab"):
-                self.win.sim_panel.animation_tab.stop_replay()
-        self._drag_active = False
-        self._drag_pid = None
-        self._drag_before = None
-        background_info = data.get("background_image") or data.get("background") or {}
-        self.background_image = {
-            "path": None,
-            "visible": True,
-            "opacity": 0.6,
-            "grayscale": False,
-            "scale": 1.0,
-            "pos": (0.0, 0.0),
-        }
-        if isinstance(background_info, dict):
-            self.background_image["path"] = background_info.get("path")
-            self.background_image["visible"] = bool(background_info.get("visible", True))
-            self.background_image["opacity"] = float(background_info.get("opacity", 0.6))
-            self.background_image["grayscale"] = bool(background_info.get("grayscale", False))
-            self.background_image["scale"] = float(background_info.get("scale", 1.0))
-            pos = background_info.get("pos", (0.0, 0.0))
-            try:
-                self.background_image["pos"] = (float(pos[0]), float(pos[1]))
-            except Exception:
-                self.background_image["pos"] = (0.0, 0.0)
-        grid_info = data.get("grid_settings") or {}
-        self.grid_settings = {
-            "show_horizontal": False,
-            "show_vertical": False,
-            "spacing_x": 100.0,
-            "spacing_y": 100.0,
-            "range_x": 2000.0,
-            "range_y": 2000.0,
-            "center": (0.0, 0.0),
-        }
-        if isinstance(grid_info, dict):
-            self.grid_settings["show_horizontal"] = bool(grid_info.get("show_horizontal", False))
-            self.grid_settings["show_vertical"] = bool(grid_info.get("show_vertical", False))
-            self.grid_settings["spacing_x"] = max(0.1, float(grid_info.get("spacing_x", 100.0)))
-            self.grid_settings["spacing_y"] = max(0.1, float(grid_info.get("spacing_y", 100.0)))
-            self.grid_settings["range_x"] = max(0.0, float(grid_info.get("range_x", 2000.0)))
-            self.grid_settings["range_y"] = max(0.0, float(grid_info.get("range_y", 2000.0)))
-            center = grid_info.get("center", (0.0, 0.0))
-            try:
-                self.grid_settings["center"] = (float(center[0]), float(center[1]))
-            except Exception:
-                self.grid_settings["center"] = (0.0, 0.0)
-        sweep_info = data.get("sweep", {}) or {}
-        try:
-            sweep_start = float(sweep_info.get("start", self.sweep_settings.get("start", 0.0)))
-        except Exception:
-            sweep_start = self.sweep_settings.get("start", 0.0)
-        try:
-            sweep_end = float(sweep_info.get("end", self.sweep_settings.get("end", 360.0)))
-        except Exception:
-            sweep_end = self.sweep_settings.get("end", 360.0)
-        try:
-            sweep_step = float(sweep_info.get("step", self.sweep_settings.get("step", 200.0)))
-        except Exception:
-            sweep_step = self.sweep_settings.get("step", 200.0)
-        sweep_step = abs(sweep_step)
-        if sweep_step == 0:
-            sweep_step = float(self.sweep_settings.get("step", 200.0)) or 200.0
-        self.sweep_settings = {"start": sweep_start, "end": sweep_end, "step": sweep_step}
-        if hasattr(self.win, "sim_panel"):
-            self.win.sim_panel.apply_sweep_settings(self.sweep_settings)
-        raw_sim_settings = data.get("simulation_settings", {}) or {}
-        try:
-            max_nfev = int(float(raw_sim_settings.get("max_nfev", 250)))
-        except Exception:
-            max_nfev = 250
-        solver_name = str(raw_sim_settings.get("solver") or ("scipy" if raw_sim_settings.get("use_scipy", True) else "pbd"))
-        self.simulation_settings = {
-            "solver": solver_name,
-            "max_nfev": max_nfev,
-            "reset_before_run": bool(raw_sim_settings.get("reset_before_run", True)),
-        }
-        raw_opt_settings = data.get("optimization_settings", {}) or {}
-        self.optimization_settings = dict(raw_opt_settings) if isinstance(raw_opt_settings, dict) else {}
-        self.scene.blockSignals(True)
-        try:
-            self.scene.clear()
-            self.points.clear(); self.links.clear(); self.angles.clear(); self.splines.clear(); self.bodies.clear(); self.coincides.clear(); self.point_lines.clear(); self.point_splines.clear()
-            self._background_item = None
-            self._background_image_original = None
-            self._grid_item = None
-        finally:
-            self.scene.blockSignals(False)
-        self._load_arrow_items = []
-        self._torque_arrow_items = []
-        self._friction_torque_arrow_items = []
-        self._last_joint_loads = []
-        # Load parameters early so expression fields can be evaluated during/after construction.
-        self.parameters.load_list(list(data.get("parameters", []) or []))
-        self.selected_point_ids.clear()
-        self.selected_point_id = None; self.selected_link_id = None; self.selected_angle_id = None; self.selected_spline_id = None; self.selected_body_id = None; self.selected_coincide_id = None; self.selected_point_line_id = None; self.selected_point_spline_id = None
-        pts = data.get("points", [])
-        # Unified constraints list (Stage-1). If present, it overrides legacy links/angles/coincides.
-        constraints_list = data.get("constraints", None)
-        if constraints_list:
-            from .constraints_registry import ConstraintRegistry as _CR
-            lks, angs, spls, coincs, pls, pss = _CR.split_constraints(constraints_list)
-        else:
-            lks = data.get("links", [])
-            angs = data.get("angles", [])
-            spls = data.get("splines", [])
-            coincs = data.get("coincides", [])
-            pls = data.get("point_lines", [])
-            pss = data.get("point_splines", [])
-        if constraints_list:
-            spls = data.get("splines", [])
-            legacy_point_lines = data.get("point_lines", []) or []
-            legacy_point_splines = data.get("point_splines", []) or []
-            existing_plids = {int(pl.get("id", -1)) for pl in (pls or [])}
-            existing_psids = {int(ps.get("id", -1)) for ps in (pss or [])}
-            for pl in legacy_point_lines:
-                try:
-                    plid = int(pl.get("id", -1))
-                except Exception:
-                    continue
-                if plid in existing_plids:
-                    continue
-                pls = list(pls or []) + [pl]
-                existing_plids.add(plid)
-            for ps in legacy_point_splines:
-                try:
-                    psid = int(ps.get("id", -1))
-                except Exception:
-                    continue
-                if psid in existing_psids:
-                    continue
-                pss = list(pss or []) + [ps]
-                existing_psids.add(psid)
-        bods = data.get("bodies", [])
-        driver = data.get("driver", {}) or {}
-        output = data.get("output", {}) or {}
-        drivers_list = data.get("drivers", None)
-        outputs_list = data.get("outputs", None)
-        measurement_settings = data.get("measurement_settings", {}) or {}
-        measures = measurement_settings.get("measures", data.get("measures", []) or []) or []
-        self.display_precision = int(data.get("display_precision", getattr(self, "display_precision", 3)))
-        self.load_arrow_width = float(data.get("load_arrow_width", getattr(self, "load_arrow_width", 1.6)))
-        self.torque_arrow_width = float(data.get("torque_arrow_width", getattr(self, "torque_arrow_width", 1.6)))
-        loads = data.get("loads", []) or []
-        load_measures = measurement_settings.get("load_measures", data.get("load_measures", []) or []) or []
-        friction_joints = data.get("friction_joints", []) or []
-        bg_path = self.background_image.get("path")
-        if bg_path:
-            image = QImage(bg_path)
-            if not image.isNull():
-                self._background_image_original = image
-                self._ensure_background_item()
-                self._apply_background_pixmap()
-                scale = float(self.background_image.get("scale", 1.0))
-                pos = self.background_image.get("pos", (0.0, 0.0))
-                if self._background_item is not None:
-                    self._background_item.setScale(scale)
-                    self._background_item.setPos(float(pos[0]), float(pos[1]))
-                self.set_background_visible(bool(self.background_image.get("visible", True)))
-                self.set_background_opacity(float(self.background_image.get("opacity", 0.6)))
-                self.set_background_grayscale(bool(self.background_image.get("grayscale", False)))
-            else:
-                self.background_image["path"] = None
-                self._background_image_original = None
-        max_pid = -1
-        any_traj_enabled = False
-        for p in pts:
-            pid = int(p["id"]); max_pid = max(max_pid, pid)
-            self._create_point(
-                pid,
-                float(p.get("x", 0.0)),
-                float(p.get("y", 0.0)),
-                bool(p.get("fixed", False)),
-                bool(p.get("hidden", False)),
-                traj_enabled=bool(p.get("traj", False)),
-            )
-            any_traj_enabled = any_traj_enabled or bool(p.get("traj", False))
-            if pid in self.points:
-                self.points[pid]["x_expr"] = str(p.get("x_expr", "") or "")
-                self.points[pid]["y_expr"] = str(p.get("y_expr", "") or "")
-        if any_traj_enabled:
-            self.show_trajectories = True
-        max_lid = -1
-        for l in lks:
-            lid = int(l["id"]); max_lid = max(max_lid, lid)
-            self._create_link(lid, int(l.get("i")), int(l.get("j")), float(l.get("L", 1.0)),
-                              bool(l.get("hidden", False)))
-            self.links[lid]["ref"] = bool(l.get("ref", False))
-            self.links[lid]["L_expr"] = str(l.get("L_expr", "") or "")
-        max_aid = -1
-        for a in angs:
-            aid = int(a["id"]); max_aid = max(max_aid, aid)
-            self._create_angle(aid, int(a.get("i")), int(a.get("j")), int(a.get("k")),
-                               float(a.get("deg", 0.0)), bool(a.get("hidden", False)))
-            if aid in self.angles:
-                self.angles[aid]["deg_expr"] = str(a.get("deg_expr", "") or "")
-        max_sid = -1
-        for s in spls:
-            sid = int(s.get("id", -1)); max_sid = max(max_sid, sid)
-            pts = list(s.get("points", []))
-            self._create_spline(sid, pts, bool(s.get("hidden", False)), closed=bool(s.get("closed", False)))
-        max_bid = -1
-        for b in bods:
-            bid = int(b["id"]); max_bid = max(max_bid, bid)
-            self._create_body(bid, b.get("name", f"B{bid}"), list(b.get("points", [])),
-                              bool(b.get("hidden", False)), color_name=b.get("color_name", "Blue"))
-            if "rigid_edges" in b and b["rigid_edges"]:
-                self.bodies[bid]["rigid_edges"] = [tuple(x) for x in b["rigid_edges"]]
-
-        self.drivers = []
-        if isinstance(drivers_list, list) and drivers_list:
-            for drv in drivers_list:
-                if not isinstance(drv, dict):
-                    continue
-                normalized = self._normalize_driver(drv)
-                if "rad" not in drv:
-                    normalized["_needs_rad"] = True
-                self.drivers.append(normalized)
-        elif isinstance(driver, dict) and driver:
-            legacy_driver = self._normalize_driver(driver)
-            if legacy_driver.get("enabled"):
-                if "rad" not in driver:
-                    legacy_driver["_needs_rad"] = True
-                self.drivers.append(legacy_driver)
-
-        for drv in self.drivers:
-            if not drv.pop("_needs_rad", False):
-                continue
-            dtype = str(drv.get("type", "angle"))
-            if dtype != "angle":
-                continue
-            piv = drv.get("pivot")
-            tip = drv.get("tip")
-            if piv is not None and tip is not None:
-                ang = self.get_angle_rad(int(piv), int(tip))
-                if ang is not None:
-                    drv["rad"] = float(ang)
-        self._sync_primary_driver()
-
-        self.outputs = []
-        if isinstance(outputs_list, list) and outputs_list:
-            for out in outputs_list:
-                if not isinstance(out, dict):
-                    continue
-                normalized = self._normalize_output(out)
-                if "rad" not in out:
-                    normalized["_needs_rad"] = True
-                self.outputs.append(normalized)
-        elif isinstance(output, dict) and output:
-            legacy_output = self._normalize_output(output)
-            if legacy_output.get("enabled"):
-                if "rad" not in output:
-                    legacy_output["_needs_rad"] = True
-                self.outputs.append(legacy_output)
-
-        for out in self.outputs:
-            if not out.pop("_needs_rad", False):
-                continue
-            piv = out.get("pivot")
-            tip = out.get("tip")
-            if piv is not None and tip is not None:
-                ang = self.get_angle_rad(int(piv), int(tip))
-                if ang is not None:
-                    out["rad"] = float(ang)
-        self._sync_primary_output()
-        self.measures = []
-        for m in measures:
-            mtype = str(m.get("type", "")).lower()
-            name = str(m.get("name", ""))
-            if mtype == "angle":
-                pivot = m.get("pivot")
-                tip = m.get("tip")
-                if pivot is None or tip is None:
-                    continue
-                if int(pivot) in self.points and int(tip) in self.points:
-                    self.measures.append({
-                        "type": "angle",
-                        "pivot": int(pivot),
-                        "tip": int(tip),
-                        "name": name or f"ang P{int(pivot)}->P{int(tip)}",
-                    })
-            elif mtype == "joint":
-                i = m.get("i")
-                j = m.get("j")
-                k = m.get("k")
-                if i is None or j is None or k is None:
-                    continue
-                if int(i) in self.points and int(j) in self.points and int(k) in self.points:
-                    self.measures.append({
-                        "type": "joint",
-                        "i": int(i),
-                        "j": int(j),
-                        "k": int(k),
-                        "name": name or f"ang P{int(i)}-P{int(j)}-P{int(k)}",
-                    })
-        self.loads = []
-        for ld in loads:
-            pid = int(ld.get("pid", -1))
-            if pid not in self.points:
-                continue
-            ltype = str(ld.get("type", "force")).lower()
-            fx = float(ld.get("fx", 0.0))
-            fy = float(ld.get("fy", 0.0))
-            mz = float(ld.get("mz", 0.0))
-            fx_expr = str(ld.get("fx_expr", "") or "")
-            fy_expr = str(ld.get("fy_expr", "") or "")
-            mz_expr = str(ld.get("mz_expr", "") or "")
-            k_expr = str(ld.get("k_expr", "") or "")
-            load_expr = str(ld.get("load_expr", "") or "")
-            if ltype == "torque":
-                self.add_load_torque(pid, mz)
-                self.loads[-1].update({
-                    "fx": fx,
-                    "fy": fy,
-                    "fx_expr": fx_expr,
-                    "fy_expr": fy_expr,
-                    "mz_expr": mz_expr,
-                })
-            elif ltype == "spring":
-                ref_pid = int(ld.get("ref_pid", -1))
-                k = float(ld.get("k", 0.0))
-                preload = float(ld.get("load", 0.0))
-                if ref_pid in self.points:
-                    self.add_load_spring(pid, ref_pid, k, preload)
-                    self.loads[-1].update({
-                        "k_expr": k_expr,
-                        "load_expr": load_expr,
-                    })
-            elif ltype == "torsion_spring":
-                ref_pid = int(ld.get("ref_pid", -1))
-                k = float(ld.get("k", 0.0))
-                theta0 = float(ld.get("theta0", 0.0))
-                preload = float(ld.get("load", 0.0))
-                if ref_pid in self.points:
-                    self.add_load_torsion_spring(pid, ref_pid, k, theta0, preload)
-                    self.loads[-1].update({
-                        "k_expr": k_expr,
-                        "load_expr": load_expr,
-                    })
-            else:
-                self.add_load_force(pid, fx, fy)
-                self.loads[-1].update({
-                    "mz": mz,
-                    "fx_expr": fx_expr,
-                    "fy_expr": fy_expr,
-                    "mz_expr": mz_expr,
-                })
-
-        self.load_measures = []
-        for lm in load_measures:
-            pid = int(lm.get("pid", -1))
-            if pid not in self.points:
-                continue
-            comp = str(lm.get("component", "mag"))
-            name = str(lm.get("name", "")) or f"load P{pid} {comp}"
-            self.load_measures.append({
-                "type": str(lm.get("type", "joint_load")),
-                "pid": int(pid),
-                "component": comp,
-                "name": name,
-            })
-
-        self.friction_joints = []
-        for fj in friction_joints:
-            try:
-                pid = int(fj.get("pid", -1))
-            except Exception:
-                continue
-            if pid not in self.points:
-                continue
-            try:
-                mu = float(fj.get("mu", 0.0))
-            except Exception:
-                mu = 0.0
-            try:
-                diameter = float(fj.get("diameter", 0.0))
-            except Exception:
-                diameter = 0.0
-            mu_expr = str(fj.get("mu_expr", "") or "")
-            diameter_expr = str(fj.get("diameter_expr", "") or "")
-            self.friction_joints.append({
-                "pid": pid,
-                "mu": mu,
-                "diameter": diameter,
-                "mu_expr": mu_expr,
-                "diameter_expr": diameter_expr,
-            })
-        
-        # --- Coincide constraints ---
-        coincs = coincs or []
-        max_cid = -1
-        for c in coincs:
-            try:
-                cid = int(c.get("id"))
-                a = int(c.get("a")); b = int(c.get("b"))
-            except Exception:
-                continue
-            max_cid = max(max_cid, cid)
-            if a in self.points and b in self.points:
-                self._create_coincide(
-                    cid, a, b,
-                    hidden=bool(c.get("hidden", False)),
-                    enabled=bool(c.get("enabled", True)),
-                )
-        self._next_cid = max(max_cid + 1, 0)
-
-        # --- Point-on-line constraints ---
-        pls = pls or []
-        max_plid = -1
-        for pl in pls:
-            try:
-                plid = int(pl.get("id"))
-                p = int(pl.get("p")); i = int(pl.get("i")); j = int(pl.get("j"))
-            except Exception:
-                continue
-            max_plid = max(max_plid, plid)
-            if p in self.points and i in self.points and j in self.points and i != j and p != i and p != j:
-                s_expr = str(pl.get("s_expr", ""))
-                name = str(pl.get("name", ""))
-                s_val = None
-                if "s" in pl or s_expr:
-                    try:
-                        s_val = float(pl.get("s", 0.0))
-                    except Exception:
-                        s_val = 0.0
-                self._create_point_line(
-                    plid, p, i, j,
-                    hidden=bool(pl.get("hidden", False)),
-                    enabled=bool(pl.get("enabled", True)),
-                    s=s_val,
-                    s_expr=s_expr,
-                    name=name,
-                )
-        self._next_plid = max(max_plid + 1, 0)
-
-        # --- Point-on-spline constraints ---
-        pss = pss or []
-        max_psid = -1
-        for ps in pss:
-            try:
-                psid = int(ps.get("id"))
-                p = int(ps.get("p")); s = int(ps.get("s"))
-            except Exception:
-                continue
-            max_psid = max(max_psid, psid)
-            if p in self.points and s in self.splines:
-                self._create_point_spline(
-                    psid, p, s,
-                    hidden=bool(ps.get("hidden", False)),
-                    enabled=bool(ps.get("enabled", True)),
-                )
-        self._next_psid = max(max_psid + 1, 0)
-
-        self._next_pid = max(max_pid + 1, 0)
-        self._next_lid = max(max_lid + 1, 0)
-        self._next_aid = max(max_aid + 1, 0)
-        self._next_sid = max(max_sid + 1, 0)
-        self._next_bid = max(max_bid + 1, 0)
-        self.mode = "Idle"; self._line_sel = []; self._co_master = None; self._pol_master = None; self._pol_line_sel = []; self._pos_master = None
-        if hasattr(self.win, "sim_panel"):
-            self.win.sim_panel.apply_simulation_settings(self.simulation_settings)
-            opt_tab = getattr(self.win.sim_panel, "optimization_tab", None)
-            if opt_tab is not None and hasattr(opt_tab, "apply_settings"):
-                opt_tab.apply_settings(self.optimization_settings)
-        self._refresh_grid_item()
-        self.solve_constraints(); self.update_graphics()
-        if self.panel: self.panel.defer_refresh_all()
-        if clear_undo: self.stack.clear()
-        self.update_status()
-        return True

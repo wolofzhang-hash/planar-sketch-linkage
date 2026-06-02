@@ -16,6 +16,7 @@ from .geometry import angle_between, clamp_angle_rad, build_spline_samples, clos
 from .solver import ConstraintSolver
 from .scipy_kinematics import SciPyKinematicSolver
 from .exudyn_kinematics import ExudynKinematicSolver
+from .sim_common_queries import SimulationQueryLoadMixin
 
 
 @dataclass
@@ -25,7 +26,7 @@ class SweepSettings:
     step: float
 
 
-class HeadlessModel:
+class HeadlessModel(SimulationQueryLoadMixin):
     def __init__(self, snapshot: Dict[str, Any], case_spec: Dict[str, Any]):
         self.points: Dict[int, Dict[str, Any]] = {}
         self.links: Dict[int, Dict[str, Any]] = {}
@@ -130,7 +131,8 @@ class HeadlessModel:
 
         constraints = data.get("constraints", None)
         if constraints:
-            lks, angs, spls, coincs, pls, pss = ConstraintRegistry.split_constraints(constraints)
+            lks, angs, _spls_unused, coincs, pls, pss, _pds = ConstraintRegistry.split_constraints(constraints)
+            spls = data.get("splines", []) or []
         else:
             lks = data.get("links", []) or []
             angs = data.get("angles", []) or []
@@ -341,31 +343,7 @@ class HeadlessModel:
                 self._sim_zero_meas_len[name] = float(val)
 
     @staticmethod
-    def _rel_deg(abs_deg: float, base_deg: float) -> float:
-        return (abs_deg - base_deg) % 360.0
-
-    def get_angle_rad(self, pivot_pid: int, tip_pid: int) -> Optional[float]:
-        if pivot_pid not in self.points or tip_pid not in self.points:
-            return None
-        p = self.points[pivot_pid]
-        q = self.points[tip_pid]
-        dx = q["x"] - p["x"]
-        dy = q["y"] - p["y"]
-        if abs(dx) + abs(dy) < 1e-12:
-            return None
-        return math.atan2(dy, dx)
-
-    def get_joint_angle_rad(self, i_pid: int, j_pid: int, k_pid: int) -> Optional[float]:
-        if i_pid not in self.points or j_pid not in self.points or k_pid not in self.points:
-            return None
-        pi, pj, pk = self.points[i_pid], self.points[j_pid], self.points[k_pid]
-        v1x, v1y = pi["x"] - pj["x"], pi["y"] - pj["y"]
-        v2x, v2y = pk["x"] - pj["x"], pk["y"] - pj["y"]
-        if math.hypot(v1x, v1y) < 1e-12 or math.hypot(v2x, v2y) < 1e-12:
-            return None
-        return angle_between(v1x, v1y, v2x, v2y)
-
-    def _point_line_offset_name(self, pl: Dict[str, Any]) -> str:
+    def _point_line_offset_name(pl: Dict[str, Any]) -> str:
         try:
             p = int(pl.get("p", -1))
             i = int(pl.get("i", -1))
@@ -373,28 +351,6 @@ class HeadlessModel:
         except Exception:
             return "point line s"
         return f"s P{p} on (P{i}-P{j})"
-
-    def _get_input_angle_abs_rad(self) -> Optional[float]:
-        primary = self._primary_driver()
-        if not primary or not primary.get("enabled"):
-            return None
-        if primary.get("type") != "angle":
-            return None
-        piv = primary.get("pivot")
-        tip = primary.get("tip")
-        if piv is None or tip is None:
-            return None
-        return self.get_angle_rad(int(piv), int(tip))
-
-    def _get_output_angle_abs_rad(self) -> Optional[float]:
-        primary = self._primary_output()
-        if not primary or not primary.get("enabled"):
-            return None
-        piv = primary.get("pivot")
-        tip = primary.get("tip")
-        if piv is None or tip is None:
-            return None
-        return self.get_angle_rad(int(piv), int(tip))
 
     def get_input_angle_deg(self) -> Optional[float]:
         ang = self._get_input_angle_abs_rad()
@@ -451,7 +407,10 @@ class HeadlessModel:
     def snapshot_state(self) -> Dict[str, Any]:
         return {
             "points": {pid: (float(p["x"]), float(p["y"])) for pid, p in self.points.items()},
-            "drivers": [float(d.get("rad", 0.0)) for d in self.drivers],
+            "drivers": [
+                {"rad": float(d.get("rad", 0.0) or 0.0), "value": float(d.get("value", 0.0) or 0.0)}
+                for d in self.drivers
+            ],
             "outputs": [float(o.get("rad", 0.0)) for o in self.outputs],
         }
 
@@ -460,10 +419,17 @@ class HeadlessModel:
             if pid in self.points:
                 self.points[pid]["x"] = float(pos[0])
                 self.points[pid]["y"] = float(pos[1])
-        driver_rads = snapshot.get("drivers") or []
-        for idx, rad in enumerate(driver_rads):
-            if idx < len(self.drivers):
-                self.drivers[idx]["rad"] = float(rad)
+        driver_items = snapshot.get("drivers") or []
+        # Backward compatible: legacy snapshots stored a list of rads.
+        for idx, it in enumerate(driver_items):
+            if idx >= len(self.drivers):
+                continue
+            if isinstance(it, dict):
+                self.drivers[idx]["rad"] = float(it.get("rad", 0.0) or 0.0)
+                if "value" in it:
+                    self.drivers[idx]["value"] = float(it.get("value", 0.0) or 0.0)
+            else:
+                self.drivers[idx]["rad"] = float(it)
         output_rads = snapshot.get("outputs") or []
         for idx, rad in enumerate(output_rads):
             if idx < len(self.outputs):
@@ -764,102 +730,34 @@ class HeadlessModel:
             joint_loads.append({"pid": pid, "fx": fx, "fy": fy, "mag": mag})
         return joint_loads
 
-    @staticmethod
-    def _wrap_angle(angle: float) -> float:
-        return (angle + math.pi) % (2.0 * math.pi) - math.pi
-
-    def _resolve_load_components(
-        self,
-        load: Dict[str, Any],
-        qvec: Optional[np.ndarray] = None,
-        idx_map: Optional[Dict[int, int]] = None,
-    ) -> tuple[float, float, float]:
-        ltype = str(load.get("type", "force")).lower()
-        if ltype == "spring":
-            pid = int(load.get("pid", -1))
-            ref_pid = int(load.get("ref_pid", -1))
-            k = float(load.get("k", 0.0))
-            preload = float(load.get("load", 0.0))
-            if pid not in self.points or ref_pid not in self.points:
-                return 0.0, 0.0, 0.0
-            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
-                i = idx_map[pid]
-                j = idx_map[ref_pid]
-                dx = float(qvec[2 * j]) - float(qvec[2 * i])
-                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
-            else:
-                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
-                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            fx = k * dx
-            fy = k * dy
-            if abs(dx) + abs(dy) > 1e-12 and abs(preload) > 0.0:
-                norm = math.hypot(dx, dy)
-                fx += preload * dx / norm
-                fy += preload * dy / norm
-            return fx, fy, 0.0
-        if ltype == "torsion_spring":
-            pid = int(load.get("pid", -1))
-            ref_pid = int(load.get("ref_pid", -1))
-            k = float(load.get("k", 0.0))
-            theta0 = float(load.get("theta0", 0.0))
-            preload = float(load.get("load", 0.0))
-            if pid not in self.points or ref_pid not in self.points:
-                return 0.0, 0.0, 0.0
-            if qvec is not None and idx_map is not None and pid in idx_map and ref_pid in idx_map:
-                i = idx_map[pid]
-                j = idx_map[ref_pid]
-                dx = float(qvec[2 * j]) - float(qvec[2 * i])
-                dy = float(qvec[2 * j + 1]) - float(qvec[2 * i + 1])
-            else:
-                dx = float(self.points[ref_pid]["x"]) - float(self.points[pid]["x"])
-                dy = float(self.points[ref_pid]["y"]) - float(self.points[pid]["y"])
-            if abs(dx) + abs(dy) < 1e-12:
-                return 0.0, 0.0, 0.0
-            theta = math.atan2(dy, dx)
-            delta = self._wrap_angle(theta - theta0)
-            return 0.0, 0.0, k * delta + preload
-        fx = float(load.get("fx", 0.0))
-        fy = float(load.get("fy", 0.0))
-        mz = float(load.get("mz", 0.0))
-        return fx, fy, mz
-
-    def get_load_measure_values(self) -> List[tuple[str, Optional[float]]]:
-        out: List[tuple[str, Optional[float]]] = []
-        if not self.load_measures:
-            return out
-        load_map: Dict[int, Dict[str, float]] = {}
-        for jl in self.compute_quasistatic_joint_loads():
-            pid = int(jl.get("pid", -1))
-            if pid < 0:
-                continue
-            load_map[pid] = {
-                "fx": float(jl.get("fx", 0.0)),
-                "fy": float(jl.get("fy", 0.0)),
-                "mag": float(jl.get("mag", 0.0)),
-            }
-        for m in self.load_measures:
-            nm = str(m.get("name", ""))
-            pid = int(m.get("pid", -1))
-            comp = str(m.get("component", "mag")).lower()
-            val = None
-            if pid in load_map and comp in load_map[pid]:
-                val = float(load_map[pid][comp])
-            out.append((nm, val))
-        return out
-
     def drive_to_deg(self, deg: float, iters: int = 80) -> None:
         if not self._active_drivers() and not self._active_outputs():
             return
         primary_driver = self._primary_driver()
         primary_output = self._primary_output()
         if primary_driver and primary_driver.get("enabled"):
-            if self._sim_zero_input_rad is not None:
-                target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+            dtype = str(primary_driver.get("type", "angle"))
+            if dtype == "translation":
+                # Interpret `deg` as a linear value (mm) for point-on-line translation drivers.
+                target_s = float(deg)
+                plid = primary_driver.get("plid")
+                pl = self.point_lines.get(plid) if plid in self.point_lines else None
+                if pl is None:
+                    base_s = float(primary_driver.get("s_base", 0.0) or 0.0)
+                else:
+                    base_s = float(primary_driver.get("s_base", self._point_line_current_s(pl)) or 0.0)
+                    pl["s"] = target_s
+                primary_driver["value"] = float(target_s - base_s)
+                self.drivers[0] = primary_driver
+                self._sync_primary_driver()
             else:
-                target = math.radians(float(deg))
-            primary_driver["rad"] = float(target)
-            self.drivers[0] = primary_driver
-            self._sync_primary_driver()
+                if self._sim_zero_input_rad is not None:
+                    target = float(self._sim_zero_input_rad) + math.radians(float(deg))
+                else:
+                    target = math.radians(float(deg))
+                primary_driver["rad"] = float(target)
+                self.drivers[0] = primary_driver
+                self._sync_primary_driver()
         elif primary_output and primary_output.get("enabled"):
             if self._sim_zero_output_rad is not None:
                 target = float(self._sim_zero_output_rad) + math.radians(float(deg))
@@ -1301,10 +1199,58 @@ def simulate_case(
     success = True
     tol = 1e-12
 
-    def try_solve(deg: float) -> Tuple[bool, float, str]:
+    # --- Angle convention (policy) ---
+    # The whole application uses degrees and *relative* angles.
+    # - Input curve x is always "relative input deg" (0 at sim-start).
+    # - Output curve y is always "relative output deg" (0 at sim-start).
+    #
+    # The controller already implements this via mark_sim_start_pose():
+    #   - drive_to_deg() interprets deg as relative-to-sim-start
+    #   - get_input_angle_deg()/get_output_angle_deg() return relative values
+    #
+    # Therefore we do NOT support absolute mode here. Any old "angle_mode" is
+    # ignored to avoid silent mismatches.
+    angle_mode = "relative"
+
+    # Branch tracking for closed-chain linkages (e.g. 4-bar):
+    # keep the same assembly branch by monitoring the sign of a reference
+    # oriented area. If the sign flips (away from singularity), we treat the
+    # frame as invalid (strongly penalized by the optimizer).
+    base_branch_sign: Optional[int] = None
+    branch_eps = 1e-9
+    try:
+        drv = None
+        outp = None
+        if hasattr(model, "_primary_driver"):
+            drv = model._primary_driver()
+        if drv is None:
+            drv = getattr(model, "driver", None)
+        if hasattr(model, "_primary_output"):
+            outp = model._primary_output()
+        if outp is None:
+            outp = getattr(model, "output", None)
+        if isinstance(drv, dict) and isinstance(outp, dict):
+            a = drv.get("pivot")
+            b = drv.get("tip")
+            c = outp.get("tip")
+            if a is not None and b is not None and c is not None:
+                pts0 = model.snapshot_state().get("points") or {}
+                pa = pts0.get(int(a)); pb = pts0.get(int(b)); pc = pts0.get(int(c))
+                if pa is not None and pb is not None and pc is not None:
+                    ax, ay = float(pa[0]), float(pa[1])
+                    bx, by = float(pb[0]), float(pb[1])
+                    cx, cy = float(pc[0]), float(pc[1])
+                    area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+                    if abs(area2) > branch_eps:
+                        base_branch_sign = 1 if area2 > 0 else -1
+    except Exception:
+        base_branch_sign = None
+
+    def try_solve(cmd_deg: float) -> Tuple[bool, float, str, float]:
         nonlocal solver_error
         ok_local = True
         msg_local = ""
+        deg = float(cmd_deg)
         if solver_name == "scipy":
             model.drive_to_deg(deg, iters=0)
             ok_local, msg_local = model.solve_constraints_scipy(max_nfev=max_nfev)
@@ -1339,26 +1285,81 @@ def simulate_case(
         )
         if not treat_point_spline_as_soft:
             hard_err_local = max(hard_err_local, detail.get("point_spline", 0.0))
-        return bool(ok_local), float(hard_err_local), msg_local
+        return bool(ok_local), float(hard_err_local), msg_local, float(cmd_deg)
 
-    def _record_frame(frame_idx: int, hard_err_value: float, ok_value: bool, retries: int, dtheta_used: float) -> None:
+    def _record_frame(frame_idx: int, hard_err_value: float, ok_value: bool, retries: int, dtheta_used: float, cmd_deg: float) -> None:
         step_success = bool(ok_value) and hard_err_value <= hard_err_tol
+        branch_jump = 0
+        branch_sign = 0
+        # Branch tracking (assembly branch consistency)
+        try:
+            if base_branch_sign is not None:
+                drv = None
+                outp = None
+                if hasattr(model, "_primary_driver"):
+                    drv = model._primary_driver()
+                if drv is None:
+                    drv = getattr(model, "driver", None)
+                if hasattr(model, "_primary_output"):
+                    outp = model._primary_output()
+                if outp is None:
+                    outp = getattr(model, "output", None)
+                if isinstance(drv, dict) and isinstance(outp, dict):
+                    a = drv.get("pivot")
+                    b = drv.get("tip")
+                    c = outp.get("tip")
+                    if a is not None and b is not None and c is not None:
+                        pts = model.snapshot_state().get("points") or {}
+                        pa = pts.get(int(a)); pb = pts.get(int(b)); pc = pts.get(int(c))
+                        if pa is not None and pb is not None and pc is not None:
+                            ax, ay = float(pa[0]), float(pa[1])
+                            bx, by = float(pb[0]), float(pb[1])
+                            cx, cy = float(pc[0]), float(pc[1])
+                            area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
+                            if abs(area2) > branch_eps:
+                                branch_sign = 1 if area2 > 0 else -1
+                                if branch_sign != base_branch_sign:
+                                    branch_jump = 1
+                                    step_success = False
+        except Exception:
+            pass
         if not step_success:
             nonlocal success, reason
             success = False
             if not reason:
-                reason = "constraint_error"
+                reason = "constraint_error" if branch_jump == 0 else "branch_flip"
+        # Record input/output in the curve-target domain: relative degrees.
+        try:
+            input_deg = float(model.get_input_angle_deg())
+        except Exception:
+            input_deg = float(cmd_deg)
+        try:
+            output_deg = float(model.get_output_angle_deg())
+        except Exception:
+            output_deg = float(model.get_output_angle_deg()) if hasattr(model, "get_output_angle_deg") else 0.0
         rec: Dict[str, Any] = {
             "time": frame_idx,
             "solver": solver_name,
             "success": step_success,
-            "input_deg": model.get_input_angle_deg(),
-            "output_deg": model.get_output_angle_deg(),
+            "input_deg": input_deg,
+            "output_deg": output_deg,
             "driver_deg": model.get_driver_angles_deg(),
             "hard_err": hard_err_value,
+            "branch_jump": branch_jump,
+            "branch_sign": branch_sign,
             "dtheta_deg": dtheta_used,
             "retries": retries,
         }
+        # Optional: record point positions for fast GUI replay.
+        # This makes animation playback much faster because the UI can apply
+        # point coordinates directly instead of re-solving constraints every frame.
+        if bool(case_spec.get("record_pose", False)):
+            try:
+                pts = model.snapshot_state().get("points") or {}
+                # Store as a compact JSON-friendly list.
+                rec["pose_points"] = [[int(pid), float(xy[0]), float(xy[1])] for pid, xy in pts.items()]
+            except Exception:
+                pass
         for nm, val, _unit in model.get_measure_values():
             rec[nm] = val
         for nm, val in model.get_load_measure_values():
@@ -1383,12 +1384,12 @@ def simulate_case(
                 degrees.append(start + (end - start) * progress)
         last_deg = start
         for frame_idx, deg in enumerate(degrees):
-            ok, hard_err, msg = try_solve(deg)
+            ok, hard_err, msg, cmd_deg = try_solve(deg)
             if not ok and msg:
                 reason = reason or msg
                 success = False
             dtheta_used = deg - last_deg
-            _record_frame(frame_idx, hard_err, ok, 0, dtheta_used)
+            _record_frame(frame_idx, hard_err, ok, 0, dtheta_used, cmd_deg)
             last_deg = deg
     else:
         direction = 1.0 if end >= start else -1.0
@@ -1406,11 +1407,11 @@ def simulate_case(
 
         theta = start
         if abs(end - start) <= tol:
-            ok, hard_err, msg = try_solve(end)
+            ok, hard_err, msg, cmd_deg = try_solve(end)
             if not ok and msg:
                 reason = reason or msg
                 success = False
-            _record_frame(0, hard_err, ok, 0, 0.0)
+            _record_frame(0, hard_err, ok, 0, 0.0, cmd_deg)
         else:
             frame_idx = 0
             while True:
@@ -1428,15 +1429,15 @@ def simulate_case(
                     else:
                         target = max(target, end)
                     snapshot = model.snapshot_state()
-                    ok, hard_err, msg = try_solve(target)
+                    ok, hard_err, msg, cmd_deg = try_solve(target)
                     if ok and hard_err <= err_good:
-                        _record_frame(frame_idx, hard_err, ok, retries, target - theta)
+                        _record_frame(frame_idx, hard_err, ok, retries, target - theta, cmd_deg)
                         theta = target
                         dtheta = max(dtheta_min_deg, min(abs(dtheta) * grow, dtheta_max_deg)) * direction
                         frame_idx += 1
                         break
                     if ok and hard_err <= err_ok:
-                        _record_frame(frame_idx, hard_err, ok, retries, target - theta)
+                        _record_frame(frame_idx, hard_err, ok, retries, target - theta, cmd_deg)
                         theta = target
                         frame_idx += 1
                         break

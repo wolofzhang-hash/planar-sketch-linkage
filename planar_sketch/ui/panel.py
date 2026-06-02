@@ -47,6 +47,19 @@ class SketchPanel(QWidget):
         self.tabs.addTab(self.bodies_tab, "")
         self.apply_language()
 
+
+    def preferred_panel_width(self) -> int:
+        """Preferred width for the sketch-side dock panel."""
+        base = 320
+        try:
+            idx = int(self.tabs.currentIndex())
+        except Exception:
+            return base
+        # Bodies/constraints tables need a bit more room for zh labels/columns.
+        if idx in (5, 6):
+            return 360
+        return base
+
     def apply_language(self):
         lang = getattr(self.ctrl, "ui_language", "en")
         self.title.setText(tr(lang, "panel.title"))

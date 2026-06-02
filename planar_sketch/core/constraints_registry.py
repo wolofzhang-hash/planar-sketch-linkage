@@ -17,7 +17,7 @@ class ConstraintRow:
 
 
 class ConstraintRegistry:
-    """Unified view + IO for constraints (Length/Angle/Coincide/PointOnLine/PointOnSpline).
+    """Unified view + IO for constraints (Length/Angle/Coincide/PointOnLine/PointOnSpline/PointSplineDist).
 
     This is intentionally thin in Stage-1: it wraps the controller's existing
     dict storage (links / angles / coincides) and provides a single API surface
@@ -78,6 +78,15 @@ class ConstraintRegistry:
             state = "OVER" if ps.get("over", False) else "OK"
             yield ConstraintRow(key, typ, ent, enabled, state)
 
+        # Point-spline-distance constraints (cam roller)
+        for pdid, pd in sorted(getattr(self.ctrl, "point_spline_dists", {}).items(), key=lambda kv: kv[0]):
+            key = f"D{pdid}"
+            typ = "PointSplineDist"
+            ent = f"P{pd['p']} dist S{pd['s']} = {pd.get('dist', 0.0):.3f}"
+            enabled = bool(pd.get("enabled", True))
+            state = "OVER" if pd.get("over", False) else "OK"
+            yield ConstraintRow(key, typ, ent, enabled, state)
+
 
     # ---------- unified actions ----------
     @staticmethod
@@ -106,6 +115,8 @@ class ConstraintRegistry:
             self.ctrl.cmd_delete_point_line(cid)
         elif kind == "S" and cid in getattr(self.ctrl, "point_splines", {}):
             self.ctrl.cmd_delete_point_spline(cid)
+        elif kind == "D" and cid in getattr(self.ctrl, "point_spline_dists", {}):
+            self.ctrl.cmd_delete_point_spline_dist(cid)
 
     def toggle_by_key(self, key: str) -> None:
         kind, cid = self.parse_key(key)
@@ -119,6 +130,8 @@ class ConstraintRegistry:
             self.ctrl.cmd_set_point_line_enabled(cid, not self.ctrl.point_lines[cid].get("enabled", True))
         elif kind == "S" and cid in getattr(self.ctrl, "point_splines", {}):
             self.ctrl.cmd_set_point_spline_enabled(cid, not self.ctrl.point_splines[cid].get("enabled", True))
+        elif kind == "D" and cid in getattr(self.ctrl, "point_spline_dists", {}):
+            self.ctrl.cmd_set_point_spline_dist_enabled(cid, not self.ctrl.point_spline_dists[cid].get("enabled", True))
 
     # ---------- serialization ----------
     def to_list(self) -> List[Dict[str, Any]]:
@@ -179,16 +192,27 @@ class ConstraintRegistry:
                 "hidden": bool(ps.get("hidden", False)),
                 "enabled": bool(ps.get("enabled", True)),
             })
+        for pdid, pd in sorted(getattr(self.ctrl, "point_spline_dists", {}).items(), key=lambda kv: kv[0]):
+            out.append({
+                "type": "point_spline_dist",
+                "id": int(pdid),
+                "p": int(pd.get("p", -1)),
+                "s": int(pd.get("s", -1)),
+                "dist": float(pd.get("dist", 0.0)),
+                "hidden": bool(pd.get("hidden", False)),
+                "enabled": bool(pd.get("enabled", True)),
+            })
         return out
 
     @staticmethod
-    def split_constraints(constraints: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def split_constraints(constraints: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
         links: List[Dict[str, Any]] = []
         angles: List[Dict[str, Any]] = []
         splines: List[Dict[str, Any]] = []
         coincides: List[Dict[str, Any]] = []
         point_lines: List[Dict[str, Any]] = []
         point_splines: List[Dict[str, Any]] = []
+        point_spline_dists: List[Dict[str, Any]] = []
         for c in constraints or []:
             t = str(c.get("type", "")).lower()
             if t == "length":
@@ -240,4 +264,13 @@ class ConstraintRegistry:
                     "hidden": bool(c.get("hidden", False)),
                     "enabled": bool(c.get("enabled", True)),
                 })
-        return links, angles, splines, coincides, point_lines, point_splines
+            elif t in ("point_spline_dist", "point_splinedist", "point_spline_distance", "point_spline_dist_constraint"):
+                point_spline_dists.append({
+                    "id": int(c.get("id", -1)),
+                    "p": int(c.get("p", -1)),
+                    "s": int(c.get("s", -1)),
+                    "dist": float(c.get("dist", c.get("value", 0.0) or 0.0)),
+                    "hidden": bool(c.get("hidden", False)),
+                    "enabled": bool(c.get("enabled", True)),
+                })
+        return links, angles, splines, coincides, point_lines, point_splines, point_spline_dists
